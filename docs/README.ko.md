@@ -1,5 +1,9 @@
 # claude-codex-meight
 
+<p align="center">
+  <img src="./hero.jpg" alt="Claude Fable 5 + Codex" width="720">
+</p>
+
 [English](../README.md) | **한국어**
 
 > **Claude Code가 계획하고, Codex가 만듭니다.** Meight는 그 사이의 하네스입니다. Claude가 명령 한 번으로 Codex 워커에게 일을 맡기고, 자기 일을 계속하다가, 끝나면 결과를 돌려받습니다 — 자기 서브에이전트를 쓰는 것과 똑같이. 공식 `openai-codex` Python SDK 위에 구축했습니다. CLI: `meight`.

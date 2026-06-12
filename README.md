@@ -1,5 +1,9 @@
 # claude-codex-meight
 
+<p align="center">
+  <img src="./docs/hero.jpg" alt="Claude Fable 5 + Codex" width="720">
+</p>
+
 **English** | [한국어](./docs/README.ko.md)
 
 > **Claude Code plans, Codex builds.** Meight is the harness in between: Claude hands a task to a Codex worker with one command, keeps working, and gets the result back when it's done — just like using one of its own subagents. Built on the official `openai-codex` Python SDK. CLI: `meight`.
