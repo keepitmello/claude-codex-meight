@@ -96,6 +96,18 @@ Every brief is automatically prefixed with a harness preamble that (a) forbids `
 
 A drop-in orchestrator prompt (role split, routing table, dispatch protocol, cross-model review rules) ships as [`CLAUDE.md`](./CLAUDE.md) — copy it into your project or global Claude Code memory. A self-contained Claude Code **skill** ships at [`skills/meight/`](./skills/meight/SKILL.md) — copy it into `~/.claude/skills/` for trigger-based JIT loading.
 
+## What "easy for an agent" actually means
+
+Small decisions everywhere assume the user is an LLM agent, not a person at a terminal:
+
+- **Exit codes are the API.** `0` done, `2` failed, `3` question, `4` daemon gone. The agent branches on a number instead of reading prose and guessing whether things worked. Unknown outcomes map to *failed*, never to *completed* — exit 0 can be trusted.
+- **One call per intent.** `dispatch` bundles daemon startup, launch, waiting, and result delivery into a single background shell call — the same shape as the agent's native async tools. No polling loops burning turns.
+- **Names, not session IDs.** Workers are addressed as `review-1`, follow-ups included. No UUID bookkeeping to get wrong.
+- **Results survive on disk.** `result.md` stays re-readable — if the agent's context gets compacted mid-session, nothing is lost.
+- **Status is pre-digested.** Instead of raw logs, `status` returns what a decision needs: what the worker is doing now, which files changed, its last thought. Exactly enough to choose between wait, steer, and interrupt.
+- **Policy can't be forgotten.** The no-commit rule and the QUESTION protocol are injected into every brief by the harness, not remembered by the agent.
+- **Briefs go through stdin.** Long multi-line briefs avoid shell-quoting traps entirely.
+
 ## Command reference
 
 | Command | What it does |
