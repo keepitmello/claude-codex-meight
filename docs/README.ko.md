@@ -2,11 +2,14 @@
 
 [English](../README.md) | **한국어**
 
-> **Claude Code가 OpenAI Codex 워커를 네이티브 서브에이전트처럼 부리게 해주는 에이전트 우선(agent-first) 하네스** — 공식 `openai-codex` Python SDK 위에 직접 구축. CLI: `meight`.
+> **Claude Code가 계획하고, Codex가 만듭니다.** Meight는 그 사이의 하네스입니다. Claude가 명령 한 번으로 Codex 워커에게 일을 맡기고, 자기 일을 계속하다가, 끝나면 결과를 돌려받습니다 — 자기 서브에이전트를 쓰는 것과 똑같이. 공식 `openai-codex` Python SDK 위에 구축했습니다. CLI: `meight`.
 
-기존 Claude↔Codex 브릿지들은 *터미널을 지켜보는 사람*을 위해 만들어졌어요: 붙어서 타이핑할 tmux pane, 클릭할 칸반 보드, 긁어올 stdout. **Meight는 오케스트레이터 에이전트 자신을 위해 설계됐습니다.** 설계 질문은 "터미널에서 뭐가 보기 좋은가"가 아니라 — *"Codex 워커를 디스패치하는 게 자기 서브에이전트 띄우는 것과 똑같이 느껴지려면 Claude에게 뭐가 필요한가?"* 였어요.
+기존 Claude↔Codex 브릿지들은 *터미널을 지켜보는 사람*을 위해 만들어졌습니다 — 붙어서 타이핑할 tmux pane, 클릭할 대시보드. Meight는 오케스트레이션을 하는 에이전트 자신을 위해 만들었습니다. 실제로는 이렇게 동작합니다:
 
-답: exit code 계약이 있는 원샷 디스패치, 컨텍스트 토큰을 거의 쓰지 않는 pull 방식 진행 다이제스트, 프로그래매틱 mid-turn 조향, 그리고 워커→오케스트레이터 질문 프로토콜. 전부 네이티브로 — tmux 없이, 스크린 스크래핑 없이, MCP 우회 없이.
+- **던져놓고 잊기.** 명령 하나로 워커에게 작업을 보냅니다. 끝나면 결과 전문이 완료 알림에 실려 돌아옵니다. 폴링도, 복사·붙여넣기도 없습니다.
+- **지켜보는 비용 없음.** 워커는 진행 상황을 디스크의 작은 파일에 기록합니다. Claude는 궁금할 때만 들여다봅니다(`meight status`). 컨텍스트 윈도우로 흘러드는 것은 없습니다.
+- **달리는 중에 고치기.** 방향이 틀렸으면 `meight steer`로 실행 중인 워커에게 정정 지시를 보냅니다. 죽이지 않고, 지금까지의 작업도 잃지 않습니다.
+- **워커는 추측 대신 질문.** 막힌 워커는 멈춰서 질문합니다. Claude가 `meight reply`로 답하면 워커는 맥락을 그대로 가진 채 이어갑니다.
 
 ```
 Claude Code (오케스트레이터)
@@ -22,11 +25,17 @@ EOF
    └─ 디스크 다이제스트: status.json / events.log / result.md   ← 오케스트레이터가 필요할 때만 pull
 ```
 
+## 왜 일을 이렇게 나누나
+
+Anthropic의 새 Mythos급 모델(**Claude Fable 5**)은 기획과 판단에 매우 뛰어납니다 — 전체 그림을 보고, 일을 깔끔하게 쪼개고, 애매한 상황에서 옳은 결정을 내립니다. 대신 토큰이 비쌉니다. Codex(**GPT-5.5**)는 작업 단가가 훨씬 낮으면서 디테일에 강합니다: race condition, 타입 불일치, 빠뜨린 엣지 케이스, 계약 위반.
+
+Meight는 이 둘을 묶어 비용은 낮추고 품질은 올립니다. Claude가 생각(*무엇을, 왜*)을 맡고, Codex 워커가 손발(*어떻게*)이 되고, 서로의 결과물을 교차 리뷰합니다 — 교차 리뷰는 자기 리뷰가 놓치는 것을 잡아냅니다. 작업량이 두 구독으로 분산되는 것은 덤입니다. 전체 정책은 [`CLAUDE.md`](../CLAUDE.md)로 동봉됩니다.
+
 ## 왜 만들었나
 
-2026년 6월 기준, 공개된 Claude↔Codex 오케스트레이션 프로젝트는 전부 Codex **CLI**를 감싸요 — `codex exec` 서브프로세스나 tmux `send-keys`. 그 세대 도구는 실행 중인 워커를 죽이지 않고는 조향할 수 없고, 모든 출력을 오케스트레이터 컨텍스트로 흘리지 않고는 진행을 관찰할 수 없고, 워커가 질문할 방법이 없어요.
+2026년 6월 기준, 공개된 Claude↔Codex 프로젝트는 전부 Codex를 **CLI로** 부립니다 — `codex exec` 서브프로세스를 띄우거나 tmux에 타이핑하는 방식입니다. 그렇게 만든 도구들은 같은 한계를 공유합니다: 실행 중인 워커의 방향을 바꾸려면 죽여야 하고(작업이 날아갑니다), 진행을 보려면 모든 출력을 오케스트레이터 컨텍스트로 부어야 하고, 막힌 워커는 도움을 청할 방법이 없습니다.
 
-OpenAI의 공식 **`openai-codex` Python SDK**(2026-05 릴리스)가 기반을 바꿨습니다: `codex app-server`와 JSON-RPC로 통신하며 `TurnHandle.steer()` / `.interrupt()` / `.stream()`을 공개 API로 노출하고, Codex 프로세스 1개가 N개 스레드를 동시 멀티플렉싱해요. **Meight는 — 우리가 아는 한 — 이 SDK 위에 구축된 최초의 공개 하네스입니다.** tmux 세대가 흉내내던 모든 것이 여기선 네이티브예요:
+OpenAI의 공식 **`openai-codex` Python SDK**(2026년 5월 릴리스)가 이 한계를 없앴습니다. `codex app-server`와 직접 통신하면서 조향·중단·스트리밍을 정식 API로 제공하고, Codex 프로세스 하나가 여러 워커를 동시에 돌립니다. **Meight는 — 우리가 아는 한 — 이 SDK 위에 구축된 최초의 공개 하네스입니다.** 비교하면:
 
 | | tmux/exec 브릿지 | MCP 래퍼 | **Meight** |
 |---|---|---|---|
@@ -46,7 +55,7 @@ git clone https://github.com/keepitmello/claude-codex-meight
 cd claude-codex-meight && ./install.sh   # .venv 생성 + ~/.local/bin/meight
 ```
 
-워커 디스패치 (아무 git 레포에서나 — 상태는 레포별 `.meight/`에 격리):
+워커 디스패치 (아무 git 레포에서나 가능 — 상태는 레포별 `.meight/`에 격리됩니다):
 
 ```bash
 meight dispatch impl-1 --brief-file - --cwd ~/my-repo --sandbox ws <<'EOF'
@@ -57,7 +66,7 @@ EOF
 # exit 0=완료 · 2=실패/중단 · 3=워커 질문 · 4=데몬 사망 · 1=타임아웃
 ```
 
-워커가 질문했다면(exit 3)? 질문은 출력된 결과에 들어있어요. 같은 스레드에서 원샷 답변:
+워커가 질문했다면(exit 3) 질문은 출력된 결과에 들어 있습니다. 같은 스레드에서 원샷으로 답합니다:
 
 ```bash
 meight reply impl-1 --brief "config-a.json 쓰고, legacy 필드는 유지해."
@@ -74,7 +83,7 @@ meight interrupt impl-1
 
 ## Claude Code에서 쓰기
 
-이게 본래 용도예요. dispatch를 **백그라운드 Bash**로 실행하면 — 네이티브 서브에이전트가 끝났을 때처럼 완료 알림에 결과 전문이 실려 옵니다:
+이것이 본래 용도입니다. dispatch를 **백그라운드 Bash**로 실행하면 네이티브 서브에이전트가 끝났을 때처럼 완료 알림에 결과 전문이 실려 옵니다:
 
 ```
 Bash(command: "meight dispatch review-1 --sandbox ro --effort high --brief-file - <<'EOF' ... EOF",
@@ -83,9 +92,9 @@ Bash(command: "meight dispatch review-1 --sandbox ro --effort high --brief-file 
 → <task-notification> exit 0, 출력에 워커의 전체 보고 포함
 ```
 
-모든 브리프 앞에는 하네스 프리앰블이 자동으로 붙어요: (a) `git commit`/`push` 금지 — git은 오케스트레이터 소유 — (b) 막히면 추측하지 말고 `QUESTION:` 문단으로 턴을 끝내라. `--no-preamble`로 끌 수 있어요.
+모든 브리프 앞에는 하네스 프리앰블이 자동으로 붙습니다: (a) `git commit`/`push` 금지 — git은 오케스트레이터 소유 — (b) 막히면 추측하지 말고 `QUESTION:` 문단으로 턴을 끝낼 것. `--no-preamble`로 끌 수 있습니다.
 
-바로 쓸 수 있는 오케스트레이터 프롬프트(역할 분담, 라우팅 테이블, 디스패치 프로토콜, 교차 리뷰 규칙)가 [`CLAUDE.md`](../CLAUDE.md)로 동봉돼요 — 프로젝트나 글로벌 Claude Code 메모리에 복사해서 쓰세요. 자기완결형 Claude Code **스킬**도 [`skills/meight/`](../skills/meight/SKILL.md)로 들어있어요 — `~/.claude/skills/`에 복사하면 트리거 기반 JIT 로딩이 됩니다.
+바로 쓸 수 있는 오케스트레이터 프롬프트(역할 분담, 라우팅 테이블, 디스패치 프로토콜, 교차 리뷰 규칙)가 [`CLAUDE.md`](../CLAUDE.md)로 동봉됩니다 — 프로젝트나 글로벌 Claude Code 메모리에 복사해서 쓰면 됩니다. 자기완결형 Claude Code **스킬**도 [`skills/meight/`](../skills/meight/SKILL.md)에 들어 있습니다 — `~/.claude/skills/`에 복사하면 트리거 기반 JIT 로딩이 됩니다.
 
 ## 커맨드 레퍼런스
 
@@ -101,13 +110,13 @@ Bash(command: "meight dispatch review-1 --sandbox ro --effort high --brief-file 
 
 옵션: `--cwd`(워커 작업 디렉토리 — 파일 범위가 겹치면 git worktree로 분리), `--sandbox ws|ro|full`(기본 `ws`=workspace-write, 리뷰는 `ro`), `--effort low|medium|high|xhigh`(기본 `medium`, 복잡도에 따라 상향), `--model`, `--timeout`.
 
-워커 상태는 `<repo>/.meight/workers/<name>/`에: `brief.md`, `status.json`(상태머신+토큰+변경 파일+현재 활동), `events.log`(의미 있는 이벤트당 1줄), `result.md`(턴별 최종 메시지). `.meight/`는 글로벌 gitignore에 추가하세요.
+워커 상태는 `<repo>/.meight/workers/<name>/`에 기록됩니다: `brief.md`, `status.json`(상태머신+토큰+변경 파일+현재 활동), `events.log`(의미 있는 이벤트당 1줄), `result.md`(턴별 최종 메시지). `.meight/`는 글로벌 gitignore에 추가하세요.
 
-## 견고성
+## 알아두면 좋은 것
 
-동시성 레이어(flock+소켓 프로브 데몬 싱글톤, 워커별 컨트롤 락, stale 스트림 이벤트를 버리는 turn generation-id, tool 대기가 최종 상태로 둔갑하지 못하게 하는 `needs_input` source 구분)는 **Codex 자신의 어드버서리얼 리뷰 5라운드**를 통과했어요 — v1 전에 실결함 13건을 찾아 수정. 전체 결함 장부는 [`ARCHITECTURE.md`](../ARCHITECTURE.md#hardening-history)에. `~/.codex/config.toml`(모델, MCP 서버, 인증)을 그대로 상속합니다 — SDK가 표준 `codex app-server`를 띄우는 구조라서요.
-
-> ⚠️ `openai-codex`는 베타라 버전 핀(`0.1.0b3`). 올릴 때는 [`SPEC.md`](../SPEC.md)의 검증 스위트를 재실행하세요.
+- Meight는 `~/.codex/config.toml`(모델, MCP 서버, 인증)을 그대로 상속합니다 — 내부적으로 SDK가 표준 `codex app-server`를 띄우는 구조입니다. 터미널에서 `codex`가 되면 `meight`도 됩니다.
+- `openai-codex`는 베타라 버전을 고정했습니다(`0.1.0b3`). 올릴 때는 [`SPEC.md`](../SPEC.md)의 검증 스위트를 재실행하세요.
+- 설계 상세 — 동시성 모델, 상태머신, 오케스트레이션 정책 — 는 [`ARCHITECTURE.md`](../ARCHITECTURE.md)에 있습니다.
 
 ## License
 

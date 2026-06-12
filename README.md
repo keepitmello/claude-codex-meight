@@ -2,11 +2,14 @@
 
 **English** | [한국어](./docs/README.ko.md)
 
-> **An agent-first harness that lets Claude Code drive OpenAI Codex workers like native subagents** — built directly on the official `openai-codex` Python SDK. CLI: `meight`.
+> **Claude Code plans, Codex builds.** Meight is the harness in between: Claude hands a task to a Codex worker with one command, keeps working, and gets the result back when it's done — just like using one of its own subagents. Built on the official `openai-codex` Python SDK. CLI: `meight`.
 
-Most Claude↔Codex bridges are built for *humans watching terminals*: tmux panes to attach to, kanban boards to click, stdout to scrape. **Meight is built for the orchestrating agent itself.** The design question was never "what looks nice in a terminal" — it was *"what does Claude need so that dispatching a Codex worker feels exactly like spawning one of its own subagents?"*
+Most Claude↔Codex bridges are built for *a human watching a terminal* — tmux panes to attach to, dashboards to click. Meight is built for the agent doing the orchestration. In practice that means:
 
-The answer: one-shot dispatch with an exit-code contract, pull-based progress digests that cost ~zero context tokens, programmatic mid-turn steering, and a worker→orchestrator question protocol. All of it native — no tmux, no screen-scraping, no MCP indirection.
+- **Fire and forget.** One command sends a task to a worker. When it finishes, the full result arrives in the completion notification. No polling, no copy-paste.
+- **Cheap to watch.** Workers write progress to small files on disk. Claude peeks only when it wants to (`meight status`) — nothing streams into its context window.
+- **Fixable mid-flight.** Going the wrong way? `meight steer` tells the running worker to change course — without killing it or losing the work done so far.
+- **Workers ask instead of guessing.** A blocked worker stops and asks a question. Claude answers with `meight reply`, and the worker continues with everything it already knew.
 
 ```
 Claude Code (orchestrator)
@@ -22,11 +25,17 @@ per-repo daemon ──── official openai-codex SDK ──── codex app-se
    └─ disk digests: status.json / events.log / result.md   ← orchestrator pulls on demand
 ```
 
+## Why split the work this way
+
+Anthropic's new Mythos-class models (**Claude Fable 5**) are remarkably good at planning and judgment — seeing the whole picture, breaking work down, making the right call when things are ambiguous. They are also expensive to run. Codex (**GPT-5.5**) costs much less per unit of work and is very good at the details: race conditions, type drift, missed edge cases, contract violations.
+
+Meight pairs them so you get higher quality at lower cost: Claude does the thinking (*what and why*), Codex workers do the building (*how*), and each reviews the other's output — cross-model review catches what self-review misses. A side benefit: the workload spreads across two subscriptions. The full policy ships as [`CLAUDE.md`](./CLAUDE.md).
+
 ## Why this exists
 
-As of June 2026, every public Claude↔Codex orchestration project wraps the Codex **CLI** — `codex exec` subprocesses or tmux `send-keys`. That generation of tooling cannot steer a running worker without killing it, cannot observe progress without streaming everything into the orchestrator's context window, and cannot let a worker ask a question.
+As of June 2026, every public Claude↔Codex project we could find drives Codex through its **CLI** — spawning `codex exec` subprocesses or typing into tmux. Tools built that way share the same limits: to redirect a running worker you have to kill it (and lose its work), to see progress you have to pipe everything into the orchestrator's context, and a stuck worker has no way to ask for help.
 
-OpenAI's official **`openai-codex` Python SDK** (released 2026-05) changed the substrate: it speaks JSON-RPC to `codex app-server` and exposes `TurnHandle.steer()` / `.interrupt()` / `.stream()` as public APIs, with one Codex process multiplexing N concurrent threads. **Meight is — to our knowledge — the first public harness built on it.** Everything the tmux generation faked, this does natively:
+OpenAI's official **`openai-codex` Python SDK** (released May 2026) removed those limits: it talks to `codex app-server` directly and exposes steering, interrupting, and streaming as real APIs, with a single Codex process running many workers at once. **Meight is — to our knowledge — the first public harness built on it.** Side by side:
 
 | | tmux/exec bridges | MCP wrappers | **Meight** |
 |---|---|---|---|
@@ -103,11 +112,11 @@ Options: `--cwd` (worker workdir — use separate git worktrees for overlapping 
 
 Worker state lives in `<repo>/.meight/workers/<name>/`: `brief.md`, `status.json` (state machine + tokens + files changed + last activity), `events.log` (one line per meaningful event), `result.md` (final message per turn). Add `.meight/` to your global gitignore.
 
-## Hardening
+## Good to know
 
-The concurrency layer (daemon singleton via `flock` + socket probe, per-worker control locks, turn generation-ids that drop stale stream events, a `needs_input` source distinction so tool-waits can't masquerade as final states) survived **five rounds of adversarial review by Codex itself** — 13 real defects found and fixed before v1. The full defect ledger is in [`ARCHITECTURE.md`](./ARCHITECTURE.md#hardening-history). Inherits your `~/.codex/config.toml` (model, MCP servers, auth) — the SDK spawns a standard `codex app-server` under the hood.
-
-> ⚠️ `openai-codex` is pinned (`0.1.0b3`, beta). When bumping, re-run the verification suite in [`SPEC.md`](./SPEC.md).
+- Meight inherits your `~/.codex/config.toml` as-is (model, MCP servers, auth) — under the hood the SDK runs a standard `codex app-server`. If `codex` works in your terminal, `meight` works.
+- `openai-codex` is pinned (`0.1.0b3`, beta). When bumping, re-run the verification suite in [`SPEC.md`](./SPEC.md).
+- Design details — the concurrency model, state machine, and orchestration policy — live in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ## License
 
