@@ -34,7 +34,8 @@ EVENT_LINE_MAX = 300
 # Bidirectional workers: automatically prepend this before start/follow briefs (disable with --no-preamble)
 PREAMBLE = """[Harness protocol — applies on top of the task below]
 - Never run `git commit` or `git push`. Leave all changes in the working tree.
-- If you are blocked on a decision or missing information that only the orchestrator can provide, do NOT guess: finish your reply with a final paragraph starting with `QUESTION:` stating exactly what you need. You will receive the answer as a follow-up turn in this same thread.
+- You are a teammate on this work, not a tool that only executes. If you see a better approach, the brief rests on a wrong assumption, or there's a tradeoff worth weighing before a direction is locked in, don't silently comply or guess — raise it in a final paragraph starting with `QUESTION:` and the orchestrator will discuss and adjust direction with you. Judge by the bar: raise it when the call could change direction — scope, approach, or risk — and just decide local implementation choices yourself, noting them as judgment calls in your report.
+- Likewise, when you are genuinely blocked on a decision or missing information that only the orchestrator can provide, end with a `QUESTION:` paragraph stating exactly what you need instead of guessing. Either way you receive the answer as a follow-up turn in this same thread.
 """
 
 SANDBOX_MAP = {

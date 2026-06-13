@@ -150,9 +150,11 @@ By default, `start`, `dispatch`, `follow`, and `reply` prepend the harness
 protocol preamble to the brief. `--no-preamble` disables this.
 
 The preamble requires workers to leave changes in the working tree and to avoid
-`git commit` or `git push`. If a worker is blocked on information only the
-orchestrator can provide, the final response must end with a paragraph starting
-with `QUESTION:`.
+`git commit` or `git push`. It also frames the worker as a teammate: rather than
+guessing or silently complying, a worker ends its final response with a paragraph
+starting with `QUESTION:` — either when blocked on information only the
+orchestrator can provide, or to raise a better approach, a wrong assumption, or a
+decision that could shift direction.
 
 When a completed turn's last paragraph starts with `QUESTION:`, the daemon
 promotes the worker to:

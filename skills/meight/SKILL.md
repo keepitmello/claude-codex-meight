@@ -8,7 +8,7 @@ description: "Codex worker dispatch harness (global CLI: meight, repo: claude-co
 Harness for driving Codex workers in parallel from a Claude orchestrator — usable from any repo via the `meight` CLI. Worker state is isolated per repo under `.meight/` (gitignored).
 
 **Operating model (self-contained — works without any other prompt file):**
-- **You (Claude) are the tech lead**: own direction, task decomposition, integration, verification, user communication, and git. **Codex workers are your implementers/reviewers**: strong on details (races, type drift, edge cases), weaker on big-picture — you decide *what and why*, workers execute *how*.
+- **You (Claude) hold the direction**: task decomposition, integration, verification, user communication, and git. **Codex workers are teammates, not just executors**: strong on details (races, type drift, edge cases), often weaker on the big picture. So you own *what and why* and they own *how* — but run it two-way: pull a worker in to sounding-board a hard call or sketch the big picture together, and expect workers to push back when they spot a better path. Discuss and adjust more than you dictate.
 - **Routing**: bounded implementation with a clear spec / code review / browser & runtime work → Codex workers. Exploration fan-out / fresh-context verification / harness-tool work → Claude subagents.
 - **Cross-model review is mandatory**: Codex implements → a Claude agent verifies; Claude implements → a Codex worker reviews. Same-model self-review doesn't count.
 - **Workers never commit** (the harness preamble enforces it) — review the working tree and commit yourself. A worker's "done" is a claim; your verification makes it a fact.
@@ -72,7 +72,7 @@ Goal / Scope / **Existing patterns (REQUIRED — without pointers Codex misdiagn
 
 ## When a worker asks a question (exit 3)
 
-In supervised mode, read the question with `meight status <name>` (`needs_input_detail`) or `meight result <name>`. In one-shot `dispatch`/`reply`, the question is included in the printed result. Answer in one shot:
+A worker's `QUESTION:` isn't only "I'm blocked" — under the teammate preamble it's also how a worker flags a better approach, a shaky assumption, or a tradeoff that needs your call. Treat it as a discussion opener, not just an unblock request. In supervised mode, read it with `meight status <name>` (`needs_input_detail`) or `meight result <name>`; in one-shot `dispatch`/`reply` it's in the printed result. Answer — or discuss back — in one shot:
 
 ```bash
 # via run_in_background → completion notification carries the last-turn result (same exit-code contract as dispatch)
@@ -91,6 +91,21 @@ meight interrupt <name>             # cancel (idempotent)
 ```
 
 `status` is part of the normal supervised loop, not a side channel. Use it at checkpoint wake-ups and after suspicious output. Running several workers at once? Pull the all-worker `status` table and only open up the ones that look off — don't wait on each one individually. `interrupt` is for clearly wrong or unsafe runs where steering is not enough.
+
+## Consult a worker (sounding board, not just delegation)
+
+The channel runs both ways — when *you* are stuck, unsure of an approach, or want to pressure-test a design before committing, dispatch a read-only consult instead of a build order:
+
+```bash
+meight start consult-x --sandbox ro --effort high --cwd <repo root> --brief-file - <<'EOF'
+Thinking through <problem>. My current lean is <A>, but <concern>. Read <files> and tell me: is <A> sound, what am I missing, is there a better approach? No code changes — just your read and reasoning.
+EOF
+meight wait consult-x --timeout <expected>
+# Refine direction together on the same thread:
+meight follow consult-x --brief "Good point on Y. If we go that way, how does Z hold up?"
+```
+
+This is the sibling of cross-model review: review checks a finished artifact, consult shapes the thinking before or during the work. Fold what comes back into the direction — that's what a teammate is for.
 
 ## Review worker pattern
 

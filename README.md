@@ -14,7 +14,7 @@ Most Claude↔Codex bridges are built for *a human watching a terminal* — tmux
 - **Cheap to watch.** Workers write progress to small files on disk. Claude peeks only when it chooses to — nothing streams into its context window.
 - **Fixable mid-flight.** Going the wrong way? `meight steer` tells the running worker to change course without killing it or losing the work done so far.
 - **One-shot when it fits.** `meight dispatch` still gives fire-and-forget behavior for trivial, short, low-risk tasks.
-- **Workers ask instead of guessing.** A blocked worker stops and asks a question. Claude answers with `meight reply`, and the worker continues with everything it already knew.
+- **A teammate, not just a worker.** Codex doesn't only execute — a worker flags a better path or a shaky assumption (not only when blocked), and Claude can consult a worker to pressure-test its own thinking. Questions and answers flow both ways on the same thread (`meight reply`, `meight follow`).
 
 ```
 Claude Code (orchestrator)
@@ -38,7 +38,7 @@ per-repo daemon ──── official openai-codex SDK ──── codex app-se
 
 Anthropic's new Mythos-class models (**Claude Fable 5**) are remarkably good at planning and judgment — seeing the whole picture, breaking work down, making the right call when things are ambiguous. They are also expensive to run. Codex (**GPT-5.5**) costs much less per unit of work and is very good at the details: race conditions, type drift, missed edge cases, contract violations.
 
-Meight pairs them so you get higher quality at lower cost: Claude does the thinking (*what and why*), Codex workers do the building (*how*), and each reviews the other's output — cross-model review catches what self-review misses. A side benefit: the workload spreads across two subscriptions. The full policy ships as [`CLAUDE.md`](./CLAUDE.md).
+Meight pairs them so you get higher quality at lower cost: Claude holds the *what and why*, Codex workers own the *how* — but they work as teammates, reviewing each other's output and talking through the hard calls (a worker pushes back when it sees a better path; Claude consults a worker when it's stuck). Cross-model review catches what self-review misses. A side benefit: the workload spreads across two subscriptions. The full policy ships as [`CLAUDE.md`](./CLAUDE.md).
 
 ## Why this exists
 
@@ -118,7 +118,7 @@ Bash(command: "meight wait review-1 --timeout 300",
 
 When the worker reaches a terminal state, the notification is `0` (completed), `2` (failed/interrupted), or `3` (worker question). Use `meight result review-1` for the full report. On `0`, verify the work before accepting it. On `3`, answer with `meight reply`.
 
-Every brief is automatically prefixed with a harness preamble that (a) forbids `git commit`/`push` — git stays owned by the orchestrator — and (b) instructs the worker to end with a `QUESTION:` paragraph instead of guessing when blocked. Disable with `--no-preamble`.
+Every brief is automatically prefixed with a harness preamble that (a) forbids `git commit`/`push` — git stays owned by the orchestrator — and (b) frames the worker as a teammate: rather than guessing or silently complying, end with a `QUESTION:` paragraph when blocked *or* to flag a better approach, a wrong assumption, or a decision that could shift direction. Disable with `--no-preamble`.
 
 A drop-in orchestrator prompt (role split, routing table, dispatch protocol, cross-model review rules) ships as [`CLAUDE.md`](./CLAUDE.md) — copy it into your project or global Claude Code memory. A self-contained Claude Code **skill** ships at [`skills/meight/`](./skills/meight/SKILL.md) — copy it into `~/.claude/skills/` for trigger-based JIT loading.
 
