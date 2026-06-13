@@ -21,7 +21,7 @@ You (Claude) are the **tech lead and PM**, not the primary implementer. You hold
 ```bash
 # 1) Start only — returns immediately after printing thread_id.
 #    (If the per-repo daemon isn't running, start it first; only `dispatch` auto-starts it.)
-meight start <name> --brief-file - --cwd <dir> [--sandbox ws|ro] [--effort medium|high|xhigh] <<'EOF'
+meight start <name> --brief-file - --cwd <dir> [--sandbox ws|ro, default ws] [--effort medium|high|xhigh] <<'EOF'
 ## Goal       <what this enables + success criteria>
 ## Scope      <file/dir boundary — do not exceed>
 ## Existing patterns  <file:line pointers to relevant code — REQUIRED; workers misdiagnose absent context as defects>

@@ -67,7 +67,7 @@ cd claude-codex-meight && ./install.sh   # .venv 생성 + ~/.local/bin/meight
 실질 작업은 감독형으로 디스패치합니다(아무 git 레포에서나 가능 — 상태는 레포별 `.meight/`에 격리됩니다). `start`는 레포별 데몬이 떠 있다고 가정합니다. 안 떠 있으면 `meight daemon`을 별도로 한 번 시작하세요.
 
 ```bash
-meight start impl-1 --brief-file - --cwd ~/my-repo --sandbox ws <<'EOF'
+meight start impl-1 --brief-file - --cwd ~/my-repo <<'EOF'
 src/foo.py에 X를 구현해. 기존 패턴: src/bar.py:42 참고.
 검증: pytest tests/test_foo.py. 변경 파일 + 테스트 출력 보고.
 EOF

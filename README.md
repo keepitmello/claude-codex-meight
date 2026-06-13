@@ -67,7 +67,7 @@ cd claude-codex-meight && ./install.sh   # creates .venv + ~/.local/bin/meight
 For substantial work, use supervised dispatch (from any git repo — state is isolated per repo under `.meight/`). `start` expects the per-repo daemon to be running; if it is not, start it once separately with `meight daemon`.
 
 ```bash
-meight start impl-1 --brief-file - --cwd ~/my-repo --sandbox ws <<'EOF'
+meight start impl-1 --brief-file - --cwd ~/my-repo <<'EOF'
 Implement X in src/foo.py. Existing pattern: see src/bar.py:42.
 Verify with: pytest tests/test_foo.py. Report changed files + test output.
 EOF
