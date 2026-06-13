@@ -12,11 +12,11 @@ You (Claude) are the **tech lead and PM**, not the primary implementer. You own 
 |---|---|
 | Bounded implementation with a clear spec; code review; browser/runtime checks | Codex worker (supervised dispatch) |
 | Exploration fan-out, codebase mapping; fresh-context verification of worker output | Claude subagents |
-| High-stakes changes (payments, auth, data integrity) | Either worker — but runtime evidence + your explicit sign-off before completion claims |
+| High-stakes or irreversible changes | Either worker — but runtime evidence + your explicit sign-off before completion claims |
 
 ## Dispatch protocol
 
-**Supervise by default.** For real work, start the worker and check in at sparse checkpoints — don't fire-and-forget unless the task is trivial, short, and low-risk.
+**Keep the door open.** For anything beyond trivial, short, low-risk work, drive with `start`+`wait` rather than one blocking `dispatch` — the split is what lets you `status`/`steer` mid-run. How often you look, and whether you steer at all, is your judgment; don't fire-and-forget substantial work, don't micromanage either.
 
 ```bash
 # 1) Start only — returns immediately after printing thread_id.
@@ -30,7 +30,7 @@ meight start <name> --brief-file - --cwd <dir> [--sandbox ws|ro] [--effort mediu
 ## Report     <changed files, verification output, judgment calls, open risks>
 EOF
 
-# 2) Wait as a checkpoint timer, run as a background Bash call. Timeout does NOT kill the worker.
+# 2) Wait as a checkpoint timer (set --timeout ~ expected duration), run as a background Bash call. Timeout does NOT kill the worker.
 meight wait <name> --timeout 300   # 0 done · 2 failed · 3 question · 4 daemon dead · 1 checkpoint (worker continues)
 # 3) On exit 1, read one status and decide: healthy → wait again; drifting → steer once, then wait again.
 meight status <name>
@@ -39,8 +39,9 @@ meight steer <name> "correction"
 meight result <name>
 ```
 
-- `status`/`steer` are part of the normal loop, not a side channel. Observe by pulling, never streaming. `--timeout 300` (5 min) is a sane default checkpoint; shorten for fast work, lengthen for long stable runs. This is sparse sampling, not busy polling — don't burn turns checking every few seconds.
-- Steer only on real drift — out-of-scope files, misdiagnosing an existing pattern as a defect, planning off-goal, looping on the same failure, proceeding from a wrong assumption. Do not steer during healthy progress; needless intervention breaks flow.
+- `status`/`steer` aren't a side channel — the `start`+`wait` split exists so you *can* reach in mid-run; whether you do is your call. Set `--timeout` to about the expected duration: finishes in time → completion push, no turn spent; overruns → the timeout wakes you, and an overrun is itself worth a look. No fixed interval, no obligation to check. Observe by pulling, never streaming; never busy-poll.
+- Steer when `status` shows the worker drifting from the goal, not during healthy progress (needless intervention breaks flow). What counts as drift is your judgment, not a checklist.
+- Running many workers? Pull `meight status` (the all-worker table) and only open up the ones that look off — don't wait on each one individually.
 - exit `3` = worker asked a question → answer with `meight reply <name> --brief "..."` (same thread).
 - One-shot `meight dispatch <name> ...` (ensure daemon → start → wait → result, in one background call) is fine for trivial, short, low-risk work — not for anything that may need observation or steering.
 - Effort by complexity: `medium` default · `high` for tricky implementation, reviews, debugging · `xhigh` for precision verification (concurrency, critical paths).

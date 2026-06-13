@@ -15,7 +15,7 @@ Harness for driving Codex workers in parallel from a Claude orchestrator — usa
 
 ## Default: supervised dispatch
 
-For real implementation, review, debugging, runtime, or multi-file work, supervise the worker with sparse checkpoints. Do not fire-and-forget unless the task is trivial, short, and low-risk.
+For anything beyond trivial, short, low-risk work, drive the worker with `start` + `wait` instead of one blocking `dispatch`. The split is the whole point: while the worker runs you can pull `status` and `steer` it — one-shot `dispatch` shuts that door until the work is already done. *Whether* you check in, how often, and *whether* you steer are your judgment, not a fixed cadence — the aim is to keep the door open, not to micromanage.
 
 ```bash
 # 1) Start only. This returns immediately after printing thread_id.
@@ -25,7 +25,7 @@ meight start <name> --brief-file - --cwd <dir> \
 <brief>
 EOF
 
-# 2) Wait as a checkpoint timer. Timeout does NOT kill the worker.
+# 2) Wait as a checkpoint timer (set --timeout to roughly the expected duration). Timeout does NOT kill the worker.
 meight wait <name> --timeout 300
 # exit: 0=completed, 2=failed/interrupted, 3=needs_input (worker question),
 #       4=daemon dead, 1=checkpoint timeout while worker continues
@@ -42,16 +42,9 @@ meight wait <name> --timeout 300
 meight result <name>
 ```
 
-Use `--timeout 300` as the default checkpoint interval. Short, fast tasks can use a smaller interval; long stable tasks can use a larger one. This is not busy polling: do not burn turns by checking every few seconds. The point is a sparse wake-up, one status read, then either wait again or steer.
+Set `--timeout` to roughly how long you expect the work to take. Finishes inside that window → you get the completion push and never spend a turn checking. Overruns → the timeout wakes you, and an overrun is itself a signal worth one `status` look. There's no fixed interval and no obligation to check — a sparse wake-up, then your call: wait again, steer, or just let it run. Never busy-poll (checking every few seconds burns turns for nothing).
 
-Steer only when there is evidence the worker is drifting:
-- Touching files/modules outside scope
-- Misdiagnosing an existing pattern as a defect and trying to "fix" it
-- Planning in a direction that no longer matches the goal
-- Repeating the same failed action or bouncing around the same file
-- Proceeding from a wrong assumption
-
-Do not steer during normal progress. Unneeded intervention breaks worker flow.
+Steer when `status` shows the worker drifting from the goal — and not during healthy progress, since needless intervention breaks its flow. What counts as drift is your judgment, not a checklist.
 
 When the worker reaches a terminal state, `wait` returns immediately with `0` (completed), `2` (failed/interrupted), or `3` (QUESTION). `wait` prints a status summary; use `meight result <name>` for the full report or question. On exit `0`, cross-model verify before accepting the work. On exit `3`, answer with `reply`.
 
@@ -69,7 +62,7 @@ EOF
 - `dispatch` still exists and is useful for small, bounded work: it auto-starts the daemon, starts the worker, waits, and prints the result in one call
 - Do not use one-shot dispatch for substantial work that may need observation or steering
 - Implementation = `--sandbox ws` (default) / review & analysis = `--sandbox ro`
-- Model: gpt-5.5 + Fast (priority tier, inherited from ~/.codex/config.toml). **Pick effort by complexity**: medium (default, routine implementation) / high (tricky implementation, code review, debugging) / xhigh (precision verification — concurrency, money-path — and hard design)
+- Model: gpt-5.5 + Fast (priority tier, inherited from ~/.codex/config.toml). **Pick effort by complexity**: medium (default, routine implementation) / high (tricky implementation, code review, debugging) / xhigh (precision verification — concurrency, irreversible or hard-to-verify changes — and hard design)
 - N parallel workers OK. Overlapping file scopes → separate git worktrees via `--cwd`
 - A harness preamble is auto-prepended to every brief: **no commit/push** + end with a `QUESTION:` paragraph when blocked
 
@@ -97,7 +90,7 @@ meight steer <name> "instruction"   # mid-turn injection (no work lost; running 
 meight interrupt <name>             # cancel (idempotent)
 ```
 
-`status` is part of the normal supervised loop, not a side channel. Use it at checkpoint wake-ups and after suspicious output. `interrupt` is for clearly wrong or unsafe runs where steering is not enough.
+`status` is part of the normal supervised loop, not a side channel. Use it at checkpoint wake-ups and after suspicious output. Running several workers at once? Pull the all-worker `status` table and only open up the ones that look off — don't wait on each one individually. `interrupt` is for clearly wrong or unsafe runs where steering is not enough.
 
 ## Review worker pattern
 
@@ -115,7 +108,7 @@ meight wait review-X --timeout 300
 
 - Worker artifacts: `<repo>/.meight/workers/<name>/{brief.md,status.json,events.log,result.md}`
 - Low-level commands: daemon / start / wait / result / list / shutdown [--force]
-- Money-path work: worker result + runtime evidence + orchestrator sign-off, always
+- High-stakes or irreversible work: never accept a worker's "done" on its word — require runtime evidence plus your own sign-off, always
 - **Restart the daemon after editing meight.py** (a live daemon keeps running old code)
 - Beta SDK (`openai-codex==0.1.0b3`, pinned): re-run the SPEC.md verification suite when upgrading
 - Source & docs (README / SPEC / ARCHITECTURE): github.com/keepitmello/claude-codex-meight

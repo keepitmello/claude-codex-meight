@@ -10,8 +10,8 @@
 
 Most Claude↔Codex bridges are built for *a human watching a terminal* — tmux panes to attach to, dashboards to click. Meight is built for the agent doing the orchestration. In practice that means:
 
-- **Supervised by default.** Start a worker, wake up at sparse checkpoints, inspect `meight status`, and steer only when the run is drifting.
-- **Cheap to watch.** Workers write progress to small files on disk. Claude peeks once per checkpoint — nothing streams into its context window.
+- **Supervised, on your terms.** Start a worker; the `start`+`wait` split lets Claude pull `meight status` and `steer` mid-run. How often it checks, and whether it steers, is its judgment — not a fixed cadence.
+- **Cheap to watch.** Workers write progress to small files on disk. Claude peeks only when it chooses to — nothing streams into its context window.
 - **Fixable mid-flight.** Going the wrong way? `meight steer` tells the running worker to change course without killing it or losing the work done so far.
 - **One-shot when it fits.** `meight dispatch` still gives fire-and-forget behavior for trivial, short, low-risk tasks.
 - **Workers ask instead of guessing.** A blocked worker stops and asks a question. Claude answers with `meight reply`, and the worker continues with everything it already knew.
@@ -127,7 +127,7 @@ A drop-in orchestrator prompt (role split, routing table, dispatch protocol, cro
 Small decisions everywhere assume the user is an LLM agent, not a person at a terminal:
 
 - **Exit codes are the API.** `0` done, `2` failed, `3` question, `4` daemon gone. The agent branches on a number instead of reading prose and guessing whether things worked. Unknown outcomes map to *failed*, never to *completed* — exit 0 can be trusted.
-- **Sparse checkpoints, not busy polling.** `wait --timeout 300` wakes the orchestrator every few minutes or sooner if the worker finishes. A timeout returns exit `1` and leaves the worker running, so the agent can inspect once and go back to waiting. This avoids tight polling loops that burn turns while keeping `status` and `steer` alive.
+- **Sparse checkpoints, not busy polling.** Set `wait --timeout` near the work's expected duration: finish in time and the orchestrator just gets the completion push; overrun and the timeout wakes it for one `status` look. A timeout returns exit `1` and leaves the worker running. No fixed interval, no obligation to check — `status` and `steer` stay available without tight polling loops that burn turns.
 - **Names, not session IDs.** Workers are addressed as `review-1`, follow-ups included. No UUID bookkeeping to get wrong.
 - **Results survive on disk.** `result.md` stays re-readable — if the agent's context gets compacted mid-session, nothing is lost.
 - **Status is pre-digested.** Instead of raw logs, `status` returns what a decision needs: what the worker is doing now, which files changed, its last thought. Exactly enough to choose between wait, steer, and interrupt.
