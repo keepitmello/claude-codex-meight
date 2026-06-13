@@ -148,13 +148,13 @@ Small decisions everywhere assume the user is an LLM agent, not a person at a te
 | `meight follow <name> --brief ...` | Low-level: new turn on the same thread (context preserved) |
 | `meight result / list / daemon / ping / shutdown` | Low-level support commands |
 
-Options: `--cwd` (worker workdir — use separate git worktrees for overlapping file scopes), `--sandbox ws|ro|full` (default `ws` = workspace-write; reviews run `ro`), `--effort low|medium|high|xhigh` (default `medium`; raise by task complexity), `--model`, `--timeout`.
+Options: `--cwd` (worker workdir — use separate git worktrees for overlapping file scopes), `--sandbox ws|ro|full` (default `ws` = workspace-write; reviews run `ro`), `--effort low|medium|high|xhigh` (default `medium`; raise by task complexity), `--model`, `--fast`/`--no-fast` (per-worker toggle for the codex Fast/priority tier — `--no-fast` for a cheaper run; omit to inherit config), `--timeout`.
 
 Worker state lives in `<repo>/.meight/workers/<name>/`: `brief.md`, `status.json` (state machine + tokens + files changed + last activity), `events.log` (one line per meaningful event), `result.md` (final message per turn). Add `.meight/` to your global gitignore.
 
 ## Good to know
 
-- Meight inherits your `~/.codex/config.toml` as-is (model, MCP servers, auth) — under the hood the SDK runs a standard `codex app-server`. If `codex` works in your terminal, `meight` works.
+- Meight inherits your `~/.codex/config.toml` as-is (model, MCP servers, auth) — under the hood the SDK runs a standard `codex app-server`. If `codex` works in your terminal, `meight` works. Per-worker overrides (`--model`, `--fast`/`--no-fast`) take precedence over the config for that worker.
 - `openai-codex` is pinned (`0.1.0b3`, beta). When bumping, re-run the verification suite in [`SPEC.md`](./SPEC.md).
 - Design details — the concurrency model, state machine, and orchestration policy — live in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 

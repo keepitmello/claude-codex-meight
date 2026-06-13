@@ -62,7 +62,7 @@ EOF
 - `dispatch` still exists and is useful for small, bounded work: it auto-starts the daemon, starts the worker, waits, and prints the result in one call
 - Do not use one-shot dispatch for substantial work that may need observation or steering
 - Implementation = `--sandbox ws` (default) / review & analysis = `--sandbox ro`
-- Model: gpt-5.5 + Fast (priority tier, inherited from ~/.codex/config.toml). **Pick effort by complexity**: medium (default, routine implementation) / high (tricky implementation, code review, debugging) / xhigh (precision verification — concurrency, irreversible or hard-to-verify changes — and hard design)
+- Model: gpt-5.5 + Fast (priority tier, inherited from ~/.codex/config.toml). Toggle it per worker with `--fast`/`--no-fast` on `start`/`dispatch` (`--no-fast` = cheaper non-priority tier; omit to inherit config). **Pick effort by complexity**: medium (default, routine implementation) / high (tricky implementation, code review, debugging) / xhigh (precision verification — concurrency, irreversible or hard-to-verify changes — and hard design)
 - N parallel workers OK. Overlapping file scopes → separate git worktrees via `--cwd`
 - A harness preamble is auto-prepended to every brief: **no commit/push** + end with a `QUESTION:` paragraph when blocked
 

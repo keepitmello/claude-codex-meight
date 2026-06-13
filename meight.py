@@ -178,13 +178,14 @@ class Worker:
     """One worker = one Codex Thread plus a digest file set."""
 
     def __init__(self, name: str, home: Path, cwd: str, sandbox: str,
-                 model: str | None, effort: str):
+                 model: str | None, effort: str, service_tier: str | None = None):
         self.name = name
         self.dir = home / "workers" / name
         self.cwd = cwd
         self.sandbox = sandbox  # normalized key such as "workspace_write"
         self.model = model
         self.effort = effort
+        self.service_tier = service_tier  # None -> inherit ~/.codex/config.toml; else override per worker
         self.thread = None       # openai_codex.Thread (kept while daemon lives -> reused for follow)
         self.handle = None       # TurnHandle
         self.consumer: threading.Thread | None = None
@@ -219,6 +220,7 @@ class Worker:
             "sandbox": self.sandbox.replace("_", "-"),
             "model": self.model,
             "effort": self.effort,
+            "service_tier": self.service_tier,
             "current_item": None,
             "plan": [],
             "files_changed": [],
@@ -713,6 +715,7 @@ class Daemon:
             return {"ok": False, "error": f"invalid sandbox: {req.get('sandbox')}"}
         model = req.get("model")
         effort = req.get("effort") or "medium"
+        service_tier = req.get("service_tier")
 
         with self.reg_lock:
             existing = self.workers.get(name)
@@ -725,7 +728,7 @@ class Daemon:
                     return {"ok": False,
                             "error": f"worker '{name}' previous stream is still finishing — retry shortly"}
 
-            w = Worker(name, self.home, cwd, sandbox_key, model, effort)
+            w = Worker(name, self.home, cwd, sandbox_key, model, effort, service_tier)
             w.dir.mkdir(parents=True, exist_ok=True)
             # Restarting the same name creates a new worker, so reset prior outputs.
             for fname in ("events.log", "result.md", "debug-events.log"):
@@ -743,7 +746,7 @@ class Daemon:
                     w.status["thread_id"] = thread.id
                 w.handle = thread.turn(
                     turn_input, cwd=cwd, sandbox=getattr(Sandbox, sandbox_key),
-                    model=model, effort=effort,
+                    model=model, effort=effort, service_tier=service_tier,
                 )
             except Exception as e:
                 # If SDK failure leaves a starting zombie, wait polls until timeout.
@@ -797,7 +800,7 @@ class Daemon:
             try:
                 w.handle = w.thread.turn(
                     turn_input, cwd=w.cwd, sandbox=getattr(Sandbox, w.sandbox),
-                    model=w.model, effort=w.effort,
+                    model=w.model, effort=w.effort, service_tier=w.service_tier,
                 )
             except Exception as e:
                 w.mark_failed(f"follow turn failed (was {prev_state}): {type(e).__name__}: {e}")
@@ -965,10 +968,15 @@ def cmd_daemon(args, home: Path) -> int:
 
 
 def start_request(args, home: Path) -> dict:
+    # --fast/--no-fast is the user-facing knob; map it to a codex service tier.
+    # priority = Fast; default = a non-priority tier; None = inherit ~/.codex/config.toml.
+    fast = getattr(args, "fast", None)
+    service_tier = None if fast is None else ("priority" if fast else "default")
     return send_request(home, {
         "cmd": "start", "name": args.name, "brief": read_brief(args),
         "cwd": str(Path(args.cwd).resolve()) if args.cwd else os.getcwd(),
         "sandbox": args.sandbox, "model": args.model, "effort": args.effort,
+        "service_tier": service_tier,
         "no_preamble": args.no_preamble,
     })
 
@@ -1012,7 +1020,7 @@ def cmd_status(args, home: Path) -> int:
             print(json.dumps(st, ensure_ascii=False, indent=2))
         else:
             print(summary_line(st))
-            for key in ("thread_id", "turn_id", "cwd", "sandbox", "model", "effort",
+            for key in ("thread_id", "turn_id", "cwd", "sandbox", "model", "effort", "service_tier",
                         "started_at", "updated_at", "turns",
                         "needs_input_source", "needs_input_detail"):
                 print(f"  {key}: {st.get(key)}")
@@ -1182,6 +1190,8 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--sandbox", default="ws", choices=sorted(SANDBOX_MAP.keys()))
         sp.add_argument("--model")
         sp.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh"])
+        sp.add_argument("--fast", action=argparse.BooleanOptionalAction, default=None,
+                        help="use the priority service tier (codex 'Fast'); --no-fast forces a non-priority tier for a cheaper run; omit to inherit ~/.codex/config.toml")
         sp.add_argument("--no-preamble", action="store_true", help="disable prepending the harness protocol preamble")
 
     sp = sub.add_parser("start", help="start a new worker")
