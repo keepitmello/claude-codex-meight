@@ -6,39 +6,36 @@
 
 **English** | [한국어](./docs/README.ko.md)
 
-> **Claude Code plans, Codex builds.** Meight is the harness in between: Claude hands a task to a Codex worker, checks in at sparse checkpoints, steers only when needed, and gets the result back when it's done — just like supervising one of its own subagents. Built on the official `openai-codex` Python SDK. CLI: `meight`.
+> **A two-way harness for Claude × Codex.** Not just dispatch-and-wait: Codex workers raise questions and flag better ideas mid-run, the Claude orchestrator consults them when it's stuck, and both sides review each other's work — a real collaboration loop, not one model bossing the other around. Built on the official `openai-codex` Python SDK. CLI: `meight`.
 
-Most Claude↔Codex bridges are built for *a human watching a terminal* — tmux panes to attach to, dashboards to click. Meight is built for the agent doing the orchestration. In practice that means:
+Most Claude↔Codex bridges are built for *a human watching a terminal* — tmux panes to attach to, dashboards to click. Meight is built for the agents themselves: a Claude orchestrator and Codex workers collaborating directly, with no human in the loop. In practice that means:
 
-- **Supervised, on your terms.** Start a worker; the `start`+`wait` split lets Claude pull `meight status` and `steer` mid-run. How often it checks, and whether it steers, is its judgment — not a fixed cadence.
-- **Cheap to watch.** Workers write progress to small files on disk. Claude peeks only when it chooses to — nothing streams into its context window.
-- **Fixable mid-flight.** Going the wrong way? `meight steer` tells the running worker to change course without killing it or losing the work done so far.
-- **One-shot when it fits.** `meight dispatch` still gives fire-and-forget behavior for trivial, short, low-risk tasks.
-- **A teammate, not just a worker.** Codex doesn't only execute — a worker flags a better path or a shaky assumption (not only when blocked), and Claude can consult a worker to pressure-test its own thinking. Questions and answers flow both ways on the same thread (`meight reply`, `meight follow`).
+- **Both directions, same thread.** Codex isn't just an executor — a worker ends a turn with a `QUESTION:` to flag a better path or a shaky assumption (not only when it's blocked), and the orchestrator answers or adjusts the direction with it. Real back-and-forth, not fire-a-task-collect-a-result.
+- **Consult, don't just delegate.** Stuck on a design? The orchestrator dispatches a read-only worker to think a problem through *with* it — the sibling of code review, applied to the thinking instead of the artifact.
+- **Each model checks the other.** Codex implements → a Claude agent verifies; Claude implements → a Codex worker reviews. Cross-model review catches what same-model self-review misses.
+- **Supervised, on your terms.** The `start`+`wait` split lets the orchestrator pull `status` and `steer` mid-run — how often, and whether at all, is its judgment, not a fixed cadence. Progress lives in small disk files, so watching costs ~0 context.
+- **One-shot when it fits.** `meight dispatch` still gives fire-and-forget for trivial, short, low-risk tasks.
 
 ```
-Claude Code (orchestrator)
-   │  start worker, then sparse checkpoint waits
-   ▼
-meight start impl-1 --brief-file - --cwd ~/repo <<'EOF'
-<task brief>
-EOF
-   │
-   ├─ background: meight wait impl-1 --timeout 300
-   │                         ▲
-   ├─ checkpoint timeout ────┘  meight status impl-1 → wait again or steer
-   │
-   ▼ terminal notification
-per-repo daemon ──── official openai-codex SDK ──── codex app-server (1 process, N threads)
-   │
-   └─ disk digests: status.json / events.log / result.md   ← orchestrator pulls on demand
+   Claude orchestrator   ⇄   Codex worker(s)
+   (what & why)               (how)
+        │                          ▲
+        ├──  start + brief  ───────┘
+        │
+        │◀──  QUESTION:  better idea · wrong assumption · blocked · done
+        │──▶  answer · steer · consult · review
+        │            (either side can open the next turn, same thread)
+        │
+        ▼   orchestrator pulls disk digests on demand — ~0 context, never streamed
+   per-repo daemon ── official openai-codex SDK ── codex app-server (1 process, N threads)
+        status.json · events.log · result.md
 ```
 
-## Why split the work this way
+## Why two models, working together
 
 Anthropic's new Mythos-class models (**Claude Fable 5**) are remarkably good at planning and judgment — seeing the whole picture, breaking work down, making the right call when things are ambiguous. They are also expensive to run. Codex (**GPT-5.5**) costs much less per unit of work and is very good at the details: race conditions, type drift, missed edge cases, contract violations.
 
-Meight pairs them so you get higher quality at lower cost: Claude holds the *what and why*, Codex workers own the *how* — but they work as teammates, reviewing each other's output and talking through the hard calls (a worker pushes back when it sees a better path; Claude consults a worker when it's stuck). Cross-model review catches what self-review misses. A side benefit: the workload spreads across two subscriptions. The full policy ships as [`CLAUDE.md`](./CLAUDE.md).
+Meight pairs them so you get higher quality at lower cost: Claude holds the *what and why*, Codex the *how*. But the division only pays off because the two work as **teammates, not boss and tool** — a worker pushes back when it sees a better path, the orchestrator consults a worker when it's stuck, and each reviews the other's output (cross-model review catches what same-model self-review misses). A side benefit: the workload spreads across two subscriptions. The full collaboration policy ships as [`CLAUDE.md`](./CLAUDE.md).
 
 ## Why this exists
 
@@ -51,7 +48,7 @@ OpenAI's official **`openai-codex` Python SDK** (released May 2026) removed thos
 | Parallel workers | 1 process per worker | blocking tool calls | N threads, 1 codex process |
 | Mid-turn steering | attach & type (human) or kill+resume (loses work) | ✗ | **`meight steer` — programmatic, no work lost** |
 | Progress observation | scrape stdout / stream into context | ✗ | **disk digest, pull on demand (~0 tokens)** |
-| Worker asks a question | ✗ (guesses or stalls) | ✗ | **`QUESTION:` protocol → exit 3 → `meight reply`** |
+| Two-way conversation | ✗ (guesses or stalls) | ✗ | **worker raises `QUESTION:` (blocked *or* better idea) → exit 3 → `meight reply`; orchestrator can `consult` back** |
 | Result delivery | scrape | tool return | **exit-code contract + result on stdout** |
 | Session continuity | fragile | threadId | **same-thread `follow`/`reply` turns** |
 
@@ -94,6 +91,14 @@ The worker asked a question (exit 3)? The question is also visible in `meight st
 
 ```bash
 meight reply impl-1 --brief "Use config-a.json, and keep the legacy field."
+```
+
+You're the one who's stuck? Run the loop the other way — dispatch a read-only worker to think a problem through *with* you, then `follow` to refine the direction together:
+
+```bash
+meight start consult-1 --sandbox ro --brief "My plan is X but I'm unsure about Y. Read src/ and tell me what I'm missing — and a better approach if you see one."
+meight wait consult-1 --timeout 300
+meight follow consult-1 --brief "Good point on Y. If we go that way, how does Z hold up?"
 ```
 
 For trivial, short, low-risk tasks, one-shot dispatch is still available:
