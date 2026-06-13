@@ -6,24 +6,29 @@
 
 [English](../README.md) | **한국어**
 
-> **Claude Code가 계획하고, Codex가 만듭니다.** Meight는 그 사이의 하네스입니다. Claude가 명령 한 번으로 Codex 워커에게 일을 맡기고, 자기 일을 계속하다가, 끝나면 결과를 돌려받습니다 — 자기 서브에이전트를 쓰는 것과 똑같이. 공식 `openai-codex` Python SDK 위에 구축했습니다. CLI: `meight`.
+> **Claude Code가 계획하고, Codex가 만듭니다.** Meight는 그 사이의 하네스입니다. Claude가 Codex 워커에게 일을 맡기고, 드문 체크포인트마다 상태를 확인하고, 필요할 때만 방향을 잡아주고, 끝나면 결과를 돌려받습니다 — 자기 서브에이전트를 감독하는 것과 비슷합니다. 공식 `openai-codex` Python SDK 위에 구축했습니다. CLI: `meight`.
 
 기존 Claude↔Codex 브릿지들은 *터미널을 지켜보는 사람*을 위해 만들어졌습니다 — 붙어서 타이핑할 tmux pane, 클릭할 대시보드. Meight는 오케스트레이션을 하는 에이전트 자신을 위해 만들었습니다. 실제로는 이렇게 동작합니다:
 
-- **던져놓고 잊기.** 명령 하나로 워커에게 작업을 보냅니다. 끝나면 결과 전문이 완료 알림에 실려 돌아옵니다. 폴링도, 복사·붙여넣기도 없습니다.
-- **지켜보는 비용 없음.** 워커는 진행 상황을 디스크의 작은 파일에 기록합니다. Claude는 궁금할 때만 들여다봅니다(`meight status`). 컨텍스트 윈도우로 흘러드는 것은 없습니다.
+- **기본은 감독형입니다.** 워커를 시작하고, 드문 체크포인트마다 깨어나 `meight status`를 보고, 흐름이 틀어질 때만 조향합니다.
+- **지켜보는 비용이 낮습니다.** 워커는 진행 상황을 디스크의 작은 파일에 기록합니다. Claude는 체크포인트마다 한 번만 봅니다. 컨텍스트 윈도우로 흘러드는 것은 없습니다.
 - **달리는 중에 고치기.** 방향이 틀렸으면 `meight steer`로 실행 중인 워커에게 정정 지시를 보냅니다. 죽이지 않고, 지금까지의 작업도 잃지 않습니다.
+- **맞을 때만 원샷.** `meight dispatch`는 여전히 짧고 단순하고 위험 낮은 작업의 fire-and-forget 용도로 쓸 수 있습니다.
 - **워커는 추측 대신 질문.** 막힌 워커는 멈춰서 질문합니다. Claude가 `meight reply`로 답하면 워커는 맥락을 그대로 가진 채 이어갑니다.
 
 ```
 Claude Code (오케스트레이터)
-   │  백그라운드 Bash 호출 1번
+   │  워커 시작 후 드문 체크포인트 대기
    ▼
-meight dispatch impl-1 --brief-file - --cwd ~/repo <<'EOF'
+meight start impl-1 --brief-file - --cwd ~/repo <<'EOF'
 <작업 브리프>
 EOF
-   │                                  ▲
-   ▼                                  │ 완료 알림
+   │
+   ├─ background: meight wait impl-1 --timeout 300
+   │                         ▲
+   ├─ 체크포인트 timeout ────┘  meight status impl-1 → 다시 wait 또는 steer
+   │
+   ▼ terminal 알림
 레포별 데몬 ──── 공식 openai-codex SDK ──── codex app-server (프로세스 1개, 스레드 N개)
    │
    └─ 디스크 다이제스트: status.json / events.log / result.md   ← 오케스트레이터가 필요할 때만 pull
@@ -59,42 +64,59 @@ git clone https://github.com/keepitmello/claude-codex-meight
 cd claude-codex-meight && ./install.sh   # .venv 생성 + ~/.local/bin/meight
 ```
 
-워커 디스패치 (아무 git 레포에서나 가능 — 상태는 레포별 `.meight/`에 격리됩니다):
+실질 작업은 감독형으로 디스패치합니다(아무 git 레포에서나 가능 — 상태는 레포별 `.meight/`에 격리됩니다). `start`는 레포별 데몬이 떠 있다고 가정합니다. 안 떠 있으면 `meight daemon`을 별도로 한 번 시작하세요.
 
 ```bash
-meight dispatch impl-1 --brief-file - --cwd ~/my-repo --sandbox ws <<'EOF'
+meight start impl-1 --brief-file - --cwd ~/my-repo --sandbox ws <<'EOF'
 src/foo.py에 X를 구현해. 기존 패턴: src/bar.py:42 참고.
 검증: pytest tests/test_foo.py. 변경 파일 + 테스트 출력 보고.
 EOF
-# 데몬 자동 기동. 워커 완료까지 블로킹 후 결과 출력.
-# exit 0=완료 · 2=실패/중단 · 3=워커 질문 · 4=데몬 사망 · 1=타임아웃
+
+meight wait impl-1 --timeout 300
+# exit 0=완료 · 2=실패/중단 · 3=워커 질문 · 4=데몬 사망 · 1=체크포인트 타임아웃
 ```
 
-워커가 질문했다면(exit 3) 질문은 출력된 결과에 들어 있습니다. 같은 스레드에서 원샷으로 답합니다:
+exit `1`이면 워커는 계속 실행 중입니다. 한 번만 상태를 보고, 다시 기다리거나 조향합니다:
+
+```bash
+meight status impl-1
+meight steer impl-1 "헬퍼 리팩토링은 멈추고 버그만 고쳐."
+meight wait impl-1 --timeout 300
+```
+
+exit `0`, `2`, `3`에서는 `wait`가 상태 요약만 출력합니다. 전체 메시지는 디스크에서 읽습니다:
+
+```bash
+meight result impl-1
+```
+
+워커가 질문했다면(exit 3) 질문은 `meight status impl-1`의 `needs_input_detail`에서도 볼 수 있습니다. 같은 스레드에서 원샷으로 답합니다:
 
 ```bash
 meight reply impl-1 --brief "config-a.json 쓰고, legacy 필드는 유지해."
 ```
 
-실행 중 관찰과 조향:
+짧고 단순하고 위험 낮은 작업에는 원샷 dispatch도 그대로 쓸 수 있습니다:
 
 ```bash
-meight status            # 1줄 테이블: 상태, 경과, 변경 파일, 토큰, 현재 활동
-meight status impl-1     # 상세: 현재 커맨드, 플랜, 마지막 사고 흐름
-meight steer impl-1 "헬퍼 리팩토링은 멈추고 버그만 고쳐."   # mid-turn, 작업 손실 없음
-meight interrupt impl-1
+meight dispatch tiny-1 --brief "README에 LICENSE 언급이 있는지만 확인해." --sandbox ro
 ```
 
 ## Claude Code에서 쓰기
 
-이것이 본래 용도입니다. dispatch를 **백그라운드 Bash**로 실행하면 네이티브 서브에이전트가 끝났을 때처럼 완료 알림에 결과 전문이 실려 옵니다:
+이것이 본래 용도입니다. 실질 작업에서는 `wait --timeout`을 **백그라운드 Bash**로 실행합니다. Claude는 체크포인트에서 깨어나 `status`를 한 번 읽고, 정상이면 다시 기다리고, 틀어졌으면 짧게 `steer`합니다:
 
 ```
-Bash(command: "meight dispatch review-1 --sandbox ro --effort high --brief-file - <<'EOF' ... EOF",
+Bash(command: "meight start review-1 --sandbox ro --effort high --brief-file - <<'EOF' ... EOF")
+Bash(command: "meight wait review-1 --timeout 300",
      run_in_background: true)
 → ... Claude는 계속 다른 작업 ...
-→ <task-notification> exit 0, 출력에 워커의 전체 보고 포함
+→ <task-notification> exit 1 체크포인트 타임아웃
+→ meight status review-1
+→ 정상이면 다시 wait · 틀어졌으면 meight steer review-1 "..."
 ```
+
+워커가 terminal 상태에 도달하면 알림은 `0`(완료), `2`(실패/중단), `3`(워커 질문)으로 옵니다. 전체 보고는 `meight result review-1`로 읽습니다. `0`이면 검증 후 받아들이고, `3`이면 `meight reply`로 답합니다.
 
 모든 브리프 앞에는 하네스 프리앰블이 자동으로 붙습니다: (a) `git commit`/`push` 금지 — git은 오케스트레이터 소유 — (b) 막히면 추측하지 말고 `QUESTION:` 문단으로 턴을 끝낼 것. `--no-preamble`로 끌 수 있습니다.
 
@@ -105,7 +127,7 @@ Bash(command: "meight dispatch review-1 --sandbox ro --effort high --brief-file 
 하네스 곳곳의 작은 결정들이 전부 "사용자는 터미널 앞의 사람이 아니라 LLM 에이전트"라는 전제 위에 있습니다:
 
 - **exit code가 곧 API입니다.** `0`=완료, `2`=실패, `3`=질문, `4`=데몬 사망. 에이전트가 산문을 읽고 성공 여부를 추측하는 대신 숫자로 분기합니다. 알 수 없는 종료 상태는 *완료*가 아니라 *실패*로 처리됩니다 — exit 0은 믿어도 됩니다.
-- **호출 1번 = 의도 1개.** `dispatch`가 데몬 기동·시작·대기·결과 전달을 백그라운드 셸 호출 하나로 묶습니다 — 에이전트의 네이티브 비동기 도구와 같은 모양입니다. 턴을 태우는 폴링 루프가 없습니다.
+- **빽빽한 폴링이 아니라 드문 체크포인트.** `wait --timeout 300`은 몇 분마다, 또는 워커가 더 빨리 끝나면 즉시 오케스트레이터를 깨웁니다. 타임아웃은 exit `1`로 돌아오고 워커는 계속 실행됩니다. 그래서 한 번만 상태를 보고 다시 기다릴 수 있습니다. 턴을 태우는 촘촘한 폴링은 피하면서도 `status`와 `steer`는 살아 있습니다.
 - **세션 ID가 아니라 이름.** 워커는 `review-1`처럼 이름으로 부르고, 후속 지시도 마찬가지입니다. 틀릴 UUID 장부가 없습니다.
 - **결과는 디스크에 남습니다.** `result.md`는 언제든 다시 읽을 수 있어서, 세션 도중 에이전트의 컨텍스트가 압축돼도 잃는 것이 없습니다.
 - **status는 이미 요약본입니다.** raw 로그 대신 판단에 필요한 것만 돌려줍니다: 지금 뭘 하는 중인지, 어떤 파일이 바뀌었는지, 마지막 생각이 뭐였는지. 기다릴지, 조향할지, 끊을지 고르는 데 딱 그만큼.
@@ -116,13 +138,15 @@ Bash(command: "meight dispatch review-1 --sandbox ro --effort high --brief-file 
 
 | 커맨드 | 동작 |
 |---|---|
-| `meight dispatch <name> [opts]` | 원샷: 데몬 자동기동 → 워커 시작 → 대기 → 결과 출력. 기본 워크플로우 |
+| `meight start <name> [opts]` | 워커를 시작하고 thread id를 출력한 뒤 바로 반환. 감독형 워크플로우 시작점 |
+| `meight wait <name> --timeout SEC` | 체크포인트 대기: terminal 상태, QUESTION, 데몬 사망, 타임아웃 중 하나에서 반환. 타임아웃은 워커를 계속 살려둠 |
+| `meight dispatch <name> [opts]` | 원샷: 데몬 자동기동 → 워커 시작 → 대기 → 결과 출력. 짧고 단순하고 위험 낮은 작업용 |
 | `meight reply <name> --brief ...` | 워커 질문에 원샷 답변: follow + 대기 + 마지막 턴 결과 출력 |
 | `meight status [name]` | 다이제스트 pull (테이블/상세). 디스크 직접 읽기 — 데몬 없이도 동작 |
 | `meight steer <name> "text"` | 실행 중 턴에 지시 주입 (작업 손실 없음) |
 | `meight interrupt <name>` | 실행 중 턴 취소 (idempotent) |
 | `meight follow <name> --brief ...` | 저수준: 같은 스레드에 새 턴 (컨텍스트 유지) |
-| `meight start / wait / result / list / daemon / ping / shutdown` | dispatch를 구성하는 저수준 블록 |
+| `meight result / list / daemon / ping / shutdown` | 저수준 보조 커맨드 |
 
 옵션: `--cwd`(워커 작업 디렉토리 — 파일 범위가 겹치면 git worktree로 분리), `--sandbox ws|ro|full`(기본 `ws`=workspace-write, 리뷰는 `ro`), `--effort low|medium|high|xhigh`(기본 `medium`, 복잡도에 따라 상향), `--model`, `--timeout`.
 

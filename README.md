@@ -6,24 +6,29 @@
 
 **English** | [한국어](./docs/README.ko.md)
 
-> **Claude Code plans, Codex builds.** Meight is the harness in between: Claude hands a task to a Codex worker with one command, keeps working, and gets the result back when it's done — just like using one of its own subagents. Built on the official `openai-codex` Python SDK. CLI: `meight`.
+> **Claude Code plans, Codex builds.** Meight is the harness in between: Claude hands a task to a Codex worker, checks in at sparse checkpoints, steers only when needed, and gets the result back when it's done — just like supervising one of its own subagents. Built on the official `openai-codex` Python SDK. CLI: `meight`.
 
 Most Claude↔Codex bridges are built for *a human watching a terminal* — tmux panes to attach to, dashboards to click. Meight is built for the agent doing the orchestration. In practice that means:
 
-- **Fire and forget.** One command sends a task to a worker. When it finishes, the full result arrives in the completion notification. No polling, no copy-paste.
-- **Cheap to watch.** Workers write progress to small files on disk. Claude peeks only when it wants to (`meight status`) — nothing streams into its context window.
-- **Fixable mid-flight.** Going the wrong way? `meight steer` tells the running worker to change course — without killing it or losing the work done so far.
+- **Supervised by default.** Start a worker, wake up at sparse checkpoints, inspect `meight status`, and steer only when the run is drifting.
+- **Cheap to watch.** Workers write progress to small files on disk. Claude peeks once per checkpoint — nothing streams into its context window.
+- **Fixable mid-flight.** Going the wrong way? `meight steer` tells the running worker to change course without killing it or losing the work done so far.
+- **One-shot when it fits.** `meight dispatch` still gives fire-and-forget behavior for trivial, short, low-risk tasks.
 - **Workers ask instead of guessing.** A blocked worker stops and asks a question. Claude answers with `meight reply`, and the worker continues with everything it already knew.
 
 ```
 Claude Code (orchestrator)
-   │  one background Bash call
+   │  start worker, then sparse checkpoint waits
    ▼
-meight dispatch impl-1 --brief-file - --cwd ~/repo <<'EOF'
+meight start impl-1 --brief-file - --cwd ~/repo <<'EOF'
 <task brief>
 EOF
-   │                                  ▲
-   ▼                                  │ completion notification
+   │
+   ├─ background: meight wait impl-1 --timeout 300
+   │                         ▲
+   ├─ checkpoint timeout ────┘  meight status impl-1 → wait again or steer
+   │
+   ▼ terminal notification
 per-repo daemon ──── official openai-codex SDK ──── codex app-server (1 process, N threads)
    │
    └─ disk digests: status.json / events.log / result.md   ← orchestrator pulls on demand
@@ -59,42 +64,59 @@ git clone https://github.com/keepitmello/claude-codex-meight
 cd claude-codex-meight && ./install.sh   # creates .venv + ~/.local/bin/meight
 ```
 
-Dispatch a worker (from any git repo — state is isolated per repo under `.meight/`):
+For substantial work, use supervised dispatch (from any git repo — state is isolated per repo under `.meight/`). `start` expects the per-repo daemon to be running; if it is not, start it once separately with `meight daemon`.
 
 ```bash
-meight dispatch impl-1 --brief-file - --cwd ~/my-repo --sandbox ws <<'EOF'
+meight start impl-1 --brief-file - --cwd ~/my-repo --sandbox ws <<'EOF'
 Implement X in src/foo.py. Existing pattern: see src/bar.py:42.
 Verify with: pytest tests/test_foo.py. Report changed files + test output.
 EOF
-# Daemon auto-starts. Blocks until the worker finishes, then prints the result.
-# exit 0=completed · 2=failed/interrupted · 3=worker asked a question · 4=daemon dead · 1=timeout
+
+meight wait impl-1 --timeout 300
+# exit 0=completed · 2=failed/interrupted · 3=worker asked a question · 4=daemon dead · 1=checkpoint timeout
 ```
 
-The worker asked a question (exit 3)? The question is in the printed result. Answer in one shot, same thread:
+On exit `1`, the worker is still running. Inspect once, then either wait again or steer:
+
+```bash
+meight status impl-1
+meight steer impl-1 "Stop refactoring the helper — only fix the bug."
+meight wait impl-1 --timeout 300
+```
+
+On exit `0`, `2`, or `3`, `wait` prints a status summary. Read the full message from disk:
+
+```bash
+meight result impl-1
+```
+
+The worker asked a question (exit 3)? The question is also visible in `meight status impl-1` as `needs_input_detail`. Answer in one shot, same thread:
 
 ```bash
 meight reply impl-1 --brief "Use config-a.json, and keep the legacy field."
 ```
 
-Observe and steer while it runs:
+For trivial, short, low-risk tasks, one-shot dispatch is still available:
 
 ```bash
-meight status            # one-line table: state, elapsed, files changed, tokens, current activity
-meight status impl-1     # detail: current command, plan, last reasoning tail
-meight steer impl-1 "Stop refactoring the helper — only fix the bug."   # mid-turn, no work lost
-meight interrupt impl-1
+meight dispatch tiny-1 --brief "Check whether README mentions LICENSE." --sandbox ro
 ```
 
 ## Using it from Claude Code
 
-This is the intended consumer. Run dispatch as a **background Bash call** — Claude gets a completion notification with the full result, exactly like a native subagent finishing:
+This is the intended consumer. For real work, run `wait --timeout` as the **background Bash call**. Claude wakes at the checkpoint, reads one `status`, and either waits again or sends a targeted `steer`:
 
 ```
-Bash(command: "meight dispatch review-1 --sandbox ro --effort high --brief-file - <<'EOF' ... EOF",
+Bash(command: "meight start review-1 --sandbox ro --effort high --brief-file - <<'EOF' ... EOF")
+Bash(command: "meight wait review-1 --timeout 300",
      run_in_background: true)
 → ... Claude keeps working ...
-→ <task-notification> exit 0, output contains the worker's full report
+→ <task-notification> exit 1 checkpoint timeout
+→ meight status review-1
+→ healthy: wait again · drifting: meight steer review-1 "..."
 ```
+
+When the worker reaches a terminal state, the notification is `0` (completed), `2` (failed/interrupted), or `3` (worker question). Use `meight result review-1` for the full report. On `0`, verify the work before accepting it. On `3`, answer with `meight reply`.
 
 Every brief is automatically prefixed with a harness preamble that (a) forbids `git commit`/`push` — git stays owned by the orchestrator — and (b) instructs the worker to end with a `QUESTION:` paragraph instead of guessing when blocked. Disable with `--no-preamble`.
 
@@ -105,7 +127,7 @@ A drop-in orchestrator prompt (role split, routing table, dispatch protocol, cro
 Small decisions everywhere assume the user is an LLM agent, not a person at a terminal:
 
 - **Exit codes are the API.** `0` done, `2` failed, `3` question, `4` daemon gone. The agent branches on a number instead of reading prose and guessing whether things worked. Unknown outcomes map to *failed*, never to *completed* — exit 0 can be trusted.
-- **One call per intent.** `dispatch` bundles daemon startup, launch, waiting, and result delivery into a single background shell call — the same shape as the agent's native async tools. No polling loops burning turns.
+- **Sparse checkpoints, not busy polling.** `wait --timeout 300` wakes the orchestrator every few minutes or sooner if the worker finishes. A timeout returns exit `1` and leaves the worker running, so the agent can inspect once and go back to waiting. This avoids tight polling loops that burn turns while keeping `status` and `steer` alive.
 - **Names, not session IDs.** Workers are addressed as `review-1`, follow-ups included. No UUID bookkeeping to get wrong.
 - **Results survive on disk.** `result.md` stays re-readable — if the agent's context gets compacted mid-session, nothing is lost.
 - **Status is pre-digested.** Instead of raw logs, `status` returns what a decision needs: what the worker is doing now, which files changed, its last thought. Exactly enough to choose between wait, steer, and interrupt.
@@ -116,13 +138,15 @@ Small decisions everywhere assume the user is an LLM agent, not a person at a te
 
 | Command | What it does |
 |---|---|
-| `meight dispatch <name> [opts]` | One-shot: auto-start daemon → start worker → wait → print result. The default workflow. |
+| `meight start <name> [opts]` | Start a worker and return immediately with the thread id. Supervised workflow entry point. |
+| `meight wait <name> --timeout SEC` | Checkpoint wait: return on terminal state, QUESTION, daemon death, or timeout. Timeout leaves the worker running. |
+| `meight dispatch <name> [opts]` | One-shot: auto-start daemon → start worker → wait → print result. Use for trivial, short, low-risk work. |
 | `meight reply <name> --brief ...` | One-shot answer to a worker question: follow + wait + print last-turn result |
 | `meight status [name]` | Pull digest (table or detail). Reads disk — works without the daemon |
 | `meight steer <name> "text"` | Inject instruction into the running turn (no work lost) |
 | `meight interrupt <name>` | Cancel the running turn (idempotent) |
 | `meight follow <name> --brief ...` | Low-level: new turn on the same thread (context preserved) |
-| `meight start / wait / result / list / daemon / ping / shutdown` | Low-level building blocks of dispatch |
+| `meight result / list / daemon / ping / shutdown` | Low-level support commands |
 
 Options: `--cwd` (worker workdir — use separate git worktrees for overlapping file scopes), `--sandbox ws|ro|full` (default `ws` = workspace-write; reviews run `ro`), `--effort low|medium|high|xhigh` (default `medium`; raise by task complexity), `--model`, `--timeout`.
 
