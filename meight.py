@@ -702,7 +702,7 @@ class Daemon:
     # ── Command Implementations ──
 
     def cmd_start(self, req: dict) -> dict:
-        from openai_codex import Sandbox
+        from openai_codex import Sandbox, ThreadSource
 
         name = req["name"]
         brief = req["brief"]
@@ -740,7 +740,10 @@ class Daemon:
 
             w.init_status(thread_id=None)
             try:
-                thread = self.codex.thread_start()
+                thread = self.codex.thread_start(
+                    ephemeral=True,
+                    thread_source=ThreadSource.subagent,
+                )
                 w.thread = thread
                 with w.lock:
                     w.status["thread_id"] = thread.id
