@@ -1,6 +1,6 @@
 ---
 name: meight
-description: "Codex worker dispatch harness (global CLI: meight, repo: claude-codex-meight). Delegate implementation/review/runtime work to N parallel Codex workers — supervised dispatch by default (start + sparse wait checkpoints + status/steer), one-shot dispatch for trivial safe tasks, bidirectional QUESTION protocol. Use whenever the orchestrator delegates work to Codex. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임"
+description: "Codex worker dispatch harness (global CLI: meight, repo: claude-codex-meight). Delegate implementation/review/runtime, browser QA, visual QA, computer-use, and image generation/editing work to N parallel Codex workers — supervised dispatch by default (start + sparse wait checkpoints + status/steer), one-shot dispatch for trivial safe tasks, bidirectional QUESTION protocol. Use whenever the orchestrator delegates work to Codex. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임"
 ---
 
 # meight (claude-codex-meight)
@@ -9,9 +9,44 @@ Harness for driving Codex workers in parallel from a Claude orchestrator — usa
 
 **Operating model (self-contained — works without any other prompt file):**
 - **You (Claude) hold the direction**: task decomposition, integration, verification, user communication, and git. **Codex workers are teammates, not just executors**: strong on details (races, type drift, edge cases), often weaker on the big picture. So you own *what and why* and they own *how* — but run it two-way: pull a worker in to sounding-board a hard call or sketch the big picture together, and expect workers to push back when they spot a better path. Discuss and adjust more than you dictate.
-- **Routing**: bounded implementation with a clear spec / code review / browser & runtime work → Codex workers. Exploration fan-out / fresh-context verification / harness-tool work → Claude subagents.
+- **Routing**: bounded implementation with a clear spec / code review / browser, visual, desktop, and runtime QA work → Codex workers. Exploration fan-out / fresh-context verification / harness-tool work → Claude subagents.
 - **Cross-model review is mandatory**: Codex implements → a Claude agent verifies; Claude implements → a Codex worker reviews. Same-model self-review doesn't count.
 - **Workers never commit** (the harness preamble enforces it) — review the working tree and commit yourself. A worker's "done" is a claim; your verification makes it a fact.
+
+## Codex worker capabilities to use actively
+
+Do not treat Codex workers as text-only coding agents. In this harness, a Codex worker can be a practical implementation, QA, research, and production teammate. The exact tools vary by active Codex environment, auth, and sandbox, so ask for a capability explicitly in the brief and require evidence if the worker used it.
+
+Capability map:
+
+- **Code implementation**: read the repo, edit files, follow existing patterns, run typechecks/tests/linters, and report exact files changed.
+- **Code review / risk review**: inspect diffs or target files for real defects, edge cases, regressions, security risks, missing tests, and contract drift.
+- **Debugging / root-cause analysis**: reproduce failures, inspect logs, trace source-to-sink paths, form hypotheses, and verify the primary fix path rather than only adding containment.
+- **Terminal / filesystem work**: run local commands, inspect generated artifacts, compare diffs, create focused scripts when appropriate, and collect command output as evidence.
+- **Vision / screenshots**: inspect uploaded or local images, compare screenshots, catch layout overlap, broken rendering, visual regressions, asset mismatches, text clipping, and visual polish issues.
+- **Browser use**: open and exercise local web apps, click/type through flows, capture screenshots, verify responsive layouts, inspect browser-visible runtime behavior, and smoke-test localhost features.
+- **Computer use**: operate desktop apps or OS UI when the task needs real application interaction rather than repository inspection.
+- **Image generation / editing**: create or modify bitmap assets, mocks, sprites, visual references, product imagery, UI imagery, and other generated visuals when the task needs them.
+- **Web / current-info research**: look up current docs, APIs, release notes, pricing, policies, or other time-sensitive facts when browsing is available or required.
+- **Document / PDF / spreadsheet work**: inspect, create, edit, render, or verify docs, PDFs, CSV/XLSX files, and similar artifacts when the environment provides those tools.
+- **Design / product QA**: review UX flows, frontend design quality, accessibility risks, responsive behavior, copy clarity, and whether the screen matches the product intent.
+- **Connector-backed work**: use available apps/connectors such as GitHub, Google Drive, Figma, Canva, Hugging Face, Sentry, or similar tools when the user/session has enabled them.
+- **Runtime QA**: combine terminal evidence with browser, screenshot, desktop, or artifact evidence before claiming UI, visual, end-to-end, or integration behavior is correct.
+
+When delegating these tasks, say the modality explicitly in the brief: e.g. "use browser QA and screenshots", "inspect the attached image visually", "use computer-use if the desktop app must be operated", "generate/edit an image asset if needed", or "browse official docs for the current API contract". Also name the expected evidence: screenshot path, browser URL, visual comparison notes, terminal command, test output, source link, changed asset path, or artifact path.
+
+Use Codex workers especially for:
+
+- UI QA after frontend changes, including mobile/desktop screenshots, overlap checks, text clipping checks, and interactive smoke tests
+- Localhost flows that require clicking through the app, not just running unit tests
+- Visual regression checks against screenshots, mocks, screenshots from production, or a Figma/Canva reference
+- Visual asset creation or polish when a mock, sprite, generated image, hero image, or product visual would unblock implementation
+- Desktop-app verification where browser or CLI evidence is insufficient
+- End-to-end verification that needs multiple evidence types, such as tests plus browser screenshots plus logs
+- Cross-checking Claude's visual/layout/product assumptions with an independent Codex run
+- Fresh-context code review after Claude implements, especially for edge cases, concurrency, money-path, auth, data migration, or external API changes
+- Current-docs verification when an API, SDK, browser behavior, law, pricing, product feature, or public fact may have changed
+- Artifact work such as PDFs, docs, spreadsheets, exported reports, generated images, or screenshots where visual/rendered output matters
 
 ## Default: supervised dispatch
 
