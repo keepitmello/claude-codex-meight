@@ -49,6 +49,8 @@ meight result <name>
 
 Set `--timeout` to roughly how long you expect the work to take. Finishes inside that window → you get the completion push and never spend a turn checking. Overruns → the timeout wakes you, and an overrun is itself a signal worth one `status` look. There's no fixed interval and no obligation to check — a sparse wake-up, then your call: wait again, steer, or just let it run. Never busy-poll (checking every few seconds burns turns for nothing).
 
+**The timeout length IS your check-in dial.** This is how the "keep the door open" intent above turns into an actual cadence: set it near the full expected duration and you mostly let the worker run, waking on completion; set it to a fraction (≈⅓–½ of the expected time) and you *deliberately* wake mid-run for a `status`/`steer` pass, then re-wait. The longer the job and the closer you want to stay, the shorter the timeout — re-waited each time. A timeout that's much longer than the work means you only ever wake on completion (no mid-run door); a timeout shorter than the work guarantees a checkpoint. Pick the length by how much mid-run involvement the task warrants, not by a default number.
+
 Steer when `status` shows the worker drifting from the goal — and not during healthy progress, since needless intervention breaks its flow. What counts as drift is your judgment, not a checklist.
 
 When the worker reaches a terminal state, `wait` returns immediately with `0` (completed), `2` (failed/interrupted), or `3` (QUESTION). `wait` prints a status summary; use `meight result <name>` for the full report or question. On exit `0`, cross-model verify before accepting the work. On exit `3`, answer with `reply`.
