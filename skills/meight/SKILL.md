@@ -122,14 +122,16 @@ Goal / Scope / **Existing patterns (REQUIRED — without pointers Codex misdiagn
 
 ## Codex worker capabilities — reach past text-only coding
 
-Codex workers aren't text-only coding agents. Tools vary by the worker's environment, auth, and sandbox, so **ask for the modality explicitly in the brief and require evidence** that it was used. Beyond core code work (implementation, risk/defect review, root-cause debugging, terminal/filesystem):
+Codex workers aren't text-only coding agents. Tools vary by the worker's environment, auth, and sandbox, so **ask for the modality explicitly in the brief and require evidence** that it was used. Beyond core code work (implementation, risk/defect review, root-cause debugging, terminal/filesystem), these are the high-leverage modalities — reach for them *by name*, they're where Codex outruns a text-only agent:
 
-- **Visual & runtime QA**: screenshots, layout / overlap / text-clipping checks, browser click-through of localhost flows, desktop-app operation (computer-use), visual-regression against mocks / Figma / production — combine evidence types before claiming UI, E2E, or integration behavior is correct.
-- **Asset & document work**: generate or edit images (mocks, sprites, product / UI visuals), and inspect / create / render PDFs, docs, CSV/XLSX.
+- **Browser use**: open and click through localhost web apps — exercise real flows, verify responsive layouts, smoke-test features, capture screenshots. The actual app in a browser, not just unit tests.
+- **Computer use**: operate desktop apps or OS UI when the task needs real application interaction rather than repository inspection.
+- **Vision / screenshots**: inspect images and screenshots — catch layout overlap, text clipping, broken rendering, asset mismatches, visual regressions against mocks / Figma / production.
+- **Asset & document work**: generate or edit images (mocks, sprites, product / UI visuals); inspect / create / render PDFs, docs, CSV/XLSX.
 - **Research**: current docs, APIs, release notes, pricing, policies — time-sensitive facts when browsing is available.
 - **Connector-backed**: GitHub, Google Drive, Figma, Canva, Hugging Face, Sentry, and similar when the session has enabled them.
 
-Name the evidence you expect back: screenshot path, browser URL, visual-comparison notes, terminal output, test output, source link, changed-asset path. Especially reach for a worker on: UI QA after frontend changes; localhost flows that need real clicking, not just unit tests; fresh-context review after Claude implements (edge cases, concurrency, money-path, auth, data migration, external APIs); current-docs verification when an API/SDK/pricing/public fact may have changed; and cross-checking Claude's own visual / layout / product assumptions with an independent run.
+Combine evidence types before claiming UI / E2E / integration behavior is correct, and name the evidence you expect back: screenshot path, browser URL, visual-comparison notes, terminal/test output, source link, changed-asset path. Especially reach for a worker on: UI QA after frontend changes; localhost flows that need real clicking; fresh-context review after Claude implements (edge cases, concurrency, money-path, auth, data migration, external APIs); current-docs verification when an API/SDK/pricing/public fact may have changed; and cross-checking Claude's own visual / layout / product assumptions with an independent run.
 
 ## State / caveats
 
