@@ -27,10 +27,8 @@ meight start <name> --brief-file - --cwd <dir> \
 EOF
 
 # 2) Wait as a checkpoint timer (set --timeout to roughly the expected duration). Timeout does NOT kill the worker.
-#    Run wait via Bash run_in_background. There is NO standalone daemon push channel — the backgrounded
-#    wait/dispatch IS the push: when the worker finishes (or --timeout elapses) the call exits and that exit
-#    surfaces as a task-notification that wakes you, costing no turn. A FOREGROUND wait still delivers the
-#    result, but blocks your turn until the worker finishes — pure waste. Background it.
+#    Run wait via run_in_background — the backgrounded wait IS the push (no standalone daemon channel): its
+#    exit fires a task-notification that wakes you, no turn spent. Foreground works but blocks your turn = waste.
 meight wait <name> --timeout 300
 # exit: 0=completed, 2=failed/interrupted, 3=needs_input (worker question),
 #       4=daemon dead, 1=checkpoint timeout while worker continues
@@ -49,16 +47,13 @@ meight result <name>
 
 Set `--timeout` to roughly how long you expect the work to take. Finishes inside that window → you get the completion push and never spend a turn checking. Overruns → the timeout wakes you, and an overrun is itself a signal worth one `status` look. There's no fixed interval and no obligation to check — a sparse wake-up, then your call: wait again, steer, or just let it run. Never busy-poll (checking every few seconds burns turns for nothing).
 
-**The timeout length IS your check-in dial.** This is how the "keep the door open" intent above turns into an actual cadence: set it near the full expected duration and you mostly let the worker run, waking on completion; set it to a fraction (≈⅓–½ of the expected time) and you *deliberately* wake mid-run for a `status`/`steer` pass, then re-wait. The longer the job and the closer you want to stay, the shorter the timeout — re-waited each time. A timeout that's much longer than the work means you only ever wake on completion (no mid-run door); a timeout shorter than the work guarantees a checkpoint. Pick the length by how much mid-run involvement the task warrants, not by a default number.
+**Timeout length = your check-in dial.** Near the full duration → mostly run-to-completion, wake at the end; a fraction (≈⅓–½) → deliberate mid-run checkpoints, re-waited. Set it by how close you want to stay, not a default number.
 
-### Checkpoint design: markers by default, gates only when they earn it
+### Checkpoint design: markers by default, gates only when earned
 
-The timeout dial decides *when you wake*; the brief decides *what the worker leaves for you to find*. Two kinds — set them in the brief:
-
-- **Marker checkpoints (the default).** Tell the worker to emit a one-line progress marker at each phase boundary (e.g. `CHECKPOINT: main page pixel-matched`) and **keep going** — no stop. You read them at your own cadence via `status` (`last_message_tail` / events), tuned by the timeout dial. This is the default because it makes progress structurally legible **without ever blocking the worker** — no round-trip, no bottleneck, flow intact.
-- **Gate checkpoints (the exception).** Tell the worker to stop and wait for approval (surfaces as `needs_input`/`QUESTION`) **only at a branch that *sets direction*** — where proceeding on the wrong choice would waste everything downstream (e.g. "validate the comparison method on ONE page before mirroring all pages"). A gate costs a round-trip and blocks the worker, so spend it only where that cost is cheaper than redoing the work. Never gate routine progress — that's what markers are for.
-
-Pair with the dial: marker runs → set timeout near phase length so you wake at boundaries and read the latest marker; gates surface on their own regardless of timeout. Rule of thumb: **default to markers; add a gate only when you can name the specific wrong-turn it prevents.**
+Set in the brief how the worker reports mid-run:
+- **Marker (default):** emit a one-line `CHECKPOINT: …` at each phase boundary and keep going — never blocks; you read it via `status` at your dialed cadence. Progress stays legible without stopping the worker.
+- **Gate (exception):** stop for approval (`needs_input`) only at a direction-setting branch where a wrong turn wastes everything downstream. Costs a round-trip and blocks the worker — spend only when you can name the wrong-turn it prevents.
 
 Steer when `status` shows the worker drifting from the goal — and not during healthy progress, since needless intervention breaks its flow. What counts as drift is your judgment, not a checklist.
 
