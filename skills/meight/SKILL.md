@@ -14,41 +14,6 @@ Harness for driving Codex workers in parallel from a Claude orchestrator — usa
 - **Direction is set by two reads, never one**: when the work reaches a fork that sets direction — which approach, a design tradeoff, an architecture or diagnosis call, scope/sequencing, anything genuinely ambiguous — it gets **two independent analyses before you commit**: yours first (you analyze it directly — analysis is never outsourced), then a mandatory read-only Codex analysis of the *same* question, and you set direction by comparing the two reads. This is the sibling of cross-model review — review checks a finished artifact, this shapes the direction before the build — and like review, one side alone doesn't count: your reasoning alone is a claim, the cross-read makes it a decision. The trap it closes: deciding a direction-setting branch solo, without ever calling a worker. Run the Codex half via the **Consult** pattern below. (Trivial, unambiguous, or already-agreed calls don't need this.)
 - **Workers never commit** (the harness preamble enforces it) — review the working tree and commit yourself. A worker's "done" is a claim; your verification makes it a fact.
 
-## Codex worker capabilities to use actively
-
-Do not treat Codex workers as text-only coding agents. In this harness, a Codex worker can be a practical implementation, QA, research, and production teammate. The exact tools vary by active Codex environment, auth, and sandbox, so ask for a capability explicitly in the brief and require evidence if the worker used it.
-
-Capability map:
-
-- **Code implementation**: read the repo, edit files, follow existing patterns, run typechecks/tests/linters, and report exact files changed.
-- **Code review / risk review**: inspect diffs or target files for real defects, edge cases, regressions, security risks, missing tests, and contract drift.
-- **Debugging / root-cause analysis**: reproduce failures, inspect logs, trace source-to-sink paths, form hypotheses, and verify the primary fix path rather than only adding containment.
-- **Terminal / filesystem work**: run local commands, inspect generated artifacts, compare diffs, create focused scripts when appropriate, and collect command output as evidence.
-- **Vision / screenshots**: inspect uploaded or local images, compare screenshots, catch layout overlap, broken rendering, visual regressions, asset mismatches, text clipping, and visual polish issues.
-- **Browser use**: open and exercise local web apps, click/type through flows, capture screenshots, verify responsive layouts, inspect browser-visible runtime behavior, and smoke-test localhost features.
-- **Computer use**: operate desktop apps or OS UI when the task needs real application interaction rather than repository inspection.
-- **Image generation / editing**: create or modify bitmap assets, mocks, sprites, visual references, product imagery, UI imagery, and other generated visuals when the task needs them.
-- **Web / current-info research**: look up current docs, APIs, release notes, pricing, policies, or other time-sensitive facts when browsing is available or required.
-- **Document / PDF / spreadsheet work**: inspect, create, edit, render, or verify docs, PDFs, CSV/XLSX files, and similar artifacts when the environment provides those tools.
-- **Design / product QA**: review UX flows, frontend design quality, accessibility risks, responsive behavior, copy clarity, and whether the screen matches the product intent.
-- **Connector-backed work**: use available apps/connectors such as GitHub, Google Drive, Figma, Canva, Hugging Face, Sentry, or similar tools when the user/session has enabled them.
-- **Runtime QA**: combine terminal evidence with browser, screenshot, desktop, or artifact evidence before claiming UI, visual, end-to-end, or integration behavior is correct.
-
-When delegating these tasks, say the modality explicitly in the brief: e.g. "use browser QA and screenshots", "inspect the attached image visually", "use computer-use if the desktop app must be operated", "generate/edit an image asset if needed", or "browse official docs for the current API contract". Also name the expected evidence: screenshot path, browser URL, visual comparison notes, terminal command, test output, source link, changed asset path, or artifact path.
-
-Use Codex workers especially for:
-
-- UI QA after frontend changes, including mobile/desktop screenshots, overlap checks, text clipping checks, and interactive smoke tests
-- Localhost flows that require clicking through the app, not just running unit tests
-- Visual regression checks against screenshots, mocks, screenshots from production, or a Figma/Canva reference
-- Visual asset creation or polish when a mock, sprite, generated image, hero image, or product visual would unblock implementation
-- Desktop-app verification where browser or CLI evidence is insufficient
-- End-to-end verification that needs multiple evidence types, such as tests plus browser screenshots plus logs
-- Cross-checking Claude's visual/layout/product assumptions with an independent Codex run
-- Fresh-context code review after Claude implements, especially for edge cases, concurrency, money-path, auth, data migration, or external API changes
-- Current-docs verification when an API, SDK, browser behavior, law, pricing, product feature, or public fact may have changed
-- Artifact work such as PDFs, docs, spreadsheets, exported reports, generated images, or screenshots where visual/rendered output matters
-
 ## Default: supervised dispatch
 
 For anything beyond trivial, short, low-risk work, drive the worker with `start` + `wait` instead of one blocking `dispatch`. The split is the whole point: while the worker runs you can pull `status` and `steer` it — one-shot `dispatch` shuts that door until the work is already done. *Whether* you check in, how often, and *whether* you steer are your judgment, not a fixed cadence — the aim is to keep the door open, not to micromanage.
@@ -102,9 +67,20 @@ EOF
 - N parallel workers OK. Overlapping file scopes → separate git worktrees via `--cwd`
 - A harness preamble is auto-prepended to every brief: **no commit/push** + end with a `QUESTION:` paragraph when blocked
 
-## Writing briefs (template in README.md)
+## Consult a worker (sounding board, not just delegation)
 
-Goal / Scope / **Existing patterns (REQUIRED — without pointers Codex misdiagnoses existing patterns as defects)** / Constraints (domain rules only) / Verification / Report.
+The channel runs both ways. This is **also the Codex half of a decision fork** (see "Direction is set by two reads" above) — on a direction-setting branch it's not an optional when-you're-stuck move but the required second read. And whenever *you* are stuck, unsure of an approach, or want to pressure-test a design before committing, dispatch a read-only consult instead of a build order:
+
+```bash
+meight start consult-x --sandbox ro --effort high --cwd <repo root> --brief-file - <<'EOF'
+Thinking through <problem>. My current lean is <A>, but <concern>. Read <files> and tell me: is <A> sound, what am I missing, is there a better approach? No code changes — just your read and reasoning.
+EOF
+meight wait consult-x --timeout <expected>
+# Refine direction together on the same thread:
+meight follow consult-x --brief "Good point on Y. If we go that way, how does Z hold up?"
+```
+
+This is the sibling of cross-model review: review checks a finished artifact, consult shapes the thinking before or during the work. Fold what comes back into the direction — that's what a teammate is for.
 
 ## When a worker asks a question (exit 3)
 
@@ -128,21 +104,6 @@ meight interrupt <name>             # cancel (idempotent)
 
 `status` is part of the normal supervised loop, not a side channel. Use it at checkpoint wake-ups and after suspicious output. Running several workers at once? Pull the all-worker `status` table and only open up the ones that look off — don't wait on each one individually. `interrupt` is for clearly wrong or unsafe runs where steering is not enough.
 
-## Consult a worker (sounding board, not just delegation)
-
-The channel runs both ways. This is **also the Codex half of a decision fork** (see "Direction is set by two reads" above) — on a direction-setting branch it's not an optional when-you're-stuck move but the required second read. And whenever *you* are stuck, unsure of an approach, or want to pressure-test a design before committing, dispatch a read-only consult instead of a build order:
-
-```bash
-meight start consult-x --sandbox ro --effort high --cwd <repo root> --brief-file - <<'EOF'
-Thinking through <problem>. My current lean is <A>, but <concern>. Read <files> and tell me: is <A> sound, what am I missing, is there a better approach? No code changes — just your read and reasoning.
-EOF
-meight wait consult-x --timeout <expected>
-# Refine direction together on the same thread:
-meight follow consult-x --brief "Good point on Y. If we go that way, how does Z hold up?"
-```
-
-This is the sibling of cross-model review: review checks a finished artifact, consult shapes the thinking before or during the work. Fold what comes back into the direction — that's what a teammate is for.
-
 ## Review worker pattern
 
 ```bash
@@ -154,6 +115,21 @@ EOF
 meight wait review-X --timeout 300
 # After fixes, re-review on the same worker via follow/reply (context preserved)
 ```
+
+## Writing briefs (template in README.md)
+
+Goal / Scope / **Existing patterns (REQUIRED — without pointers Codex misdiagnoses existing patterns as defects)** / Constraints (domain rules only) / Verification / Report.
+
+## Codex worker capabilities — reach past text-only coding
+
+Codex workers aren't text-only coding agents. Tools vary by the worker's environment, auth, and sandbox, so **ask for the modality explicitly in the brief and require evidence** that it was used. Beyond core code work (implementation, risk/defect review, root-cause debugging, terminal/filesystem):
+
+- **Visual & runtime QA**: screenshots, layout / overlap / text-clipping checks, browser click-through of localhost flows, desktop-app operation (computer-use), visual-regression against mocks / Figma / production — combine evidence types before claiming UI, E2E, or integration behavior is correct.
+- **Asset & document work**: generate or edit images (mocks, sprites, product / UI visuals), and inspect / create / render PDFs, docs, CSV/XLSX.
+- **Research**: current docs, APIs, release notes, pricing, policies — time-sensitive facts when browsing is available.
+- **Connector-backed**: GitHub, Google Drive, Figma, Canva, Hugging Face, Sentry, and similar when the session has enabled them.
+
+Name the evidence you expect back: screenshot path, browser URL, visual-comparison notes, terminal output, test output, source link, changed-asset path. Especially reach for a worker on: UI QA after frontend changes; localhost flows that need real clicking, not just unit tests; fresh-context review after Claude implements (edge cases, concurrency, money-path, auth, data migration, external APIs); current-docs verification when an API/SDK/pricing/public fact may have changed; and cross-checking Claude's own visual / layout / product assumptions with an independent run.
 
 ## State / caveats
 
