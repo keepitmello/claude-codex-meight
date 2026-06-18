@@ -28,7 +28,9 @@ EOF
 
 # 2) Wait as a checkpoint timer (set --timeout to roughly the expected duration). Timeout does NOT kill the worker.
 #    Run wait via run_in_background — the backgrounded wait IS the push (no standalone daemon channel): its
-#    exit fires a task-notification that wakes you, no turn spent. Foreground works but blocks your turn = waste.
+#    exit fires a task-notification that wakes you, no turn spent. While running it auto-prints a status
+#    heartbeat every 300s (--progress N to retune, 0 to disable) into the .output, so you read mid-run
+#    progress without re-waiting. Foreground works but blocks your turn = waste.
 meight wait <name> --timeout 300
 # exit: 0=completed, 2=failed/interrupted, 3=needs_input (worker question),
 #       4=daemon dead, 1=checkpoint timeout while worker continues
@@ -47,7 +49,7 @@ meight result <name>
 
 Set `--timeout` to roughly how long you expect the work to take. Finishes inside that window → you get the completion push and never spend a turn checking. Overruns → the timeout wakes you, and an overrun is itself a signal worth one `status` look. There's no fixed interval and no obligation to check — a sparse wake-up, then your call: wait again, steer, or just let it run. Never busy-poll (checking every few seconds burns turns for nothing).
 
-**Timeout length = your check-in dial.** Near the full duration → mostly run-to-completion, wake at the end; a fraction (≈⅓–½) → deliberate mid-run checkpoints, re-waited. Set it by how close you want to stay, not a default number.
+**Timeout length = your check-in dial.** Near the full duration → mostly run-to-completion, wake at the end; a fraction (≈⅓–½) → deliberate mid-run checkpoints, re-waited. Set it by how close you want to stay, not a default number. Since wait auto-heartbeats progress (above), you rarely need a short timeout just for *visibility* — keep it long and read the heartbeat; shorten it only when you mean to *steer* mid-run.
 
 ### Checkpoint design: markers by default, gates only when earned
 

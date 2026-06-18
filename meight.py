@@ -1071,9 +1071,12 @@ def classify_wait_state(st: dict) -> int | None:
     return None
 
 
-def wait_for_worker(home: Path, name: str, timeout: float | None) -> int:
+def wait_for_worker(home: Path, name: str, timeout: float | None,
+                    progress: float = 300.0) -> int:
     sj = home / "workers" / name / "status.json"
-    deadline = time.monotonic() + timeout if timeout else None
+    now = time.monotonic()
+    deadline = now + timeout if timeout else None
+    next_progress = now + progress if progress and progress > 0 else None
     dead_strikes = 0  # avoid false positives from transient ping failures while the daemon is busy
     while True:
         st = None
@@ -1101,11 +1104,20 @@ def wait_for_worker(home: Path, name: str, timeout: float | None) -> int:
             print(f"{name:<14} timeout after {timeout}s "
                   f"(state={st.get('state') if st else 'unknown'})")
             return 1
+        # Periodic progress heartbeat — print one status line every `progress` seconds WITHOUT ending the
+        # wait. Checked AFTER terminal/timeout/daemon-dead so a heartbeat never trails a real exit in the
+        # .output. Backgrounded, these accumulate so the orchestrator reads mid-run progress without
+        # re-waiting. Clamp to now+progress so a slept/blocked process doesn't emit catch-up bursts.
+        # On by default (300s); `--progress 0` turns it off.
+        if next_progress is not None and time.monotonic() >= next_progress:
+            if st is not None:
+                print(f"  [{time.strftime('%H:%M:%S')}] {summary_line(st)}", flush=True)
+            next_progress = time.monotonic() + progress
         time.sleep(1)
 
 
 def cmd_wait(args, home: Path) -> int:
-    return wait_for_worker(home, args.name, args.timeout)
+    return wait_for_worker(home, args.name, args.timeout, args.progress)
 
 
 def ensure_daemon(home: Path) -> bool:
@@ -1138,7 +1150,7 @@ def cmd_dispatch(args, home: Path) -> int:
         print(f"error: {resp.get('error', 'unknown')}", file=sys.stderr)
         return 1
     print(f"started worker '{args.name}' thread={resp.get('thread_id')}", flush=True)
-    code = wait_for_worker(home, args.name, args.timeout)
+    code = wait_for_worker(home, args.name, args.timeout, args.progress)
     rp = home / "workers" / args.name / "result.md"
     if code in (0, 2, 3) and rp.is_file():
         print("--- result ---")
@@ -1153,7 +1165,7 @@ def cmd_reply(args, home: Path) -> int:
         "no_preamble": args.no_preamble,
     }))
     print(f"reply turn #{resp.get('turns')} on worker '{args.name}'", flush=True)
-    code = wait_for_worker(home, args.name, args.timeout)
+    code = wait_for_worker(home, args.name, args.timeout, args.progress)
     rp = home / "workers" / args.name / "result.md"
     if code in (0, 2, 3) and rp.is_file():
         text = rp.read_text(encoding="utf-8")
@@ -1210,6 +1222,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("name")
     add_start_options(sp)
     sp.add_argument("--timeout", type=float, default=1800)
+    sp.add_argument("--progress", type=float, default=300.0,
+                    help="seconds between status heartbeats while waiting; 0=off")
     sp.set_defaults(fn=cmd_dispatch)
 
     sp = sub.add_parser("follow", help="new turn on the same thread for a terminal/QUESTION worker")
@@ -1225,6 +1239,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--brief")
     sp.add_argument("--no-preamble", action="store_true")
     sp.add_argument("--timeout", type=float, default=1800)
+    sp.add_argument("--progress", type=float, default=300.0,
+                    help="seconds between status heartbeats while waiting; 0=off")
     sp.set_defaults(fn=cmd_reply)
 
     sp = sub.add_parser("steer", help="inject mid-turn text into a running turn")
@@ -1252,6 +1268,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("wait", help="poll until terminal state")
     sp.add_argument("name")
     sp.add_argument("--timeout", type=float, default=None)
+    sp.add_argument("--progress", type=float, default=300.0,
+                    help="seconds between status heartbeats while waiting; 0=off")
     sp.set_defaults(fn=cmd_wait)
 
     sp = sub.add_parser("shutdown", help="shut down daemon")

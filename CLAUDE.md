@@ -30,7 +30,8 @@ meight start <name> --brief-file - --cwd <dir> [--sandbox ws|ro, default ws] [--
 ## Report     <changed files, verification output, judgment calls, open risks>
 EOF
 
-# 2) Wait as a checkpoint timer (set --timeout ~ expected duration), run as a background Bash call. Timeout does NOT kill the worker.
+# 2) Wait as a background Bash call. Auto-heartbeats a status line every 300s (--progress N / 0=off) into the
+#    output → read mid-run progress without re-waiting. --timeout ~ expected duration; timeout does NOT kill it.
 meight wait <name> --timeout 300   # 0 done · 2 failed · 3 question · 4 daemon dead · 1 checkpoint (worker continues)
 # 3) On exit 1, read one status and decide: healthy → wait again; drifting → steer once, then wait again.
 meight status <name>
@@ -39,7 +40,7 @@ meight steer <name> "correction"
 meight result <name>
 ```
 
-- `status`/`steer` aren't a side channel — the `start`+`wait` split exists so you *can* reach in mid-run; whether you do is your call. Set `--timeout` to about the expected duration: finishes in time → completion push, no turn spent; overruns → the timeout wakes you, and an overrun is itself worth a look. No fixed interval, no obligation to check. Observe by pulling, never streaming; never busy-poll.
+- `status`/`steer` aren't a side channel — the `start`+`wait` split exists so you *can* reach in mid-run; whether you do is your call. Set `--timeout` to about the expected duration: finishes in time → completion push, no turn spent; overruns → the timeout wakes you, and an overrun is itself worth a look. No fixed interval, no obligation to check. Observe by pulling, never streaming; never busy-poll. Wait auto-heartbeats progress every 300s, so keep `--timeout` long for visibility and read the heartbeat; shorten it only to steer mid-run.
 - Steer when `status` shows the worker drifting from the goal, not during healthy progress (needless intervention breaks flow). What counts as drift is your judgment, not a checklist.
 - Checkpoint design (set in the brief): **markers by default** — the worker emits a one-line `CHECKPOINT: …` per phase and keeps going (never blocks; read via `status`); **gates only when earned** — stop for approval at a direction-setting branch where a wrong turn wastes everything downstream. The `--timeout` length is your check-in dial: near full duration → run-to-completion; a fraction (≈⅓–½) → deliberate mid-run checkpoints.
 - Running many workers? Pull `meight status` (the all-worker table) and only open up the ones that look off — don't wait on each one individually.
