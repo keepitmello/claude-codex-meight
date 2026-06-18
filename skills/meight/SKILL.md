@@ -51,6 +51,15 @@ Set `--timeout` to roughly how long you expect the work to take. Finishes inside
 
 **The timeout length IS your check-in dial.** This is how the "keep the door open" intent above turns into an actual cadence: set it near the full expected duration and you mostly let the worker run, waking on completion; set it to a fraction (≈⅓–½ of the expected time) and you *deliberately* wake mid-run for a `status`/`steer` pass, then re-wait. The longer the job and the closer you want to stay, the shorter the timeout — re-waited each time. A timeout that's much longer than the work means you only ever wake on completion (no mid-run door); a timeout shorter than the work guarantees a checkpoint. Pick the length by how much mid-run involvement the task warrants, not by a default number.
 
+### Checkpoint design: markers by default, gates only when they earn it
+
+The timeout dial decides *when you wake*; the brief decides *what the worker leaves for you to find*. Two kinds — set them in the brief:
+
+- **Marker checkpoints (the default).** Tell the worker to emit a one-line progress marker at each phase boundary (e.g. `CHECKPOINT: main page pixel-matched`) and **keep going** — no stop. You read them at your own cadence via `status` (`last_message_tail` / events), tuned by the timeout dial. This is the default because it makes progress structurally legible **without ever blocking the worker** — no round-trip, no bottleneck, flow intact.
+- **Gate checkpoints (the exception).** Tell the worker to stop and wait for approval (surfaces as `needs_input`/`QUESTION`) **only at a branch that *sets direction*** — where proceeding on the wrong choice would waste everything downstream (e.g. "validate the comparison method on ONE page before mirroring all pages"). A gate costs a round-trip and blocks the worker, so spend it only where that cost is cheaper than redoing the work. Never gate routine progress — that's what markers are for.
+
+Pair with the dial: marker runs → set timeout near phase length so you wake at boundaries and read the latest marker; gates surface on their own regardless of timeout. Rule of thumb: **default to markers; add a gate only when you can name the specific wrong-turn it prevents.**
+
 Steer when `status` shows the worker drifting from the goal — and not during healthy progress, since needless intervention breaks its flow. What counts as drift is your judgment, not a checklist.
 
 When the worker reaches a terminal state, `wait` returns immediately with `0` (completed), `2` (failed/interrupted), or `3` (QUESTION). `wait` prints a status summary; use `meight result <name>` for the full report or question. On exit `0`, cross-model verify before accepting the work. On exit `3`, answer with `reply`.
