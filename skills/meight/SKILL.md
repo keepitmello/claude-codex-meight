@@ -27,6 +27,10 @@ meight start <name> --brief-file - --cwd <dir> \
 EOF
 
 # 2) Wait as a checkpoint timer (set --timeout to roughly the expected duration). Timeout does NOT kill the worker.
+#    Run wait via Bash run_in_background. There is NO standalone daemon push channel — the backgrounded
+#    wait/dispatch IS the push: when the worker finishes (or --timeout elapses) the call exits and that exit
+#    surfaces as a task-notification that wakes you, costing no turn. A FOREGROUND wait still delivers the
+#    result, but blocks your turn until the worker finishes — pure waste. Background it.
 meight wait <name> --timeout 300
 # exit: 0=completed, 2=failed/interrupted, 3=needs_input (worker question),
 #       4=daemon dead, 1=checkpoint timeout while worker continues
