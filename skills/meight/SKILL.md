@@ -11,6 +11,7 @@ Harness for driving Codex workers in parallel from a Claude orchestrator — usa
 - **You (Claude) hold the direction**: task decomposition, integration, verification, user communication, and git. **Codex workers are teammates, not just executors**: strong on details (races, type drift, edge cases), often weaker on the big picture. So you own *what and why* and they own *how* — but run it two-way: pull a worker in to sounding-board a hard call or sketch the big picture together, and expect workers to push back when they spot a better path. Discuss and adjust more than you dictate.
 - **Routing**: bounded implementation with a clear spec / code review / browser, visual, desktop, and runtime QA work → Codex workers. Exploration fan-out / fresh-context verification / harness-tool work → Claude subagents.
 - **Cross-model review is mandatory**: Codex implements → a Claude agent verifies; Claude implements → a Codex worker reviews. Same-model self-review doesn't count.
+- **Direction is set by two reads, never one**: the failure this guards against is deciding a direction-setting branch *alone* — analyzing it yourself and committing without ever calling a worker. That silent solo call is the real failure mode, more common than bad delegation. So when the work reaches a fork that sets direction — which approach, a design tradeoff, an architecture or diagnosis call, scope/sequencing, anything genuinely ambiguous — it gets **two independent analyses before you commit**: yours first (you analyze it directly — analysis is never outsourced), then a mandatory independent read-only Codex analysis of the *same* question, and you pick the direction by comparing the two reads. Not calling Codex on a direction-setting fork is the independent-judgment failure, exactly as skipping cross-model review would be. This is the sibling of review — review checks a finished artifact, this shapes the direction before the build — and like review, one side alone doesn't count: your reasoning alone is a claim, the cross-read makes it a decision. Run the Codex half via the **Consult** pattern below. (Trivial, unambiguous, or already-agreed calls don't need this — it's for forks that genuinely set direction.)
 - **Workers never commit** (the harness preamble enforces it) — review the working tree and commit yourself. A worker's "done" is a claim; your verification makes it a fact.
 
 ## Codex worker capabilities to use actively
@@ -129,7 +130,7 @@ meight interrupt <name>             # cancel (idempotent)
 
 ## Consult a worker (sounding board, not just delegation)
 
-The channel runs both ways — when *you* are stuck, unsure of an approach, or want to pressure-test a design before committing, dispatch a read-only consult instead of a build order:
+The channel runs both ways. This is **also the Codex half of a decision fork** (see "Direction is set by two reads" above) — on a direction-setting branch it's not an optional when-you're-stuck move but the required second read. And whenever *you* are stuck, unsure of an approach, or want to pressure-test a design before committing, dispatch a read-only consult instead of a build order:
 
 ```bash
 meight start consult-x --sandbox ro --effort high --cwd <repo root> --brief-file - <<'EOF'
