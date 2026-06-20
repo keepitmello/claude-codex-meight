@@ -745,14 +745,16 @@ class Daemon:
             w.init_status(thread_id=None)
             try:
                 thread = self.codex.thread_start(
+                    cwd=cwd,
                     ephemeral=True,
+                    sandbox=getattr(Sandbox, sandbox_key),
                     **({"thread_source": ThreadSource.subagent} if ThreadSource is not None else {}),
                 )
                 w.thread = thread
                 with w.lock:
                     w.status["thread_id"] = thread.id
                 w.handle = thread.turn(
-                    turn_input, cwd=cwd, sandbox=getattr(Sandbox, sandbox_key),
+                    turn_input,
                     model=model, effort=effort, service_tier=service_tier,
                 )
             except Exception as e:
@@ -774,8 +776,6 @@ class Daemon:
         return {"ok": True, "thread_id": thread.id}
 
     def cmd_follow(self, req: dict) -> dict:
-        from openai_codex import Sandbox
-
         name = req["name"]
         brief = req["brief"]
         use_preamble = not req.get("no_preamble")
@@ -806,7 +806,7 @@ class Daemon:
             w.reset_for_follow(file_brief)  # generation+1; also ignores any leftover old events (second guard)
             try:
                 w.handle = w.thread.turn(
-                    turn_input, cwd=w.cwd, sandbox=getattr(Sandbox, w.sandbox),
+                    turn_input,
                     model=w.model, effort=w.effort, service_tier=w.service_tier,
                 )
             except Exception as e:
