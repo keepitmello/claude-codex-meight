@@ -720,6 +720,7 @@ class Daemon:
         model = req.get("model")
         effort = req.get("effort") or "medium"
         service_tier = req.get("service_tier")
+        main_thread = bool(req.get("main_thread"))
 
         with self.reg_lock:
             existing = self.workers.get(name)
@@ -748,7 +749,9 @@ class Daemon:
                     cwd=cwd,
                     ephemeral=True,
                     sandbox=getattr(Sandbox, sandbox_key),
-                    **({"thread_source": ThreadSource.subagent} if ThreadSource is not None else {}),
+                    # main_thread omits thread_source → non-subagent thread (needed for computer use).
+                    **({"thread_source": ThreadSource.subagent}
+                       if (ThreadSource is not None and not main_thread) else {}),
                 )
                 w.thread = thread
                 with w.lock:
@@ -985,6 +988,7 @@ def start_request(args, home: Path) -> dict:
         "sandbox": args.sandbox, "model": args.model, "effort": args.effort,
         "service_tier": service_tier,
         "no_preamble": args.no_preamble,
+        "main_thread": getattr(args, "main_thread", False),
     })
 
 
@@ -1212,6 +1216,8 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--fast", action=argparse.BooleanOptionalAction, default=None,
                         help="use the priority service tier (codex 'Fast'); --no-fast forces a non-priority tier for a cheaper run; omit to inherit ~/.codex/config.toml")
         sp.add_argument("--no-preamble", action="store_true", help="disable prepending the harness protocol preamble")
+        sp.add_argument("--main-thread", action="store_true",
+                        help="omit thread_source so the worker starts as a non-subagent (main) thread — required for computer use / browser use, which the subagent thread does not expose")
 
     sp = sub.add_parser("start", help="start a new worker")
     sp.add_argument("name")
