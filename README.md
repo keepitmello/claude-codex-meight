@@ -153,7 +153,7 @@ Small decisions everywhere assume the user is an LLM agent, not a person at a te
 | `meight follow <name> --brief ...` | Low-level: new turn on the same thread (context preserved) |
 | `meight result / list / daemon / ping / shutdown` | Low-level support commands |
 
-Options: `--cwd` (worker workdir — use separate git worktrees for overlapping file scopes), `--sandbox ws|ro|full` (default `ws` = workspace-write; reviews run `ro`), `--effort low|medium|high|xhigh` (default `medium`; raise by task complexity), `--model`, `--fast`/`--no-fast` (per-worker toggle for the codex Fast/priority tier — `--no-fast` for a cheaper run; omit to inherit config), `--timeout`.
+Options: `--cwd` (worker workdir — use separate git worktrees for overlapping file scopes), `--sandbox ws|ro|full` (default `full` = no sandbox, so Codex can verify freely — builds, daemon restarts, writes outside cwd; `ws` = workspace-write scoped to cwd; reviews run `ro`), `--effort low|medium|high|xhigh` (default `medium`; raise by task complexity), `--model`, `--fast`/`--no-fast` (per-worker toggle for the codex Fast/priority tier — `--no-fast` for a cheaper run; omit to inherit config), `--timeout`.
 
 Worker state lives in `<repo>/.meight/workers/<name>/`: `brief.md`, `status.json` (state machine + tokens + files changed + last activity), `events.log` (one line per meaningful event), `result.md` (final message per turn). Add `.meight/` to your global gitignore.
 

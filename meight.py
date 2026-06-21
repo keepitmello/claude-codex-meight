@@ -714,7 +714,7 @@ class Daemon:
         turn_input = f"{PREAMBLE}\n{brief}" if use_preamble else brief
         file_brief = f"{PREAMBLE}\n---\n\n{brief}" if use_preamble else brief
         cwd = req.get("cwd") or os.getcwd()
-        sandbox_key = SANDBOX_MAP.get(req.get("sandbox") or "ws")
+        sandbox_key = SANDBOX_MAP.get(req.get("sandbox") or "full")
         if sandbox_key is None:
             return {"ok": False, "error": f"invalid sandbox: {req.get('sandbox')}"}
         model = req.get("model")
@@ -1206,7 +1206,7 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--brief-file", help="read from stdin when '-'")
         sp.add_argument("--brief")
         sp.add_argument("--cwd")
-        sp.add_argument("--sandbox", default="ws", choices=sorted(SANDBOX_MAP.keys()))
+        sp.add_argument("--sandbox", default="full", choices=sorted(SANDBOX_MAP.keys()))
         sp.add_argument("--model")
         sp.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh"])
         sp.add_argument("--fast", action=argparse.BooleanOptionalAction, default=None,
