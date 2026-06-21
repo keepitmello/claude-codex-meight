@@ -10,7 +10,10 @@ Harness for driving Codex workers in parallel from a Claude orchestrator — usa
 **Operating model (self-contained — works without any other prompt file):**
 - **You (Claude) hold the direction**: task decomposition, integration, verification, user communication, and git. **Codex workers are teammates, not just executors**: strong on details (races, type drift, edge cases), often weaker on the big picture. So you own *what and why* and they own *how* — but run it two-way: pull a worker in to sounding-board a hard call or sketch the big picture together, and expect workers to push back when they spot a better path. Discuss and adjust more than you dictate. **And holding the direction is not deciding it alone**: when the work hits a fork that *sets* direction, you cross-read it with a Codex worker before committing (see "Direction is set by two reads, never one" below). "Teammates, not executors" means the hard calls are made together, not just the easy implementation handed off.
 - **Routing**: bounded implementation with a clear spec / code review / browser, visual, desktop, and runtime QA work → Codex workers. Exploration fan-out / fresh-context verification / harness-tool work → Claude subagents.
-- **Cross-model review is mandatory**: Codex implements → a Claude agent verifies; Claude implements → a Codex worker reviews. Same-model self-review doesn't count.
+- **Independent review before accepting is mandatory — the *form* is your call**: a worker's output gets reviewed by something other than the worker that produced it. The one non-negotiable is that the implementer never reviews its own work; *how* you get the independent read is your judgment by risk:
+  - **Cross-model** (Codex implements → a fresh Claude agent verifies; Claude implements → a Codex `--sandbox ro` worker reviews): adds model diversity on top of context independence. Default for subtle, high-stakes, hard-to-verify, or irreversible work — money-path, concurrency, auth, data migration, external APIs.
+  - **Fresh Codex review worker** (a *separate* worker from the implementer, adversarial `--sandbox ro` review): same model, independent context — not self-review. Fine for routine, lower-risk, well-specced changes where model diversity buys little. Cheaper/faster than spinning up a Claude agent.
+  Pick by risk; when unsure, prefer cross-model. The trap this still closes: accepting a worker's "done" with no independent read at all.
 - **Direction is set by two reads, never one**: when the work reaches a fork that sets direction — which approach, a design tradeoff, an architecture or diagnosis call, scope/sequencing, anything genuinely ambiguous — it gets **two independent analyses before you commit**: yours first (you analyze it directly — analysis is never outsourced), then a mandatory read-only Codex analysis of the *same* question, and you set direction by comparing the two reads. This is the sibling of cross-model review — review checks a finished artifact, this shapes the direction before the build — and like review, one side alone doesn't count: your reasoning alone is a claim, the cross-read makes it a decision. The trap it closes: deciding a direction-setting branch solo, without ever calling a worker. Run the Codex half via the **Consult** pattern below. (Trivial, unambiguous, or already-agreed calls don't need this.)
 - **Workers never commit** (the harness preamble enforces it) — review the working tree and commit yourself. A worker's "done" is a claim; your verification makes it a fact.
 
@@ -59,7 +62,7 @@ Set in the brief how the worker reports mid-run:
 
 Steer when `status` shows the worker drifting from the goal — and not during healthy progress, since needless intervention breaks its flow. What counts as drift is your judgment, not a checklist.
 
-When the worker reaches a terminal state, `wait` returns immediately with `0` (completed), `2` (failed/interrupted), or `3` (QUESTION). `wait` prints a status summary; use `meight result <name>` for the full report or question. On exit `0`, cross-model verify before accepting the work. On exit `3`, answer with `reply`.
+When the worker reaches a terminal state, `wait` returns immediately with `0` (completed), `2` (failed/interrupted), or `3` (QUESTION). `wait` prints a status summary; use `meight result <name>` for the full report or question. On exit `0`, get an independent review before accepting the work — cross-model or a fresh Codex review worker, your call by risk (see the review rule above). On exit `3`, answer with `reply`.
 
 ## One-shot dispatch only for trivial safe work
 
@@ -117,6 +120,8 @@ meight interrupt <name>             # cancel (idempotent)
 `status` is part of the normal supervised loop, not a side channel. Use it at checkpoint wake-ups and after suspicious output. Running several workers at once? Pull the all-worker `status` table and only open up the ones that look off — don't wait on each one individually. `interrupt` is for clearly wrong or unsafe runs where steering is not enough.
 
 ## Review worker pattern
+
+This is the **fresh Codex review worker** form of the review rule — and also the Codex side of cross-model review when Claude implemented. Use a *different* worker name than the implementer so the reviewer reads with fresh, independent context (never re-use the implementing worker — that's self-review).
 
 ```bash
 meight start review-X --sandbox ro --effort high --cwd <repo root> --brief-file - <<'EOF'

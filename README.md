@@ -12,7 +12,7 @@ Most Claude↔Codex bridges are built for *a human watching a terminal* — tmux
 
 - **Both directions, same thread.** Codex isn't just an executor — a worker ends a turn with a `QUESTION:` to flag a better path or a shaky assumption (not only when it's blocked), and the orchestrator answers or adjusts the direction with it. Real back-and-forth, not fire-a-task-collect-a-result.
 - **Consult, don't just delegate.** Stuck on a design? The orchestrator dispatches a read-only worker to think a problem through *with* it — the sibling of code review, applied to the thinking instead of the artifact.
-- **Each model checks the other.** Codex implements → a Claude agent verifies; Claude implements → a Codex worker reviews. Cross-model review catches what same-model self-review misses.
+- **Nothing ships self-reviewed.** Every worker output gets an independent read — never from the worker that produced it. The orchestrator picks the form by risk: cross-model (Codex↔Claude) for subtle or high-stakes work where model diversity pays, or a fresh-context Codex review worker for routine changes. Independent context is the floor; cross-model is the upgrade.
 - **Supervised, on your terms.** The `start`+`wait` split lets the orchestrator pull `status` and `steer` mid-run — how often, and whether at all, is its judgment, not a fixed cadence. Progress lives in small disk files, so watching costs ~0 context.
 - **One-shot when it fits.** `meight dispatch` still gives fire-and-forget for trivial, short, low-risk tasks.
 
