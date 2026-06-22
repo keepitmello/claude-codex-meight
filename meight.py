@@ -236,7 +236,7 @@ class Worker:
         self.sandbox = sandbox  # normalized key such as "workspace_write"
         self.model = model
         self.effort = effort
-        self.service_tier = service_tier  # None -> inherit ~/.codex/config.toml; else override per worker
+        self.service_tier = service_tier  # "default" unless --fast maps the worker to "priority"
         self.thread_source = thread_source
         self.thread = None       # openai_codex.Thread (kept while daemon lives -> reused for follow)
         self.handle = None       # TurnHandle
@@ -1181,9 +1181,9 @@ def cmd_daemon(args, home: Path) -> int:
 
 def start_request(args, home: Path) -> dict:
     # --fast/--no-fast is the user-facing knob; map it to a codex service tier.
-    # priority = Fast; default = a non-priority tier; None = inherit ~/.codex/config.toml.
-    fast = getattr(args, "fast", None)
-    service_tier = None if fast is None else ("priority" if fast else "default")
+    # priority = Fast; default = a non-priority tier. The default is deliberately non-Fast.
+    fast = bool(getattr(args, "fast", False))
+    service_tier = "priority" if fast else "default"
     req = {
         "cmd": "start", "name": args.name, "brief": read_brief(args),
         "cwd": str(Path(args.cwd).resolve()) if args.cwd else os.getcwd(),
@@ -1516,8 +1516,8 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--sandbox", default="full", choices=sorted(SANDBOX_MAP.keys()))
         sp.add_argument("--model")
         sp.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh"])
-        sp.add_argument("--fast", action=argparse.BooleanOptionalAction, default=None,
-                        help="use the priority service tier (codex 'Fast'); --no-fast forces a non-priority tier for a cheaper run; omit to inherit ~/.codex/config.toml")
+        sp.add_argument("--fast", action=argparse.BooleanOptionalAction, default=False,
+                        help="use the priority service tier (codex 'Fast'); omitted or --no-fast uses the non-priority default tier")
         sp.add_argument("--no-preamble", action="store_true", help="disable prepending the harness protocol preamble")
         sp.add_argument("--main-thread", action="store_true",
                         help="use ThreadSource.user instead of the default hidden ThreadSource.subagent — only for tools that require a visible/main Codex Desktop thread")

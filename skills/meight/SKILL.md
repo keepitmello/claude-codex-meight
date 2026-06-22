@@ -79,7 +79,7 @@ EOF
 - Add `--shutdown-when-idle` when a one-shot worker should ask the daemon to exit after a terminal result if no workers are active
 - Do not use one-shot dispatch for substantial work that may need observation or steering
 - Implementation: omit `--sandbox` (full is the default — no sandbox, so Codex can actively verify: builds, daemon restarts, writes outside cwd). Drop to `--sandbox ws` for write-scoped-to-cwd. Review & analysis: `--sandbox ro`
-- Model: gpt-5.5 + Fast (priority tier, inherited from ~/.codex/config.toml). Toggle it per worker with `--fast`/`--no-fast` on `start`/`dispatch` (`--no-fast` = cheaper non-priority tier; omit to inherit config). **Pick effort by complexity**: medium (default, routine implementation) / high (tricky implementation, code review, debugging) / xhigh (precision verification — concurrency, irreversible or hard-to-verify changes — and hard design)
+- Model: gpt-5.5 with non-Fast service tier by default. Pass `--fast` on `start`/`dispatch` only when that specific worker should use the priority tier; omitted or `--no-fast` stays on the cheaper non-priority tier. **Pick effort by complexity**: medium (default, routine implementation) / high (tricky implementation, code review, debugging) / xhigh (precision verification — concurrency, irreversible or hard-to-verify changes — and hard design)
 - Thread visibility: workers start with `thread_source=subagent` by default so they stay out of Codex Desktop's main user-thread list. Use `--main-thread` only for tools that require a visible/main thread.
 - N parallel workers OK. Overlapping file scopes → separate git worktrees via `--cwd`
 - A harness preamble is auto-prepended to every brief: **no commit/push** + end with a `QUESTION:` paragraph when blocked

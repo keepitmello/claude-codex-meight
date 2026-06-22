@@ -153,13 +153,13 @@ Small decisions everywhere assume the user is an LLM agent, not a person at a te
 | `meight follow <name> --brief ...` | Low-level: new turn on the same thread (context preserved) |
 | `meight result / list / daemon / ping / shutdown / launchd` | Low-level support commands |
 
-Options: `--cwd` (worker workdir — use separate git worktrees for overlapping file scopes), `--sandbox ws|ro|full` (default `full` = no sandbox, so Codex can verify freely — builds, daemon restarts, writes outside cwd; `ws` = workspace-write scoped to cwd; reviews run `ro`), `--effort low|medium|high|xhigh` (default `medium`; raise by task complexity), `--model`, `--fast`/`--no-fast` (per-worker toggle for the codex Fast/priority tier — `--no-fast` for a cheaper run; omit to inherit config), `--timeout`. Workers start as Codex subagent threads by default so they stay out of Codex Desktop's main user-thread list; use `--main-thread` only when a tool needs a visible/main thread.
+Options: `--cwd` (worker workdir — use separate git worktrees for overlapping file scopes), `--sandbox ws|ro|full` (default `full` = no sandbox, so Codex can verify freely — builds, daemon restarts, writes outside cwd; `ws` = workspace-write scoped to cwd; reviews run `ro`), `--effort low|medium|high|xhigh` (default `medium`; raise by task complexity), `--model`, `--fast`/`--no-fast` (workers run non-Fast by default; pass `--fast` to use the codex Fast/priority tier), `--timeout`. Workers start as Codex subagent threads by default so they stay out of Codex Desktop's main user-thread list; use `--main-thread` only when a tool needs a visible/main thread.
 
 Worker state lives in `<daemon-home>/repos/<repo-key>/workers/<name>/`: `brief.md`, `status.json` (state machine + tokens + files changed + last activity), `events.log` (one line per meaningful event), `result.md` (final message per turn). Use `meight list --all-repos` for a global view. Terminal workers stay in daemon memory for `MEIGHT_WORKER_GC_TTL_SEC` seconds by default, and the daemon exits after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with no active workers; set either env var to `0` to disable that cleanup.
 
 ## Good to know
 
-- Meight inherits your `~/.codex/config.toml` as-is (model, MCP servers, auth) — under the hood the SDK runs a standard `codex app-server`. If `codex` works in your terminal, `meight` works. Per-worker overrides (`--model`, `--fast`/`--no-fast`) take precedence over the config for that worker.
+- Meight inherits your `~/.codex/config.toml` for model, MCP servers, and auth — under the hood the SDK runs a standard `codex app-server`. If `codex` works in your terminal, `meight` works. Meight deliberately overrides worker service tier to non-Fast by default; pass `--fast` when a specific worker should use the priority tier.
 - `openai-codex` is pinned (`0.1.0b3`, beta). When bumping, re-run the verification suite in [`SPEC.md`](./SPEC.md).
 - Design details — the concurrency model, state machine, and orchestration policy — live in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
