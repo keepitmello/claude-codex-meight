@@ -68,24 +68,32 @@ codex.thread_resume(thread_id)        # exists; introspect signature in code if 
 
 ## State Directory
 
-If `$MEIGHT_HOME` is set, use it. Otherwise use
-`<repo root>/.meight/`, where `<repo root>` is resolved from the daemon
-startup cwd through `git rev-parse --show-toplevel`; if that fails, use
-`<cwd>/.meight/`.
+If `$MEIGHT_HOME` is set, use it as the global daemon home. Otherwise use
+`$XDG_STATE_HOME/meight` when `$XDG_STATE_HOME` is set, falling back to
+`~/.meight/`. The daemon home is shared across repositories.
+
+Each CLI invocation also resolves a repository namespace from the invoking cwd:
+`git -C <cwd> rev-parse --show-toplevel` when available, otherwise `<cwd>`.
+The repo key is a stable slug plus hash of that root. `--cwd` controls the
+worker execution directory only; it does not change the status/result namespace.
 
 ```text
-.meight/
+~/.meight/
   meight.sock          # Unix domain socket
   daemon.pid
   daemon.log         # daemon lifecycle log only; do not dump raw events
-  workers/<name>/
-    brief.md         # original dispatched prompt
-    status.json      # digest; schema below
-    events.log       # append-only meaningful event lines
-    result.md        # final agent message at turn completion
+  launchd.out.log
+  launchd.err.log
+  repos/<repo-key>/
+    workers/<name>/
+      brief.md       # original dispatched prompt
+      status.json    # digest; schema below
+      events.log     # append-only meaningful event lines
+      result.md      # final agent message at turn completion
 ```
 
-The repository `.gitignore` should ignore `.meight/` and `.venv/`.
+The repository `.gitignore` should ignore `.venv/`. Historical repo-local
+`.meight/` directories are no longer used by default.
 
 ### status.json Schema
 
@@ -97,10 +105,13 @@ The repository `.gitignore` should ignore `.meight/` and `.venv/`.
   "state": "starting|running|needs_input|completed|failed|interrupted",
   "started_at": "ISO8601 KST",
   "updated_at": "ISO8601 KST",
+  "repo_root": "/abs/path/to/repo",
+  "repo_key": "repo-0123456789abcdef",
   "cwd": "...",
   "sandbox": "workspace-write",
   "model": null,
   "effort": "medium",
+  "thread_source": "subagent",
   "current_item": "commandExecution: pnpm typecheck:be (12s)",
   "plan": ["[done] step1", "[active] step2"],
   "files_changed": ["src/x.ts"],
@@ -130,16 +141,17 @@ The command table must match the `python3 meight.py --help` subcommand list exac
 
 | Command | Behavior |
 |---|---|
-| `daemon` | Run the foreground daemon. The orchestrator starts it in the background. If a live daemon already exists, return exit `1`. |
+| `daemon` | Run the foreground global daemon. The orchestrator starts it in the background. If a live daemon already exists, return exit `1`. |
 | `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid. |
-| `start <name> (--brief-file F\|- \| --brief TEXT) [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh] [--fast \| --no-fast] [--no-preamble]` | Start a new worker with `thread_start` plus one turn. Defaults: `sandbox=ws`, `effort=medium`, `cwd=current directory`. `--fast`/`--no-fast` toggles the codex Fast (priority) service tier for this worker — it maps to the SDK turn's `service_tier` (`priority` / `default` respectively); omitted = inherit `~/.codex/config.toml`. Reject duplicate active worker names. `--brief-file -` reads the brief from stdin. |
-| `dispatch <name> (--brief-file F\|- \| --brief TEXT) [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh] [--fast \| --no-fast] [--no-preamble] [--timeout SEC]` | One-shot command: auto-start daemon if needed, `start`, `wait`, then print `result.md`. Default timeout is `1800` seconds. Exit code matches `wait`. |
-| `follow <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble]` | Start a new turn on the same thread for a terminal worker or a worker waiting on a final `QUESTION:`. Reset status, increment `turns`, and append to `result.md` and `events.log` with a separator. |
-| `reply <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble] [--timeout SEC]` | One-shot answer path for `QUESTION:` blockers: `follow`, `wait`, then print only the latest turn result. Default timeout is `1800` seconds. |
+| `launchd install [--load]` / `launchd status` / `launchd uninstall` | Manage an optional macOS LaunchAgent for the global daemon. The plist uses `RunAtLoad` and `KeepAlive=false`; CLI auto-start remains the on-demand path. |
+| `start <name> (--brief-file F\|- \| --brief TEXT) [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new persistent worker thread with `thread_start(ephemeral=False, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. Defaults: `sandbox=full`, `effort=medium`, `cwd=current directory`, `thread_source=subagent` so meight workers do not appear as main user threads in Codex Desktop. `--main-thread` intentionally uses `ThreadSource.user` for tools that require a visible/main thread. `--fast`/`--no-fast` toggles the codex Fast (priority) service tier for this worker — it maps to the SDK turn's `service_tier` (`priority` / `default` respectively); omitted = inherit `~/.codex/config.toml`. Reject duplicate active worker names inside the same repo namespace. `--brief-file -` reads the brief from stdin. |
+| `dispatch <name> (--brief-file F\|- \| --brief TEXT) [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, `start`, `wait`, then print `result.md`. Default timeout is `1800` seconds. Exit code matches `wait`. `--shutdown-when-idle` asks the global daemon to stop after a terminal result if no workers are active. |
+| `follow <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble]` | Start a new turn on the same thread for a terminal worker or a worker waiting on a final `QUESTION:`. If the daemon restarted, resume the thread from the repo-scoped `status.json` via `thread_resume`. Reset status, increment `turns`, and append to `result.md` and `events.log` with a separator. |
+| `reply <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot answer path for `QUESTION:` blockers: `follow`, `wait`, then print only the latest turn result. Default timeout is `1800` seconds. |
 | `steer <name> TEXT` | Inject mid-turn text into a running turn. Return an error unless the worker is currently running. |
 | `interrupt <name>` | Interrupt the active turn. |
-| `status [name] [--json]` | Does not require the daemon. Read `status.json` directly. With no name, print a one-line table for all workers: name, state, elapsed, files count, tokens, and current item. With a name, print details. `--json` prints JSON. |
-| `list [--json]` | Alias for `status` with no worker name. |
+| `status [name] [--json] [--all-repos]` | Does not require the daemon. Read repo-scoped `status.json` directly. With no name, print a one-line table for workers in the invoking repo; `--all-repos` reads every repo namespace. With a name, print details. `--json` prints JSON. |
+| `list [--json] [--all-repos]` | Alias for `status` with no worker name. |
 | `result <name>` | Print `result.md`. |
 | `wait <name> [--timeout SEC]` | Poll `status.json` once per second. Terminal states return `completed=0`, `failed=2`, `interrupted=2`. Final `QUESTION:` returns `3`. Daemon death returns `4`. Timeout returns `1`. Print one final status summary line to stdout. |
 | `shutdown [--force]` | Refuse shutdown while active workers exist. With `--force`, interrupt all active workers and then shut down. |
@@ -172,7 +184,7 @@ continue from this state on the same Codex thread.
 
 ## Daemon Internals
 
-- One synchronous `Codex` client per daemon.
+- One synchronous `Codex` client per global daemon.
 - One Python `threading.Thread` per worker to consume the SDK stream and write
   digests.
 - Socket protocol: one JSON request line and one JSON response line.
@@ -180,8 +192,14 @@ continue from this state on the same Codex thread.
   `{"ok":false,"error":"..."}`.
 - Socket-dispatched commands: `start`, `follow`, `steer`, `interrupt`,
   `shutdown`, `ping`.
-- Worker registry: `name -> {thread, handle, state}`.
+- Worker registry: `(repo_key, name) -> {thread, handle, state}`.
 - `steer` and `interrupt` operate through the stored `TurnHandle`.
+- Terminal workers remain on disk and are removed from daemon memory after
+  `MEIGHT_WORKER_GC_TTL_SEC` (default `3600`; `0` disables). The daemon exits
+  after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with no active workers (default
+  `1800`; `0` disables).
+- `follow` can rehydrate a terminal/question worker after daemon restart with
+  `Codex.thread_resume(thread_id, cwd=..., sandbox=..., model=..., service_tier=...)`.
 - `needs_input` handling:
   - `tool/requestUserInput` or `item/*/requestApproval` records a summarized
     payload in `needs_input_detail` with `needs_input_source="tool"`.
@@ -210,10 +228,11 @@ continue from this state on the same Codex thread.
 
 Run these checks after implementation and attach the evidence.
 
-1. Start `daemon` in the background, then confirm `ping` returns ok.
+1. Start `daemon` in the background with a temporary `MEIGHT_HOME`, then confirm
+   `ping` returns ok and the socket lives under that global home.
 2. Run:
    `start t1 --brief "create /tmp/fleet-test/hello.txt with content 'hi', then reply DONE" --cwd /tmp/fleet-test --sandbox ws`
-   Then `wait t1` must exit `0`; the file must exist; `status.json`,
+   Then `wait t1` must exit `0`; the file must exist; repo-scoped `status.json`,
    `events.log`, and `result.md` must agree.
 3. Steering test:
    `start t2 --brief "Count from 1 to 50 slowly, one number per line, pausing to think between each"`
@@ -221,10 +240,14 @@ Run these checks after implementation and attach the evidence.
    confirm the result reflects the steer.
 4. Interrupt test: interrupt a long-running task and confirm
    `state=interrupted`.
-5. Parallelism test: run two workers concurrently and confirm their
-   `status.json` files update independently.
-6. Follow-up test: send a follow-up instruction to completed `t1` and confirm
-   the new turn uses the same `thread_id`.
+5. Multi-repo namespace test: run same-name workers from two git repos with the
+   same `MEIGHT_HOME`; confirm one daemon pid and separate repo-scoped
+   `status.json` files.
+6. Follow-up test: restart the daemon, send a follow-up instruction to completed
+   `t1`, and confirm the new turn uses the same `thread_id`.
+7. Lifecycle test: with small `MEIGHT_IDLE_TIMEOUT_SEC` and
+   `MEIGHT_WORKER_GC_TTL_SEC`, confirm terminal workers are GC'd from daemon
+   memory while disk result files remain, and the daemon exits when idle.
 
 ## Scope-Outs
 
@@ -232,5 +255,4 @@ Run these checks after implementation and attach the evidence.
 - `output_schema` support.
 - Automatic worktree creation. The orchestrator controls worktrees through
   `cwd`.
-- Automatic daemon restart beyond the `dispatch` one-shot daemon start.
-- Multi-repository coordination inside one daemon.
+- Active-turn recovery after daemon process death.

@@ -14,18 +14,21 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
 ## Process topology
 
 ```
-meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  per-repo daemon
+meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  global daemon
                                                                 │ openai-codex SDK (1 client)
    status/result/wait read disk directly                        ▼
    (work without the daemon)                              codex app-server (1 process)
                                                                 │ N threads multiplexed
-<repo>/.meight/workers/<name>/                          ▼
+~/.meight/repos/<repo-key>/workers/<name>/              ▼
    brief.md · status.json · events.log · result.md   ◀── per-worker consumer thread
 ```
 
-- **State home** = git root of the invoking cwd (`MEIGHT_HOME` overrides) → one independent daemon per repo.
+- **Daemon home** = `$MEIGHT_HOME` if set, otherwise `$XDG_STATE_HOME/meight` or `~/.meight` → one daemon shared across repos.
+- **Repo state home** = `<daemon-home>/repos/<repo-key>/`, where `<repo-key>` is a stable slug plus hash of the invoking repo root. `--cwd` still controls the worker execution directory; it does not change the repo namespace for status/result lookup.
 - The SDK spawns `codex app-server --listen stdio://` and speaks JSON-RPC; per-turn notifications are routed by the SDK's internal MessageRouter, which is what allows N concurrent turns over one process.
-- The daemon holds `Thread`/`TurnHandle` objects in a registry — this is what makes `steer`/`interrupt`/`follow` possible, and why `follow` does not survive a daemon restart (v1 scope; `thread_resume` exists in the SDK and is the natural extension).
+- The daemon holds `Thread`/`TurnHandle` objects in a registry keyed by `(repo_key, worker_name)`. `steer` and `interrupt` require the live handle; `follow` can resume a completed/question worker from disk after a daemon restart through `thread_resume`.
+- Workers start with `thread_source=ThreadSource.subagent` by default so they stay out of Codex Desktop's main user-thread list. `--main-thread` is the explicit opt-in to `ThreadSource.user` for tools that need a visible/main thread.
+- Lifecycle is explicit: `MEIGHT_IDLE_TIMEOUT_SEC` controls daemon idle shutdown (default 1800s, `0` disables), and `MEIGHT_WORKER_GC_TTL_SEC` controls how long terminal workers stay in daemon memory (default 3600s, disk artifacts remain).
 
 ## State machine
 
@@ -50,6 +53,7 @@ Three locks, one direction — **adding any reverse acquisition is a deadlock**:
 - **Daemon singleton**: `flock(LOCK_EX|LOCK_NB)` on `daemon.lock`, plus a live-socket ping probe before ever unlinking an existing socket. Two concurrent cold dispatches may both spawn — flock guarantees one survives.
 - **Liveness**: never trust `pid_alive` alone (pid reuse); socket ping is the primary signal, with a 2-strike policy in `wait`.
 - `status.json` writes: temp name includes pid+thread-id, then `os.replace` (a fixed temp name lets concurrent writers steal each other's files).
+- **Namespace isolation**: worker names only need to be unique inside the invoking repo namespace. `list --all-repos` reads every repo namespace when a global view is needed.
 
 ## Orchestration policy
 
@@ -87,10 +91,11 @@ State-machine changes should re-run the fake-event scenarios (tool-wait→stream
 ## Operational notes
 
 - **Editing `meight.py` does not affect a running daemon** — restart it (`meight shutdown`, next dispatch auto-starts). Easy to forget.
+- Optional LaunchAgent support lives behind `meight launchd install --load`; `KeepAlive` stays off so launchd does not fight the daemon's idle shutdown policy.
 - Beta SDK (`openai-codex==0.1.0b3`, pinned): before bumping, re-introspect the API surface (`inspect.signature`), dump real event payloads (`MEIGHT_DEBUG=1` → per-worker `debug-events.log`), and re-run the verification suite.
 - Approval requests arrive as SDK server-requests (auto-accepted by the SDK's default handler), not stream notifications — the `needs_input` tool path is defensive.
 - Per-turn `cwd`/`sandbox`/`model`/`effort` come from the SDK's `Thread.turn()` — worktree isolation is just `--cwd`.
 
 ## Deliberate non-features (v1)
 
-Custom approval handling; structured worker output via `output_schema` (SDK supports it — natural extension for machine-readable reports); automatic worktree creation; daemon supervision/auto-restart; `follow` across daemon restarts via `thread_resume`; multi-repo single daemon.
+Custom approval handling; structured worker output via `output_schema` (SDK supports it — natural extension for machine-readable reports); automatic worktree creation; launchd KeepAlive supervision; active-turn recovery across daemon crashes.

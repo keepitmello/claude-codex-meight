@@ -5,7 +5,7 @@ description: "Codex worker dispatch harness (global CLI: meight, repo: claude-co
 
 # meight (claude-codex-meight)
 
-Harness for driving Codex workers in parallel from a Claude orchestrator — usable from any repo via the `meight` CLI. Worker state is isolated per repo under `.meight/` (gitignored).
+Harness for driving Codex workers in parallel from a Claude orchestrator — usable from any repo via the `meight` CLI. One global daemon is shared across repos; worker state is isolated per invoking repo under `<daemon-home>/repos/<repo-key>/`.
 
 **Operating model (self-contained — works without any other prompt file):**
 - **You (Claude) hold the direction**: task decomposition, integration, verification, user communication, and git. **Codex workers are teammates, not just executors**: strong on details (races, type drift, edge cases), often weaker on the big picture. So you own *what and why* and they own *how* — but run it two-way: pull a worker in to sounding-board a hard call or sketch the big picture together, and expect workers to push back when they spot a better path. Discuss and adjust more than you dictate. **And holding the direction is not deciding it alone**: when the work hits a fork that *sets* direction, you cross-read it with a Codex worker before committing (see "Direction is set by two reads, never one" below). "Teammates, not executors" means the hard calls are made together, not just the easy implementation handed off.
@@ -23,7 +23,7 @@ For anything beyond trivial, short, low-risk work, drive the worker with `start`
 
 ```bash
 # 1) Start only. This returns immediately after printing thread_id.
-# If the daemon is not running, start the per-repo daemon separately first.
+# If the daemon is not running, start the global daemon separately first.
 meight start <name> --brief-file - --cwd <dir> \
   [--sandbox ws|ro|full, default full] [--effort low|medium|high|xhigh, default medium] <<'EOF'
 <brief>
@@ -76,9 +76,11 @@ EOF
 ```
 
 - `dispatch` still exists and is useful for small, bounded work: it auto-starts the daemon, starts the worker, waits, and prints the result in one call
+- Add `--shutdown-when-idle` when a one-shot worker should ask the daemon to exit after a terminal result if no workers are active
 - Do not use one-shot dispatch for substantial work that may need observation or steering
 - Implementation: omit `--sandbox` (full is the default — no sandbox, so Codex can actively verify: builds, daemon restarts, writes outside cwd). Drop to `--sandbox ws` for write-scoped-to-cwd. Review & analysis: `--sandbox ro`
 - Model: gpt-5.5 + Fast (priority tier, inherited from ~/.codex/config.toml). Toggle it per worker with `--fast`/`--no-fast` on `start`/`dispatch` (`--no-fast` = cheaper non-priority tier; omit to inherit config). **Pick effort by complexity**: medium (default, routine implementation) / high (tricky implementation, code review, debugging) / xhigh (precision verification — concurrency, irreversible or hard-to-verify changes — and hard design)
+- Thread visibility: workers start with `thread_source=subagent` by default so they stay out of Codex Desktop's main user-thread list. Use `--main-thread` only for tools that require a visible/main thread.
 - N parallel workers OK. Overlapping file scopes → separate git worktrees via `--cwd`
 - A harness preamble is auto-prepended to every brief: **no commit/push** + end with a `QUESTION:` paragraph when blocked
 
@@ -106,12 +108,13 @@ A worker's `QUESTION:` isn't only "I'm blocked" — under the teammate preamble 
 meight reply <name> --brief "answer" [--timeout 1800]
 ```
 
-For low-level control use follow (starts the turn only) + wait + result. At most ~2 follow/reply turns per thread, then reset with a fresh brief. After a daemon restart existing workers cannot be followed → start under a new name.
+For low-level control use follow (starts the turn only) + wait + result. At most ~2 follow/reply turns per thread, then reset with a fresh brief. Terminal/question workers can be followed after a daemon restart because meight rehydrates the thread from repo-scoped `status.json`.
 
 ## Status / steer / interrupt
 
 ```bash
-meight status            # one-line table for all workers (pull only — never stream)
+meight status            # one-line table for this repo's workers (pull only — never stream)
+meight list --all-repos  # global table across repo namespaces
 meight status <name>     # current_item / plan / files_changed / tokens / last_message_tail / needs_input_source
 meight steer <name> "instruction"   # mid-turn injection (no work lost; running turns only)
 meight interrupt <name>             # cancel (idempotent)
@@ -183,8 +186,9 @@ Combine evidence types before claiming UI / E2E / integration behavior is correc
 
 ## State / caveats
 
-- Worker artifacts: `<repo>/.meight/workers/<name>/{brief.md,status.json,events.log,result.md}`
-- Low-level commands: daemon / start / wait / result / list / shutdown [--force]
+- Worker artifacts: `<daemon-home>/repos/<repo-key>/workers/<name>/{brief.md,status.json,events.log,result.md}`
+- Low-level commands: daemon / start / wait / result / list / shutdown [--force] / launchd
+- Lifecycle: `MEIGHT_IDLE_TIMEOUT_SEC` (default 1800s) stops idle daemons; `MEIGHT_WORKER_GC_TTL_SEC` (default 3600s) removes terminal workers from daemon memory while keeping disk artifacts; set either to `0` to disable
 - High-stakes or irreversible work: never accept a worker's "done" on its word — require runtime evidence plus your own sign-off, always
 - **Restart the daemon after editing meight.py** (a live daemon keeps running old code)
 - Beta SDK (`openai-codex==0.1.0b3`, pinned): re-run the SPEC.md verification suite when upgrading

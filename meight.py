@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
+import plistlib
 import re
 import signal
 import socket
@@ -30,6 +32,9 @@ ACTIVE_STATES = {"starting", "running", "needs_input"}
 SOCKET_TIMEOUT_SEC = 60.0  # start/follow may take several seconds for thread_start+turn RPCs
 STATUS_THROTTLE_SEC = 2.0
 EVENT_LINE_MAX = 300
+DEFAULT_IDLE_TIMEOUT_SEC = 30 * 60
+DEFAULT_WORKER_GC_TTL_SEC = 60 * 60
+LAUNCHD_LABEL = "com.keepitmello.meight"
 
 # Bidirectional workers: automatically prepend this before start/follow briefs (disable with --no-preamble)
 PREAMBLE = """[Harness protocol — applies on top of the task below]
@@ -62,20 +67,61 @@ def now_iso() -> str:
     return now_kst().isoformat(timespec="seconds")
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return default
+
+
 def state_home() -> Path:
+    """Global daemon state home.
+
+    Worker digests are still scoped per repository under this directory. MEIGHT_HOME
+    now controls the global daemon home instead of a single repo's worker home.
+    """
     env = os.environ.get("MEIGHT_HOME")
     if env:
-        return Path(env)
+        return Path(env).expanduser().resolve()
+    xdg_state = os.environ.get("XDG_STATE_HOME")
+    if xdg_state:
+        return (Path(xdg_state).expanduser() / "meight").resolve()
+    return (Path.home() / ".meight").resolve()
+
+
+def repo_root_for(cwd: str | Path | None = None) -> Path:
+    base = Path(cwd or os.getcwd()).expanduser().resolve()
     try:
         root = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
+            ["git", "-C", str(base), "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, timeout=10,
         ).stdout.strip()
         if root:
-            return Path(root) / ".meight"
+            return Path(root).resolve()
     except Exception:
         pass
-    return Path.cwd() / ".meight"
+    return base
+
+
+def repo_key_for(repo_root: Path) -> str:
+    raw = str(repo_root)
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", repo_root.name).strip("-._")
+    return f"{slug or 'root'}-{digest}"
+
+
+def repo_context(home: Path, cwd: str | Path | None = None) -> dict:
+    root = repo_root_for(cwd)
+    key = repo_key_for(root)
+    repo_home = home / "repos" / key
+    return {"repo_root": str(root), "repo_key": key, "repo_home": str(repo_home)}
+
+
+def registry_key(repo_key: str, name: str) -> str:
+    return f"{repo_key}\0{name}"
 
 
 def atomic_write_json(path: Path, obj: dict) -> None:
@@ -178,15 +224,20 @@ def files_from_diff(diff: str) -> list[str]:
 class Worker:
     """One worker = one Codex Thread plus a digest file set."""
 
-    def __init__(self, name: str, home: Path, cwd: str, sandbox: str,
-                 model: str | None, effort: str, service_tier: str | None = None):
+    def __init__(self, name: str, repo_home: Path, repo_root: str, repo_key: str, cwd: str, sandbox: str,
+                 model: str | None, effort: str, service_tier: str | None = None,
+                 thread_source: str = "subagent"):
         self.name = name
-        self.dir = home / "workers" / name
+        self.repo_home = repo_home
+        self.repo_root = repo_root
+        self.repo_key = repo_key
+        self.dir = repo_home / "workers" / name
         self.cwd = cwd
         self.sandbox = sandbox  # normalized key such as "workspace_write"
         self.model = model
         self.effort = effort
         self.service_tier = service_tier  # None -> inherit ~/.codex/config.toml; else override per worker
+        self.thread_source = thread_source
         self.thread = None       # openai_codex.Thread (kept while daemon lives -> reused for follow)
         self.handle = None       # TurnHandle
         self.consumer: threading.Thread | None = None
@@ -194,6 +245,7 @@ class Worker:
         self.lock = threading.Lock()       # serialize status/event handling
         self.ctl_lock = threading.Lock()   # serialize control calls such as steer/interrupt
         self.generation = 0                # turn generation; ignores late events from old streams
+        self.terminal_since: float | None = None
         self._last_status_write = 0.0
         self._agent_msg_buf = ""       # accumulated in-flight agentMessage deltas
         self._last_agent_msg = ""      # last finalized agentMessage
@@ -217,11 +269,14 @@ class Worker:
             "state": "starting",
             "started_at": now_iso(),
             "updated_at": now_iso(),
+            "repo_root": self.repo_root,
+            "repo_key": self.repo_key,
             "cwd": self.cwd,
             "sandbox": self.sandbox.replace("_", "-"),
             "model": self.model,
             "effort": self.effort,
             "service_tier": self.service_tier,
+            "thread_source": self.thread_source,
             "current_item": None,
             "plan": [],
             "files_changed": [],
@@ -244,6 +299,11 @@ class Worker:
             self.status["current_item"] = f"{self._current_item_label} ({elapsed}s)"
         else:
             self.status["current_item"] = None
+        state = self.status.get("state")
+        if state in TERMINAL_STATES and self.terminal_since is None:
+            self.terminal_since = time.monotonic()
+        elif state not in TERMINAL_STATES:
+            self.terminal_since = None
         atomic_write_json(self.dir / "status.json", self.status)
 
     def log_event(self, method: str, summary: str) -> None:
@@ -273,6 +333,8 @@ class Worker:
                     self.log_event("stream/exception", f"{type(e).__name__}: {e}")
                     self.write_status(force=True)
             daemon.log(f"worker={self.name} stream exception: {traceback.format_exc(limit=3)}")
+        finally:
+            daemon.touch_activity()
 
     def on_event(self, note, daemon: "Daemon", gen: int) -> None:
         method = note.method
@@ -498,6 +560,7 @@ class Worker:
             self._last_agent_msg = ""
             self._current_item_label = None
             self._current_item_since = None
+            self.terminal_since = None
             turns = int(self.status.get("turns", 1)) + 1
             sep = f"\n\n---\n## Turn {turns} ({now_iso()})\n\n"
             with open(self.dir / "brief.md", "a", encoding="utf-8") as f:
@@ -549,6 +612,12 @@ class Daemon:
         self.shutting_down = threading.Event()
         self.server: socket.socket | None = None
         self.lock_file = None  # flock handle kept while the daemon is alive
+        self.idle_timeout_sec = _env_float("MEIGHT_IDLE_TIMEOUT_SEC", DEFAULT_IDLE_TIMEOUT_SEC)
+        self.worker_gc_ttl_sec = _env_float("MEIGHT_WORKER_GC_TTL_SEC", DEFAULT_WORKER_GC_TTL_SEC)
+        self.last_activity = time.monotonic()
+
+    def touch_activity(self) -> None:
+        self.last_activity = time.monotonic()
 
     def log(self, msg: str) -> None:
         try:
@@ -561,7 +630,7 @@ class Daemon:
 
     def run(self) -> int:
         self.home.mkdir(parents=True, exist_ok=True)
-        (self.home / "workers").mkdir(exist_ok=True)
+        (self.home / "repos").mkdir(exist_ok=True)
 
         # Singleton guard 1: flock blocks concurrent startup regardless of pid file presence/reuse.
         self.lock_file = open(self.home / "daemon.lock", "w")
@@ -587,6 +656,7 @@ class Daemon:
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.server.bind(str(self.sock_path))
         self.server.listen(16)
+        self.server.settimeout(1.0)
         self.pid_path.write_text(str(os.getpid()) + "\n")
 
         signal.signal(signal.SIGTERM, self._on_signal)
@@ -599,6 +669,9 @@ class Daemon:
             while not self.shutting_down.is_set():
                 try:
                     conn, _ = self.server.accept()
+                except socket.timeout:
+                    self._maintenance()
+                    continue
                 except OSError:
                     break  # socket closed = shutdown
                 threading.Thread(target=self._handle_conn, args=(conn,), daemon=True).start()
@@ -633,6 +706,25 @@ class Daemon:
                 self.server.close()
         except OSError:
             pass
+
+    def _active_workers_locked(self) -> list[Worker]:
+        return [w for w in self.workers.values() if w.current_state() in ACTIVE_STATES]
+
+    def _maintenance(self) -> None:
+        now = time.monotonic()
+        with self.reg_lock:
+            for key, w in list(self.workers.items()):
+                if w.current_state() in TERMINAL_STATES and w.consumer_finished():
+                    terminal_since = w.terminal_since or now
+                    if self.worker_gc_ttl_sec and now - terminal_since >= self.worker_gc_ttl_sec:
+                        self.log(f"gc worker={w.name} repo={w.repo_key} state={w.current_state()}")
+                        del self.workers[key]
+            active = self._active_workers_locked()
+        if active:
+            return
+        if self.idle_timeout_sec and now - self.last_activity >= self.idle_timeout_sec:
+            self.log(f"idle timeout after {self.idle_timeout_sec:g}s → shutdown")
+            threading.Thread(target=self._shutdown_now, daemon=True).start()
 
     def _cleanup(self) -> None:
         try:
@@ -702,6 +794,68 @@ class Daemon:
 
     # ── Command Implementations ──
 
+    def _repo_from_req(self, req: dict) -> tuple[str, str, Path]:
+        repo_key = req.get("repo_key")
+        repo_root = req.get("repo_root")
+        repo_home_raw = req.get("repo_home")
+        if not repo_key or not repo_root or not repo_home_raw:
+            raise ValueError("missing repo context")
+        return str(repo_key), str(repo_root), Path(repo_home_raw)
+
+    def _worker_key(self, repo_key: str, name: str) -> str:
+        return registry_key(repo_key, name)
+
+    def _resume_worker_locked(self, repo_key: str, repo_root: str, repo_home: Path, name: str):
+        sj = repo_home / "workers" / name / "status.json"
+        if not sj.is_file():
+            return None
+        try:
+            st = json.loads(sj.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        thread_id = st.get("thread_id")
+        if not thread_id:
+            return None
+
+        from openai_codex import Sandbox
+
+        sandbox_key = str(st.get("sandbox") or "full-access").replace("-", "_")
+        if sandbox_key not in set(SANDBOX_MAP.values()):
+            sandbox_key = "full_access"
+        cwd = st.get("cwd") or repo_root
+        model = st.get("model")
+        effort = st.get("effort") or "medium"
+        service_tier = st.get("service_tier")
+        thread_source = st.get("thread_source") or "subagent"
+
+        thread = self.codex.thread_resume(
+            thread_id,
+            cwd=cwd,
+            sandbox=getattr(Sandbox, sandbox_key),
+            model=model,
+            service_tier=service_tier,
+        )
+        w = Worker(
+            name,
+            repo_home,
+            st.get("repo_root") or repo_root,
+            st.get("repo_key") or repo_key,
+            cwd,
+            sandbox_key,
+            model,
+            effort,
+            service_tier,
+            thread_source,
+        )
+        w.status = st
+        w.thread = thread
+        w.generation = int(st.get("turns") or 1)
+        if w.current_state() in TERMINAL_STATES:
+            w.terminal_since = time.monotonic()
+        self.workers[self._worker_key(repo_key, name)] = w
+        self.log(f"resumed worker={name} repo={repo_key} thread={thread_id}")
+        return w
+
     def cmd_start(self, req: dict) -> dict:
         from openai_codex import Sandbox
         try:
@@ -710,6 +864,8 @@ class Daemon:
             ThreadSource = None
 
         name = req["name"]
+        repo_key, repo_root, repo_home = self._repo_from_req(req)
+        wid = self._worker_key(repo_key, name)
         brief = req["brief"]
         use_preamble = not req.get("no_preamble")
         turn_input = f"{PREAMBLE}\n{brief}" if use_preamble else brief
@@ -722,9 +878,12 @@ class Daemon:
         effort = req.get("effort") or "medium"
         service_tier = req.get("service_tier")
         main_thread = bool(req.get("main_thread"))
+        thread_source_label = "user" if main_thread else "subagent"
+        if ThreadSource is None:
+            return {"ok": False, "error": "openai-codex SDK does not expose ThreadSource"}
 
         with self.reg_lock:
-            existing = self.workers.get(name)
+            existing = self.workers.get(wid)
             if existing is not None:
                 if existing.current_state() in ACTIVE_STATES:
                     return {"ok": False,
@@ -734,7 +893,18 @@ class Daemon:
                     return {"ok": False,
                             "error": f"worker '{name}' previous stream is still finishing — retry shortly"}
 
-            w = Worker(name, self.home, cwd, sandbox_key, model, effort, service_tier)
+            w = Worker(
+                name,
+                repo_home,
+                repo_root,
+                repo_key,
+                cwd,
+                sandbox_key,
+                model,
+                effort,
+                service_tier,
+                thread_source_label,
+            )
             w.dir.mkdir(parents=True, exist_ok=True)
             # Restarting the same name creates a new worker, so reset prior outputs.
             for fname in ("events.log", "result.md", "debug-events.log"):
@@ -748,11 +918,11 @@ class Daemon:
             try:
                 thread = self.codex.thread_start(
                     cwd=cwd,
-                    ephemeral=True,
+                    ephemeral=False,
                     sandbox=getattr(Sandbox, sandbox_key),
-                    # main_thread omits thread_source → non-subagent thread (needed for computer use).
-                    **({"thread_source": ThreadSource.subagent}
-                       if (ThreadSource is not None and not main_thread) else {}),
+                    # Subagent threads stay out of the desktop's main user-thread list.
+                    # --main-thread intentionally opts into a visible user thread for tools that need it.
+                    thread_source=(ThreadSource.user if main_thread else ThreadSource.subagent),
                 )
                 w.thread = thread
                 with w.lock:
@@ -764,8 +934,8 @@ class Daemon:
             except Exception as e:
                 # If SDK failure leaves a starting zombie, wait polls until timeout.
                 w.mark_failed(f"start failed: {type(e).__name__}: {e}")
-                self.workers[name] = w
-                self.log(f"start worker={name} failed: {e!r}")
+                self.workers[wid] = w
+                self.log(f"start worker={name} repo={repo_key} failed: {e!r}")
                 return {"ok": False, "error": f"start failed: {type(e).__name__}: {e}"}
 
             w.generation = 1
@@ -774,25 +944,28 @@ class Daemon:
                 name=f"worker-{name}",
             )
             w.consumer.start()
-            self.workers[name] = w
+            self.workers[wid] = w
 
-        self.log(f"start worker={name} thread={thread.id} cwd={cwd} sandbox={sandbox_key}")
+        self.touch_activity()
+        self.log(
+            f"start worker={name} repo={repo_key} thread={thread.id} "
+            f"cwd={cwd} sandbox={sandbox_key} thread_source={thread_source_label}"
+        )
         return {"ok": True, "thread_id": thread.id}
 
     def cmd_follow(self, req: dict) -> dict:
         name = req["name"]
+        repo_key, repo_root, repo_home = self._repo_from_req(req)
+        wid = self._worker_key(repo_key, name)
         brief = req["brief"]
         use_preamble = not req.get("no_preamble")
         turn_input = f"{PREAMBLE}\n{brief}" if use_preamble else brief
         file_brief = f"{PREAMBLE}\n---\n\n{brief}" if use_preamble else brief
         with self.reg_lock:
-            w = self.workers.get(name)
+            w = self.workers.get(wid)
             if w is None:
-                if (self.home / "workers" / name / "status.json").exists():
-                    return {"ok": False, "error":
-                            f"worker '{name}' exists on disk but not in this daemon "
-                            "(daemon restarted?). follow across daemon restarts is out of scope in v1 — "
-                            "use 'start' with a new name instead."}
+                w = self._resume_worker_locked(repo_key, repo_root, repo_home, name)
+            if w is None:
                 return {"ok": False, "error": f"unknown worker: {name}"}
             prev_state = w.current_state()
             # needs_input (waiting on QUESTION) can also follow; send the answer as a new turn on the same thread.
@@ -827,13 +1000,15 @@ class Daemon:
             )
             w.consumer.start()
 
-        self.log(f"follow worker={name} thread={thread_id} turn#{turns}")
+        self.touch_activity()
+        self.log(f"follow worker={name} repo={repo_key} thread={thread_id} turn#{turns}")
         return {"ok": True, "thread_id": thread_id, "turns": turns}
 
     def cmd_steer(self, req: dict) -> dict:
         name = req["name"]
+        repo_key, _, _ = self._repo_from_req(req)
         with self.reg_lock:
-            w = self.workers.get(name)
+            w = self.workers.get(self._worker_key(repo_key, name))
         if w is None:
             return {"ok": False, "error": f"unknown worker: {name}"}
         with w.ctl_lock:  # serialize concurrent steer/interrupt and re-check state inside the lock
@@ -842,13 +1017,15 @@ class Daemon:
                 return {"ok": False, "error": f"worker '{name}' is not running ({state})"}
             w.handle.steer(req["text"])
             w.log_event("steer", truncate(req["text"], 200))
-        self.log(f"steer worker={name}")
+        self.touch_activity()
+        self.log(f"steer worker={name} repo={repo_key}")
         return {"ok": True}
 
     def cmd_interrupt(self, req: dict) -> dict:
         name = req["name"]
+        repo_key, _, _ = self._repo_from_req(req)
         with self.reg_lock:
-            w = self.workers.get(name)
+            w = self.workers.get(self._worker_key(repo_key, name))
         if w is None:
             return {"ok": False, "error": f"unknown worker: {name}"}
         with w.ctl_lock:
@@ -868,13 +1045,14 @@ class Daemon:
                 self.log(f"interrupt worker={name} sdk error: {e!r}")
                 return {"ok": True, "note": f"interrupt call failed ({type(e).__name__}) — turn may have ended"}
             w.log_event("interrupt", "requested by client")
-        self.log(f"interrupt worker={name}")
+        self.touch_activity()
+        self.log(f"interrupt worker={name} repo={repo_key}")
         return {"ok": True}
 
     def cmd_shutdown(self, req: dict) -> dict:
         force = bool(req.get("force"))
         with self.reg_lock:
-            active = [n for n, w in self.workers.items()
+            active = [f"{w.repo_key}:{w.name}" for w in self.workers.values()
                       if w.current_state() in ACTIVE_STATES]
         if active and not force:
             return {"ok": False,
@@ -901,6 +1079,8 @@ def send_request(home: Path, req: dict, timeout: float = SOCKET_TIMEOUT_SEC) -> 
                 raise SystemExit("daemon closed connection without response")
             buf += chunk
         return json.loads(buf.split(b"\n", 1)[0].decode("utf-8"))
+    except OSError as e:
+        raise SystemExit(f"daemon connection failed: {e}")
     except socket.timeout:
         raise SystemExit(f"daemon response timed out after {timeout}s")
     finally:
@@ -925,9 +1105,17 @@ def read_brief(args) -> str:
     raise SystemExit("--brief or --brief-file required")
 
 
-def load_statuses(home: Path) -> list[dict]:
+def repo_home_for_cli(home: Path) -> Path:
+    return Path(repo_context(home)["repo_home"])
+
+
+def request_repo_context(home: Path) -> dict:
+    return repo_context(home)
+
+
+def load_statuses(repo_home: Path) -> list[dict]:
     out = []
-    workers_dir = home / "workers"
+    workers_dir = repo_home / "workers"
     if not workers_dir.is_dir():
         return out
     for d in sorted(workers_dir.iterdir()):
@@ -937,6 +1125,17 @@ def load_statuses(home: Path) -> list[dict]:
                 out.append(json.loads(sj.read_text(encoding="utf-8")))
             except (OSError, json.JSONDecodeError):
                 pass
+    return out
+
+
+def load_all_statuses(home: Path) -> list[dict]:
+    out: list[dict] = []
+    repos_dir = home / "repos"
+    if not repos_dir.is_dir():
+        return out
+    for repo_home in sorted(repos_dir.iterdir()):
+        if repo_home.is_dir():
+            out.extend(load_statuses(repo_home))
     return out
 
 
@@ -957,19 +1156,21 @@ def fmt_tokens(st: dict) -> str:
     return f"in:{t.get('input', 0)} out:{t.get('output', 0)}"
 
 
-def summary_line(st: dict) -> str:
-    return (f"{st.get('name', '?'):<14} {st.get('state', '?'):<12} {fmt_elapsed(st):>8} "
+def summary_line(st: dict, show_repo: bool = False) -> str:
+    repo = f"{truncate(st.get('repo_key') or '-', 24):<24} " if show_repo else ""
+    return (f"{repo}{st.get('name', '?'):<14} {st.get('state', '?'):<12} {fmt_elapsed(st):>8} "
             f"files:{len(st.get('files_changed') or []):<3} {fmt_tokens(st):<22} "
             f"{truncate(st.get('current_item') or '-', 60)}")
 
 
-def print_status_table(statuses: list[dict]) -> None:
+def print_status_table(statuses: list[dict], show_repo: bool = False) -> None:
     if not statuses:
         print("(no workers)")
         return
-    print(f"{'NAME':<14} {'STATE':<12} {'ELAPSED':>8} {'FILES':<9} {'TOKENS':<22} CURRENT")
+    repo = f"{'REPO':<24} " if show_repo else ""
+    print(f"{repo}{'NAME':<14} {'STATE':<12} {'ELAPSED':>8} {'FILES':<9} {'TOKENS':<22} CURRENT")
     for st in statuses:
-        print(summary_line(st))
+        print(summary_line(st, show_repo=show_repo))
 
 
 # ── CLI Commands ───────────────────────────────────────────────────────────
@@ -983,14 +1184,16 @@ def start_request(args, home: Path) -> dict:
     # priority = Fast; default = a non-priority tier; None = inherit ~/.codex/config.toml.
     fast = getattr(args, "fast", None)
     service_tier = None if fast is None else ("priority" if fast else "default")
-    return send_request(home, {
+    req = {
         "cmd": "start", "name": args.name, "brief": read_brief(args),
         "cwd": str(Path(args.cwd).resolve()) if args.cwd else os.getcwd(),
         "sandbox": args.sandbox, "model": args.model, "effort": args.effort,
         "service_tier": service_tier,
         "no_preamble": args.no_preamble,
         "main_thread": getattr(args, "main_thread", False),
-    })
+    }
+    req.update(request_repo_context(home))
+    return send_request(home, req)
 
 
 def cmd_start(args, home: Path) -> int:
@@ -1000,30 +1203,37 @@ def cmd_start(args, home: Path) -> int:
 
 
 def cmd_follow(args, home: Path) -> int:
-    resp = expect_ok(send_request(home, {
+    req = {
         "cmd": "follow", "name": args.name, "brief": read_brief(args),
         "no_preamble": args.no_preamble,
-    }))
+    }
+    req.update(request_repo_context(home))
+    resp = expect_ok(send_request(home, req))
     print(f"follow turn #{resp.get('turns')} on worker '{args.name}' thread={resp.get('thread_id')}")
     return 0
 
 
 def cmd_steer(args, home: Path) -> int:
-    expect_ok(send_request(home, {"cmd": "steer", "name": args.name, "text": args.text}))
+    req = {"cmd": "steer", "name": args.name, "text": args.text}
+    req.update(request_repo_context(home))
+    expect_ok(send_request(home, req))
     print(f"steered '{args.name}'")
     return 0
 
 
 def cmd_interrupt(args, home: Path) -> int:
-    expect_ok(send_request(home, {"cmd": "interrupt", "name": args.name}))
+    req = {"cmd": "interrupt", "name": args.name}
+    req.update(request_repo_context(home))
+    expect_ok(send_request(home, req))
     print(f"interrupt requested for '{args.name}'")
     return 0
 
 
 def cmd_status(args, home: Path) -> int:
     name = getattr(args, "name", None)
+    repo_home = repo_home_for_cli(home)
     if name:
-        sj = home / "workers" / name / "status.json"
+        sj = repo_home / "workers" / name / "status.json"
         if not sj.is_file():
             print(f"no status for worker '{name}'", file=sys.stderr)
             return 1
@@ -1032,7 +1242,8 @@ def cmd_status(args, home: Path) -> int:
             print(json.dumps(st, ensure_ascii=False, indent=2))
         else:
             print(summary_line(st))
-            for key in ("thread_id", "turn_id", "cwd", "sandbox", "model", "effort", "service_tier",
+            for key in ("thread_id", "turn_id", "repo_root", "repo_key", "cwd",
+                        "sandbox", "model", "effort", "service_tier", "thread_source",
                         "started_at", "updated_at", "turns",
                         "needs_input_source", "needs_input_detail"):
                 print(f"  {key}: {st.get(key)}")
@@ -1047,16 +1258,17 @@ def cmd_status(args, home: Path) -> int:
             if st.get("last_message_tail"):
                 print(f"  last_message_tail: {truncate(st['last_message_tail'], 200)}")
         return 0
-    statuses = load_statuses(home)
+    all_repos = getattr(args, "all_repos", False)
+    statuses = load_all_statuses(home) if all_repos else load_statuses(repo_home)
     if getattr(args, "json", False):
         print(json.dumps(statuses, ensure_ascii=False, indent=2))
     else:
-        print_status_table(statuses)
+        print_status_table(statuses, show_repo=all_repos)
     return 0
 
 
 def cmd_result(args, home: Path) -> int:
-    rp = home / "workers" / args.name / "result.md"
+    rp = repo_home_for_cli(home) / "workers" / args.name / "result.md"
     if not rp.is_file():
         print(f"no result for worker '{args.name}'", file=sys.stderr)
         return 1
@@ -1076,9 +1288,9 @@ def classify_wait_state(st: dict) -> int | None:
     return None
 
 
-def wait_for_worker(home: Path, name: str, timeout: float | None,
+def wait_for_worker(home: Path, repo_home: Path, name: str, timeout: float | None,
                     progress: float = 300.0) -> int:
-    sj = home / "workers" / name / "status.json"
+    sj = repo_home / "workers" / name / "status.json"
     now = time.monotonic()
     deadline = now + timeout if timeout else None
     next_progress = now + progress if progress and progress > 0 else None
@@ -1122,7 +1334,7 @@ def wait_for_worker(home: Path, name: str, timeout: float | None,
 
 
 def cmd_wait(args, home: Path) -> int:
-    return wait_for_worker(home, args.name, args.timeout, args.progress)
+    return wait_for_worker(home, repo_home_for_cli(home), args.name, args.timeout, args.progress)
 
 
 def ensure_daemon(home: Path) -> bool:
@@ -1155,23 +1367,33 @@ def cmd_dispatch(args, home: Path) -> int:
         print(f"error: {resp.get('error', 'unknown')}", file=sys.stderr)
         return 1
     print(f"started worker '{args.name}' thread={resp.get('thread_id')}", flush=True)
-    code = wait_for_worker(home, args.name, args.timeout, args.progress)
-    rp = home / "workers" / args.name / "result.md"
+    repo_home = repo_home_for_cli(home)
+    code = wait_for_worker(home, repo_home, args.name, args.timeout, args.progress)
+    rp = repo_home / "workers" / args.name / "result.md"
     if code in (0, 2, 3) and rp.is_file():
         print("--- result ---")
         print(rp.read_text(encoding="utf-8"), end="", flush=True)
+    if getattr(args, "shutdown_when_idle", False) and code in (0, 2, 3):
+        resp = send_request(home, {"cmd": "shutdown", "force": False})
+        if resp.get("ok"):
+            print("daemon shutdown ok", flush=True)
+        else:
+            print(f"daemon kept alive: {resp.get('error')}", file=sys.stderr)
     return code
 
 
 def cmd_reply(args, home: Path) -> int:
     """One-shot reply: follow -> wait -> print only the latest turn result. For QUESTION (exit 3)."""
-    resp = expect_ok(send_request(home, {
+    req = {
         "cmd": "follow", "name": args.name, "brief": read_brief(args),
         "no_preamble": args.no_preamble,
-    }))
+    }
+    req.update(request_repo_context(home))
+    resp = expect_ok(send_request(home, req))
     print(f"reply turn #{resp.get('turns')} on worker '{args.name}'", flush=True)
-    code = wait_for_worker(home, args.name, args.timeout, args.progress)
-    rp = home / "workers" / args.name / "result.md"
+    repo_home = repo_home_for_cli(home)
+    code = wait_for_worker(home, repo_home, args.name, args.timeout, args.progress)
+    rp = repo_home / "workers" / args.name / "result.md"
     if code in (0, 2, 3) and rp.is_file():
         text = rp.read_text(encoding="utf-8")
         marker = "\n---\n## Turn "
@@ -1179,6 +1401,12 @@ def cmd_reply(args, home: Path) -> int:
             text = "## Turn " + text.rsplit(marker, 1)[1]
         print("--- result ---")
         print(text, end="", flush=True)
+    if getattr(args, "shutdown_when_idle", False) and code in (0, 2, 3):
+        resp = send_request(home, {"cmd": "shutdown", "force": False})
+        if resp.get("ok"):
+            print("daemon shutdown ok", flush=True)
+        else:
+            print(f"daemon kept alive: {resp.get('error')}", file=sys.stderr)
     return code
 
 
@@ -1198,6 +1426,71 @@ def cmd_ping(args, home: Path) -> int:
     return 0
 
 
+def launchd_plist_path() -> Path:
+    return Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
+
+
+def launchd_payload(home: Path) -> dict:
+    home.mkdir(parents=True, exist_ok=True)
+    return {
+        "Label": LAUNCHD_LABEL,
+        "ProgramArguments": [sys.executable, str(Path(__file__).resolve()), "daemon"],
+        "RunAtLoad": True,
+        # Do not KeepAlive: the daemon has its own idle timeout, and CLI auto-start
+        # remains the on-demand recovery path.
+        "KeepAlive": False,
+        "EnvironmentVariables": {
+            **({"PATH": os.environ["PATH"]} if os.environ.get("PATH") else {}),
+            "MEIGHT_HOME": str(home),
+        },
+        "StandardOutPath": str(home / "launchd.out.log"),
+        "StandardErrorPath": str(home / "launchd.err.log"),
+    }
+
+
+def launchctl_domain() -> str:
+    return f"gui/{os.getuid()}"
+
+
+def cmd_launchd_install(args, home: Path) -> int:
+    path = launchd_plist_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(plistlib.dumps(launchd_payload(home), sort_keys=False))
+    print(f"wrote {path}")
+    if args.load:
+        subprocess.run(["launchctl", "bootout", launchctl_domain(), str(path)],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["launchctl", "bootstrap", launchctl_domain(), str(path)], check=True)
+        print(f"loaded {LAUNCHD_LABEL}")
+    return 0
+
+
+def cmd_launchd_uninstall(args, home: Path) -> int:
+    path = launchd_plist_path()
+    subprocess.run(["launchctl", "bootout", launchctl_domain(), str(path)],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        path.unlink()
+        print(f"removed {path}")
+    except FileNotFoundError:
+        print(f"not installed: {path}")
+    return 0
+
+
+def cmd_launchd_status(args, home: Path) -> int:
+    path = launchd_plist_path()
+    print(f"plist: {path} ({'present' if path.exists() else 'missing'})")
+    proc = subprocess.run(["launchctl", "print", f"{launchctl_domain()}/{LAUNCHD_LABEL}"],
+                          text=True, capture_output=True)
+    if proc.returncode == 0:
+        print(proc.stdout, end="")
+        return 0
+    print("launchd service not loaded")
+    if proc.stderr:
+        print(proc.stderr.strip(), file=sys.stderr)
+    return 1
+
+
 # ── argparse ───────────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1206,6 +1499,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("daemon", help="foreground daemon").set_defaults(fn=cmd_daemon)
     sub.add_parser("ping", help="daemon health check").set_defaults(fn=cmd_ping)
+
+    sp = sub.add_parser("launchd", help="manage optional macOS LaunchAgent for the global daemon")
+    launchd_sub = sp.add_subparsers(dest="launchd_command", required=True)
+    lp = launchd_sub.add_parser("install", help="write the LaunchAgent plist")
+    lp.add_argument("--load", action="store_true", help="also load it with launchctl bootstrap")
+    lp.set_defaults(fn=cmd_launchd_install)
+    launchd_sub.add_parser("uninstall", help="unload and remove the LaunchAgent plist").set_defaults(
+        fn=cmd_launchd_uninstall)
+    launchd_sub.add_parser("status", help="show LaunchAgent status").set_defaults(fn=cmd_launchd_status)
 
     def add_start_options(sp):
         sp.add_argument("--brief-file", help="read from stdin when '-'")
@@ -1218,7 +1520,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="use the priority service tier (codex 'Fast'); --no-fast forces a non-priority tier for a cheaper run; omit to inherit ~/.codex/config.toml")
         sp.add_argument("--no-preamble", action="store_true", help="disable prepending the harness protocol preamble")
         sp.add_argument("--main-thread", action="store_true",
-                        help="omit thread_source so the worker starts as a non-subagent (main) thread — required for computer use / browser use, which the subagent thread does not expose")
+                        help="use ThreadSource.user instead of the default hidden ThreadSource.subagent — only for tools that require a visible/main Codex Desktop thread")
 
     sp = sub.add_parser("start", help="start a new worker")
     sp.add_argument("name")
@@ -1231,6 +1533,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--timeout", type=float, default=1800)
     sp.add_argument("--progress", type=float, default=300.0,
                     help="seconds between status heartbeats while waiting; 0=off")
+    sp.add_argument("--shutdown-when-idle", action="store_true",
+                    help="after a terminal result, ask the global daemon to stop if no workers are active")
     sp.set_defaults(fn=cmd_dispatch)
 
     sp = sub.add_parser("follow", help="new turn on the same thread for a terminal/QUESTION worker")
@@ -1248,6 +1552,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--timeout", type=float, default=1800)
     sp.add_argument("--progress", type=float, default=300.0,
                     help="seconds between status heartbeats while waiting; 0=off")
+    sp.add_argument("--shutdown-when-idle", action="store_true",
+                    help="after a terminal result, ask the global daemon to stop if no workers are active")
     sp.set_defaults(fn=cmd_reply)
 
     sp = sub.add_parser("steer", help="inject mid-turn text into a running turn")
@@ -1262,10 +1568,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("status", help="worker status (daemon not required)")
     sp.add_argument("name", nargs="?")
     sp.add_argument("--json", action="store_true")
+    sp.add_argument("--all-repos", action="store_true", help="show workers from every repo namespace")
     sp.set_defaults(fn=cmd_status)
 
     sp = sub.add_parser("list", help="status alias")
     sp.add_argument("--json", action="store_true")
+    sp.add_argument("--all-repos", action="store_true", help="show workers from every repo namespace")
     sp.set_defaults(fn=cmd_status, name=None)
 
     sp = sub.add_parser("result", help="print result.md")

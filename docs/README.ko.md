@@ -27,7 +27,7 @@
         │            (어느 쪽이든 다음 턴을 열 수 있음, 같은 스레드)
         │
         ▼   오케스트레이터가 필요할 때만 디스크 다이제스트 pull — 컨텍스트 ~0, 스트리밍 없음
-   레포별 데몬 ── 공식 openai-codex SDK ── codex app-server (프로세스 1개, 스레드 N개)
+   전역 데몬 ── 공식 openai-codex SDK ── codex app-server (프로세스 1개, 스레드 N개)
         status.json · events.log · result.md
 ```
 
@@ -61,7 +61,7 @@ git clone https://github.com/keepitmello/claude-codex-meight
 cd claude-codex-meight && ./install.sh   # .venv 생성 + ~/.local/bin/meight
 ```
 
-실질 작업은 감독형으로 디스패치합니다(아무 git 레포에서나 가능 — 상태는 레포별 `.meight/`에 격리됩니다). `start`는 레포별 데몬이 떠 있다고 가정합니다. 안 떠 있으면 `meight daemon`을 별도로 한 번 시작하세요.
+실질 작업은 감독형으로 디스패치합니다. Meight는 기본적으로 하나의 전역 데몬을 씁니다(`$MEIGHT_HOME`, `$XDG_STATE_HOME/meight`, 또는 `~/.meight`). 워커 상태는 전역 데몬 홈 아래 `repos/<repo-key>/`로 레포별 격리됩니다. `start`는 전역 데몬이 떠 있다고 가정합니다. 안 떠 있으면 `meight daemon`을 한 번 시작하거나, `dispatch`로 자동 시작하거나, `meight launchd install --load`로 선택적 LaunchAgent를 등록하세요.
 
 ```bash
 meight start impl-1 --brief-file - --cwd ~/my-repo <<'EOF'
@@ -151,11 +151,11 @@ Bash(command: "meight wait review-1 --timeout 300",
 | `meight steer <name> "text"` | 실행 중 턴에 지시 주입 (작업 손실 없음) |
 | `meight interrupt <name>` | 실행 중 턴 취소 (idempotent) |
 | `meight follow <name> --brief ...` | 저수준: 같은 스레드에 새 턴 (컨텍스트 유지) |
-| `meight result / list / daemon / ping / shutdown` | 저수준 보조 커맨드 |
+| `meight result / list / daemon / ping / shutdown / launchd` | 저수준 보조 커맨드 |
 
-옵션: `--cwd`(워커 작업 디렉토리 — 파일 범위가 겹치면 git worktree로 분리), `--sandbox ws|ro|full`(기본 `ws`=workspace-write, 리뷰는 `ro`), `--effort low|medium|high|xhigh`(기본 `medium`, 복잡도에 따라 상향), `--model`, `--fast`/`--no-fast`(워커별 codex Fast/priority tier 토글 — `--no-fast`면 더 저렴, 생략 시 config 상속), `--timeout`.
+옵션: `--cwd`(워커 작업 디렉토리 — 파일 범위가 겹치면 git worktree로 분리), `--sandbox ws|ro|full`(기본 `full`=샌드박스 없음, 리뷰는 `ro`), `--effort low|medium|high|xhigh`(기본 `medium`, 복잡도에 따라 상향), `--model`, `--fast`/`--no-fast`(워커별 codex Fast/priority tier 토글 — `--no-fast`면 더 저렴, 생략 시 config 상속), `--timeout`. 워커는 기본적으로 Codex subagent thread로 시작해서 Codex Desktop의 메인 사용자 스레드 목록에 뜨지 않게 합니다. 보이는/main thread가 꼭 필요한 도구에서만 `--main-thread`를 쓰세요.
 
-워커 상태는 `<repo>/.meight/workers/<name>/`에 기록됩니다: `brief.md`, `status.json`(상태머신+토큰+변경 파일+현재 활동), `events.log`(의미 있는 이벤트당 1줄), `result.md`(턴별 최종 메시지). `.meight/`는 글로벌 gitignore에 추가하세요.
+워커 상태는 `<daemon-home>/repos/<repo-key>/workers/<name>/`에 기록됩니다: `brief.md`, `status.json`(상태머신+토큰+변경 파일+현재 활동), `events.log`(의미 있는 이벤트당 1줄), `result.md`(턴별 최종 메시지). 전체 레포 상태는 `meight list --all-repos`로 볼 수 있습니다. 완료된 워커는 기본적으로 `MEIGHT_WORKER_GC_TTL_SEC` 동안만 데몬 메모리에 남고, 활성 워커가 없으면 데몬은 `MEIGHT_IDLE_TIMEOUT_SEC` 뒤 종료됩니다. 값을 `0`으로 두면 해당 정리를 끌 수 있습니다.
 
 ## 알아두면 좋은 것
 

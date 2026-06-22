@@ -27,7 +27,7 @@ Most Claude↔Codex bridges are built for *a human watching a terminal* — tmux
         │            (either side can open the next turn, same thread)
         │
         ▼   orchestrator pulls disk digests on demand — ~0 context, never streamed
-   per-repo daemon ── official openai-codex SDK ── codex app-server (1 process, N threads)
+   global daemon ── official openai-codex SDK ── codex app-server (1 process, N threads)
         status.json · events.log · result.md
 ```
 
@@ -61,7 +61,7 @@ git clone https://github.com/keepitmello/claude-codex-meight
 cd claude-codex-meight && ./install.sh   # creates .venv + ~/.local/bin/meight
 ```
 
-For substantial work, use supervised dispatch (from any git repo — state is isolated per repo under `.meight/`). `start` expects the per-repo daemon to be running; if it is not, start it once separately with `meight daemon`.
+For substantial work, use supervised dispatch from any git repo. Meight uses one global daemon by default (`$MEIGHT_HOME`, `$XDG_STATE_HOME/meight`, or `~/.meight`) while keeping worker state isolated per invoking repo under `repos/<repo-key>/`. `start` expects the global daemon to be running; `dispatch` auto-starts it, and you can also start it once with `meight daemon` or install the optional LaunchAgent with `meight launchd install --load`.
 
 ```bash
 meight start impl-1 --brief-file - --cwd ~/my-repo <<'EOF'
@@ -145,17 +145,17 @@ Small decisions everywhere assume the user is an LLM agent, not a person at a te
 |---|---|
 | `meight start <name> [opts]` | Start a worker and return immediately with the thread id. Supervised workflow entry point. |
 | `meight wait <name> --timeout SEC` | Checkpoint wait: return on terminal state, QUESTION, daemon death, or timeout. Timeout leaves the worker running. |
-| `meight dispatch <name> [opts]` | One-shot: auto-start daemon → start worker → wait → print result. Use for trivial, short, low-risk work. |
+| `meight dispatch <name> [opts]` | One-shot: auto-start daemon → start worker → wait → print result. Use for trivial, short, low-risk work. Add `--shutdown-when-idle` to stop the daemon after the result when no workers are active. |
 | `meight reply <name> --brief ...` | One-shot answer to a worker question: follow + wait + print last-turn result |
 | `meight status [name]` | Pull digest (table or detail). Reads disk — works without the daemon |
 | `meight steer <name> "text"` | Inject instruction into the running turn (no work lost) |
 | `meight interrupt <name>` | Cancel the running turn (idempotent) |
 | `meight follow <name> --brief ...` | Low-level: new turn on the same thread (context preserved) |
-| `meight result / list / daemon / ping / shutdown` | Low-level support commands |
+| `meight result / list / daemon / ping / shutdown / launchd` | Low-level support commands |
 
-Options: `--cwd` (worker workdir — use separate git worktrees for overlapping file scopes), `--sandbox ws|ro|full` (default `full` = no sandbox, so Codex can verify freely — builds, daemon restarts, writes outside cwd; `ws` = workspace-write scoped to cwd; reviews run `ro`), `--effort low|medium|high|xhigh` (default `medium`; raise by task complexity), `--model`, `--fast`/`--no-fast` (per-worker toggle for the codex Fast/priority tier — `--no-fast` for a cheaper run; omit to inherit config), `--timeout`.
+Options: `--cwd` (worker workdir — use separate git worktrees for overlapping file scopes), `--sandbox ws|ro|full` (default `full` = no sandbox, so Codex can verify freely — builds, daemon restarts, writes outside cwd; `ws` = workspace-write scoped to cwd; reviews run `ro`), `--effort low|medium|high|xhigh` (default `medium`; raise by task complexity), `--model`, `--fast`/`--no-fast` (per-worker toggle for the codex Fast/priority tier — `--no-fast` for a cheaper run; omit to inherit config), `--timeout`. Workers start as Codex subagent threads by default so they stay out of Codex Desktop's main user-thread list; use `--main-thread` only when a tool needs a visible/main thread.
 
-Worker state lives in `<repo>/.meight/workers/<name>/`: `brief.md`, `status.json` (state machine + tokens + files changed + last activity), `events.log` (one line per meaningful event), `result.md` (final message per turn). Add `.meight/` to your global gitignore.
+Worker state lives in `<daemon-home>/repos/<repo-key>/workers/<name>/`: `brief.md`, `status.json` (state machine + tokens + files changed + last activity), `events.log` (one line per meaningful event), `result.md` (final message per turn). Use `meight list --all-repos` for a global view. Terminal workers stay in daemon memory for `MEIGHT_WORKER_GC_TTL_SEC` seconds by default, and the daemon exits after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with no active workers; set either env var to `0` to disable that cleanup.
 
 ## Good to know
 

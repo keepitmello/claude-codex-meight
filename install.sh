@@ -5,6 +5,20 @@ set -e
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN_DIR="${MEIGHT_BIN_DIR:-$HOME/.local/bin}"
 SDK_PIN="openai-codex==0.1.0b3"
+INSTALL_LAUNCHD=0
+LOAD_LAUNCHD=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --launchd) INSTALL_LAUNCHD=1 ;;
+    --load-launchd) INSTALL_LAUNCHD=1; LOAD_LAUNCHD=1 ;;
+    *)
+      echo "error: unknown option: $arg" >&2
+      echo "usage: ./install.sh [--launchd|--load-launchd]" >&2
+      exit 1
+      ;;
+  esac
+done
 
 # 1. prerequisites
 command -v codex >/dev/null 2>&1 || {
@@ -38,11 +52,14 @@ case ":$PATH:" in
   *) echo "note: $BIN_DIR is not in your PATH — add it to use \`meight\` directly." ;;
 esac
 
-# 4. recommend global gitignore for per-repo state dirs
-if ! git config --global core.excludesfile >/dev/null 2>&1 || \
-   ! grep -qs "^\.meight/$" "$(git config --global core.excludesfile 2>/dev/null)" 2>/dev/null; then
-  echo "note: worker state lives in <repo>/.meight/ — add it to your global gitignore:"
-  echo "      echo '.meight/' >> \"\$(git config --global core.excludesfile || echo ~/.config/git/ignore)\""
+# 4. optional LaunchAgent
+if [ "$INSTALL_LAUNCHD" -eq 1 ]; then
+  if [ "$LOAD_LAUNCHD" -eq 1 ]; then
+    "$REPO_DIR/.venv/bin/python" "$REPO_DIR/meight.py" launchd install --load
+  else
+    "$REPO_DIR/.venv/bin/python" "$REPO_DIR/meight.py" launchd install
+  fi
 fi
 
+echo "note: worker state lives in \${MEIGHT_HOME:-~/.meight}/repos/<repo-key>/workers/<name>/"
 echo "done. try: meight --help"
