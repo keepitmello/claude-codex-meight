@@ -15,7 +15,7 @@ Harness for driving Codex workers in parallel from a Claude orchestrator — usa
   - **Important architecture / high-stakes / irreversible work — run both (A/B)**: dispatch the Codex review worker *and* a cross-model Claude agent in parallel, so two independent perspectives land on it. Not because cross-model is higher quality — because critical work deserves two reads instead of one.
   The trap this still closes: accepting a worker's "done" with no independent read at all.
 - **Direction is set by two reads, never one**: when the work reaches a fork that sets direction — which approach, a design tradeoff, an architecture or diagnosis call, scope/sequencing, anything genuinely ambiguous — it gets **two independent analyses before you commit**: yours first (you analyze it directly — analysis is never outsourced), then a mandatory read-only Codex analysis of the *same* question, and you set direction by comparing the two reads. This is the sibling of cross-model review — review checks a finished artifact, this shapes the direction before the build — and like review, one side alone doesn't count: your reasoning alone is a claim, the cross-read makes it a decision. The trap it closes: deciding a direction-setting branch solo, without ever calling a worker. Run the Codex half via the **Consult** pattern below. (Trivial, unambiguous, or already-agreed calls don't need this.)
-- **Workers never commit** (the harness preamble enforces it) — review the working tree and commit yourself. A worker's "done" is a claim; your verification makes it a fact.
+- **Commit is the PM's sign-off, not the worker's** — by default review the working tree and commit yourself; a worker's "done" is a claim, your verification makes it a fact. (The preamble no longer hard-blocks `git commit`, so you *may* let a self-verifying worker commit when you've deliberately set it up that way — but the sign-off stays yours.)
 
 ## Default: supervised dispatch
 
@@ -132,6 +132,37 @@ EOF
 meight wait review-X --timeout 300
 # After fixes, re-review on the same worker via follow/reply (context preserved)
 ```
+
+## Self-reviewing implementation worker (keeps the PM out of the technical ping-pong)
+
+The pattern above has *you* dispatch the reviewer and relay findings back to the implementer — useful, but it drags you through every implement↔review↔fix round and pollutes your context with technical detail you shouldn't hold. For bounded implementation work, push that whole loop *inside* the implementing worker: it spawns its own independent reviewer, fixes the real defects, and hands you only a decision-surface report. You stay out of the ping-pong and do final sign-off (+ commit) only.
+
+The implementer spawns a **genuinely independent** reviewer (verified: separate context, not self-review) via Codex's own sub-agent tool — `multi_agent_v1.spawn_agent(agent_type="reviewer", fork_context=false)` then `wait_agent`. `fork_context=false` is what makes it independent: the reviewer starts from its prompt only, not the implementer's working context.
+
+Two guardrails are mandatory in the brief, or the loop runs away — an adversarial reviewer keeps finding deeper edge cases forever (observed: 3 straight NO-GOs on a trivial `slugify`):
+- **Bound the loop**: at most ~2 review rounds; fix only P1 (real defects), record P2/P3 without fixing.
+- **Abstract the report**: detailed findings, per-round review logs, and reasoning go to `result.md` on disk; the report body you receive is a fixed dashboard, nothing more. (This is the concrete form of the preamble's "report is a decision surface, not a technical log".)
+
+Brief block to paste:
+
+```
+## Review & report protocol (required)
+1. When implementation is done, spawn an independent reviewer via
+   multi_agent_v1.spawn_agent(agent_type="reviewer", fork_context=false) + wait_agent.
+   Adversarial review. At most 2 rounds.
+2. Fix only P1 (real defects). Record P2/P3 — do not fix.
+3. Put all detailed findings / per-round review logs / technical reasoning in result.md.
+   Never in the report body.
+4. Report to the PM in exactly this shape, nothing else:
+   VERDICT: GO / NO-GO        (does it meet the spec = the what/why I gave you)
+   P1 RESOLVED: <count> — <one title line each, no code / no technical explanation>
+   NEEDS PM DECISION: <scope/UX/tradeoff calls only, one line each; "none" if none>
+   FILES: <changed files>
+   COMMIT MSG: <one-line suggested commit message>
+   DETAILS: see result.md
+```
+
+When to use which: **self-reviewing worker** = bounded implementation you want off your plate, where the technical detail is noise to you. **Separate review worker / cross-model A/B** (above) = high-stakes or architecture work where you *want* to read the findings and weigh them yourself.
 
 ## Writing briefs (template in README.md)
 
