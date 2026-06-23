@@ -122,6 +122,25 @@ meight interrupt <name>             # cancel (idempotent)
 
 `status` is part of the normal supervised loop, not a side channel. Use it at checkpoint wake-ups and after suspicious output. Running several workers at once? Pull the all-worker `status` table and only open up the ones that look off — don't wait on each one individually. `interrupt` is for clearly wrong or unsafe runs where steering is not enough.
 
+## Daemon runtime checks
+
+Meight runtime code is loaded into the long-lived daemon process. After changing `meight.py`, restart the daemon before trusting behavior from new workers; otherwise the old Python code can keep creating sessions with the old contract.
+
+Useful checks:
+
+```bash
+MEIGHT_HOME="${MEIGHT_HOME:-$HOME/.meight}" meight ping
+ps -axo pid,command | rg 'meight.py daemon|codex app-server --listen stdio://'
+meight list --all-repos --json
+```
+
+Hidden-session invariant:
+
+- Default workers must have `"thread_source": "subagent"` and `"thread_ephemeral": true` in `status.json` / `meight status <name> --json`.
+- Only explicit `--main-thread` workers may have `"thread_source": "user"` and `"thread_ephemeral": false`; those are expected to appear in Codex Desktop.
+- If Codex Desktop still shows new meight workers, first check whether an old daemon is still running from a repo-local `.meight` home or an older process. Shut down stale meight daemons, then let `dispatch` auto-start the global daemon again.
+- `meight status` reads disk and can work without the daemon; `steer`, `interrupt`, `follow`, and active runtime behavior require a live daemon.
+
 ## Review worker pattern
 
 This is the **fresh Codex review worker** form of the review rule — and also the Codex side of cross-model review when Claude implemented. Use a *different* worker name than the implementer so the reviewer reads with fresh, independent context (never re-use the implementing worker — that's self-review).
