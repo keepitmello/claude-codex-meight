@@ -27,7 +27,7 @@ meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  g
 - **Repo state home** = `<daemon-home>/repos/<repo-key>/`, where `<repo-key>` is a stable slug plus hash of the invoking repo root. `--cwd` still controls the worker execution directory; it does not change the repo namespace for status/result lookup.
 - The SDK spawns `codex app-server --listen stdio://` and speaks JSON-RPC; per-turn notifications are routed by the SDK's internal MessageRouter, which is what allows N concurrent turns over one process.
 - The daemon holds `Thread`/`TurnHandle` objects in a registry keyed by `(repo_key, worker_name)`. `steer` and `interrupt` require the live handle; `follow` can resume a completed/question worker from disk after a daemon restart through `thread_resume`.
-- Workers start with `thread_source=ThreadSource.subagent` by default so they stay out of Codex Desktop's main user-thread list. `--main-thread` is the explicit opt-in to `ThreadSource.user` for tools that need a visible/main thread.
+- Workers start with `ephemeral=True` and `thread_source=ThreadSource.subagent` by default so they stay out of Codex Desktop's main user-thread list. `--main-thread` is the explicit opt-in to `ephemeral=False` plus `ThreadSource.user` for tools that need a visible/main thread.
 - Lifecycle is explicit: `MEIGHT_IDLE_TIMEOUT_SEC` controls daemon idle shutdown (default 1800s, `0` disables), and `MEIGHT_WORKER_GC_TTL_SEC` controls how long terminal workers stay in daemon memory (default 3600s, disk artifacts remain).
 
 ## State machine

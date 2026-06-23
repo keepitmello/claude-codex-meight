@@ -153,7 +153,7 @@ Bash(command: "meight wait review-1 --timeout 300",
 | `meight follow <name> --brief ...` | 저수준: 같은 스레드에 새 턴 (컨텍스트 유지) |
 | `meight result / list / daemon / ping / shutdown / launchd` | 저수준 보조 커맨드 |
 
-옵션: `--cwd`(워커 작업 디렉토리 — 파일 범위가 겹치면 git worktree로 분리), `--sandbox ws|ro|full`(기본 `full`=샌드박스 없음, 리뷰는 `ro`), `--effort low|medium|high|xhigh`(기본 `medium`, 복잡도에 따라 상향), `--model`, `--fast`/`--no-fast`(기본은 non-Fast이고, `--fast`를 넣은 워커만 codex Fast/priority tier 사용), `--timeout`. 워커는 기본적으로 Codex subagent thread로 시작해서 Codex Desktop의 메인 사용자 스레드 목록에 뜨지 않게 합니다. 보이는/main thread가 꼭 필요한 도구에서만 `--main-thread`를 쓰세요.
+옵션: `--cwd`(워커 작업 디렉토리 — 파일 범위가 겹치면 git worktree로 분리), `--sandbox ws|ro|full`(기본 `full`=샌드박스 없음, 리뷰는 `ro`), `--effort low|medium|high|xhigh`(기본 `medium`, 복잡도에 따라 상향), `--model`, `--fast`/`--no-fast`(기본은 non-Fast이고, `--fast`를 넣은 워커만 codex Fast/priority tier 사용), `--timeout`. 워커는 기본적으로 hidden ephemeral Codex subagent thread로 시작해서 Codex Desktop의 메인 사용자 스레드 목록에 뜨지 않게 합니다. 보이는/main thread가 꼭 필요한 도구에서만 `--main-thread`를 쓰세요.
 
 워커 상태는 `<daemon-home>/repos/<repo-key>/workers/<name>/`에 기록됩니다: `brief.md`, `status.json`(상태머신+토큰+변경 파일+현재 활동), `events.log`(의미 있는 이벤트당 1줄), `result.md`(턴별 최종 메시지). 전체 레포 상태는 `meight list --all-repos`로 볼 수 있습니다. 완료된 워커는 기본적으로 `MEIGHT_WORKER_GC_TTL_SEC` 동안만 데몬 메모리에 남고, 활성 워커가 없으면 데몬은 `MEIGHT_IDLE_TIMEOUT_SEC` 뒤 종료됩니다. 값을 `0`으로 두면 해당 정리를 끌 수 있습니다.
 

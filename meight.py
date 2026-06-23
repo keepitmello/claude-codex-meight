@@ -226,7 +226,7 @@ class Worker:
 
     def __init__(self, name: str, repo_home: Path, repo_root: str, repo_key: str, cwd: str, sandbox: str,
                  model: str | None, effort: str, service_tier: str | None = None,
-                 thread_source: str = "subagent"):
+                 thread_source: str = "subagent", thread_ephemeral: bool = True):
         self.name = name
         self.repo_home = repo_home
         self.repo_root = repo_root
@@ -238,6 +238,7 @@ class Worker:
         self.effort = effort
         self.service_tier = service_tier  # "default" unless --fast maps the worker to "priority"
         self.thread_source = thread_source
+        self.thread_ephemeral = thread_ephemeral
         self.thread = None       # openai_codex.Thread (kept while daemon lives -> reused for follow)
         self.handle = None       # TurnHandle
         self.consumer: threading.Thread | None = None
@@ -277,6 +278,7 @@ class Worker:
             "effort": self.effort,
             "service_tier": self.service_tier,
             "thread_source": self.thread_source,
+            "thread_ephemeral": self.thread_ephemeral,
             "current_item": None,
             "plan": [],
             "files_changed": [],
@@ -827,6 +829,7 @@ class Daemon:
         effort = st.get("effort") or "medium"
         service_tier = st.get("service_tier")
         thread_source = st.get("thread_source") or "subagent"
+        thread_ephemeral = bool(st.get("thread_ephemeral", thread_source != "user"))
 
         thread = self.codex.thread_resume(
             thread_id,
@@ -846,6 +849,7 @@ class Daemon:
             effort,
             service_tier,
             thread_source,
+            thread_ephemeral,
         )
         w.status = st
         w.thread = thread
@@ -879,6 +883,7 @@ class Daemon:
         service_tier = req.get("service_tier")
         main_thread = bool(req.get("main_thread"))
         thread_source_label = "user" if main_thread else "subagent"
+        thread_ephemeral = not main_thread
         if ThreadSource is None:
             return {"ok": False, "error": "openai-codex SDK does not expose ThreadSource"}
 
@@ -904,6 +909,7 @@ class Daemon:
                 effort,
                 service_tier,
                 thread_source_label,
+                thread_ephemeral,
             )
             w.dir.mkdir(parents=True, exist_ok=True)
             # Restarting the same name creates a new worker, so reset prior outputs.
@@ -918,10 +924,10 @@ class Daemon:
             try:
                 thread = self.codex.thread_start(
                     cwd=cwd,
-                    ephemeral=False,
+                    # Hidden workers must be ephemeral subagent threads. Persistent user
+                    # threads are opt-in because Codex Desktop lists them.
+                    ephemeral=thread_ephemeral,
                     sandbox=getattr(Sandbox, sandbox_key),
-                    # Subagent threads stay out of the desktop's main user-thread list.
-                    # --main-thread intentionally opts into a visible user thread for tools that need it.
                     thread_source=(ThreadSource.user if main_thread else ThreadSource.subagent),
                 )
                 w.thread = thread
@@ -949,7 +955,8 @@ class Daemon:
         self.touch_activity()
         self.log(
             f"start worker={name} repo={repo_key} thread={thread.id} "
-            f"cwd={cwd} sandbox={sandbox_key} thread_source={thread_source_label}"
+            f"cwd={cwd} sandbox={sandbox_key} thread_source={thread_source_label} "
+            f"ephemeral={thread_ephemeral}"
         )
         return {"ok": True, "thread_id": thread.id}
 
@@ -1244,7 +1251,7 @@ def cmd_status(args, home: Path) -> int:
             print(summary_line(st))
             for key in ("thread_id", "turn_id", "repo_root", "repo_key", "cwd",
                         "sandbox", "model", "effort", "service_tier", "thread_source",
-                        "started_at", "updated_at", "turns",
+                        "thread_ephemeral", "started_at", "updated_at", "turns",
                         "needs_input_source", "needs_input_detail"):
                 print(f"  {key}: {st.get(key)}")
             if st.get("plan"):
