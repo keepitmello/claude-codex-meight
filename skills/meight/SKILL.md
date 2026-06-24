@@ -164,6 +164,7 @@ The implementer spawns a **genuinely independent** reviewer (verified: separate 
 Two guardrails are mandatory in the brief, or the loop runs away — an adversarial reviewer keeps finding deeper edge cases forever (observed: 3 straight NO-GOs on a trivial `slugify`):
 - **Bound the loop**: at most ~2 review rounds; fix only P1 (real defects), record P2/P3 without fixing.
 - **Abstract the report**: detailed findings, per-round review logs, and reasoning go to `result.md` on disk; the report body you receive is a fixed dashboard, nothing more. (This is the concrete form of the preamble's "report is a decision surface, not a technical log".)
+- **Avoid cwd artifact collisions**: the worker-isolated `~/.meight/repos/.../workers/<name>/result.md` remains the standard report channel because it is separated by worker name. But if a worker also leaves non-code artifact documents in the task cwd — reports, analyses, handoffs, or similar files — never use fixed generic names like `result.md`. Parallel workers in the same cwd can overwrite each other and pollute the repo. Require worker-unique names such as `<worker-name>-<short-topic>.md`, with the worker name as the prefix for every cwd artifact document. Code edits still go directly in their normal source paths; this naming rule is only for extra artifact documents in cwd.
 
 Brief block to paste:
 
@@ -173,15 +174,16 @@ Brief block to paste:
    multi_agent_v1.spawn_agent(agent_type="reviewer", fork_context=false) + wait_agent.
    Adversarial review. At most 2 rounds.
 2. Fix only P1 (real defects). Record P2/P3 — do not fix.
-3. Put all detailed findings / per-round review logs / technical reasoning in result.md.
-   Never in the report body.
+3. Put all detailed findings / per-round review logs / technical reasoning in the worker-isolated result.md.
+   Never in the report body. If you also create cwd artifact docs, name them like
+   <worker-name>-<short-topic>.md, not fixed generic names like result.md.
 4. Report to the PM in exactly this shape, nothing else:
    VERDICT: GO / NO-GO        (does it meet the spec = the what/why I gave you)
    P1 RESOLVED: <count> — <one title line each, no code / no technical explanation>
    NEEDS PM DECISION: <scope/UX/tradeoff calls only, one line each; "none" if none>
    FILES: <changed files>
    COMMIT MSG: <one-line suggested commit message>
-   DETAILS: see result.md
+   DETAILS: see result.md (or <worker-name>-<short-topic>.md for any cwd artifact doc you were explicitly asked to create)
 ```
 
 When to use which: **self-reviewing worker** = bounded implementation you want off your plate, where the technical detail is noise to you. **Separate review worker / cross-model A/B** (above) = high-stakes or architecture work where you *want* to read the findings and weigh them yourself.
