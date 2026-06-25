@@ -7,6 +7,8 @@ description: "Codex worker dispatch harness (global CLI: meight, repo: claude-co
 
 Harness for driving Codex workers in parallel from a Claude orchestrator — usable from any repo via the `meight` CLI. One global daemon is shared across repos; worker state is isolated per invoking repo under `<daemon-home>/repos/<repo-key>/`.
 
+Codex worker-facing details live in [`docs/codex-worker-guide.md`](../../docs/codex-worker-guide.md); the harness preamble points workers there before work starts, while this skill remains the orchestrator-facing guide for dispatching and supervising workers.
+
 **Operating model (self-contained — works without any other prompt file):**
 - **You (Claude) hold the direction**: task decomposition, integration, verification, user communication, and git. **Codex workers are teammates, not just executors**: strong on details (races, type drift, edge cases), often weaker on the big picture. So you own *what and why* and they own *how* — but run it two-way: pull a worker in to sounding-board a hard call or sketch the big picture together, and expect workers to push back when they spot a better path. Discuss and adjust more than you dictate. **And holding the direction is not deciding it alone**: when the work hits a fork that *sets* direction, you cross-read it with a Codex worker before committing (see "Direction is set by two reads, never one" below). "Teammates, not executors" means the hard calls are made together, not just the easy implementation handed off.
 - **Routing**: bounded implementation with a clear spec / code review / browser, visual, desktop, and runtime QA work → Codex workers. Exploration fan-out / fresh-context verification / harness-tool work → Claude subagents.
@@ -15,7 +17,7 @@ Harness for driving Codex workers in parallel from a Claude orchestrator — usa
   - **Important architecture / high-stakes / irreversible work — run both (A/B)**: dispatch the Codex review worker *and* a cross-model Claude agent in parallel, so two independent perspectives land on it. Not because cross-model is higher quality — because critical work deserves two reads instead of one.
   The trap this still closes: accepting a worker's "done" with no independent read at all.
 - **Direction is set by two reads, never one**: when the work reaches a fork that sets direction — which approach, a design tradeoff, an architecture or diagnosis call, scope/sequencing, anything genuinely ambiguous — it gets **two independent analyses before you commit**: yours first (you analyze it directly — analysis is never outsourced), then a mandatory read-only Codex analysis of the *same* question, and you set direction by comparing the two reads. This is the sibling of cross-model review — review checks a finished artifact, this shapes the direction before the build — and like review, one side alone doesn't count: your reasoning alone is a claim, the cross-read makes it a decision. The trap it closes: deciding a direction-setting branch solo, without ever calling a worker. Run the Codex half via the **Consult** pattern below. (Trivial, unambiguous, or already-agreed calls don't need this.)
-- **Commit is the PM's sign-off, not the worker's** — by default review the working tree and commit yourself; a worker's "done" is a claim, your verification makes it a fact. (The preamble no longer hard-blocks `git commit`, so you *may* let a self-verifying worker commit when you've deliberately set it up that way — but the sign-off stays yours.)
+- **Commit is the planner's sign-off, not the worker's** — review the working tree and commit yourself; a worker's "done" is a claim, your verification makes it a fact. The preamble forbids workers from running `git commit` or `git push`; workers may suggest a commit message, but git stays yours.
 
 ## Default: supervised dispatch
 
@@ -82,7 +84,7 @@ EOF
 - Model: gpt-5.5 with non-Fast service tier by default. Pass `--fast` on `start`/`dispatch` only when that specific worker should use the priority tier; omitted or `--no-fast` stays on the cheaper non-priority tier. **Pick effort by complexity**: medium (default, routine implementation) / high (tricky implementation, code review, debugging) / xhigh (precision verification — concurrency, irreversible or hard-to-verify changes — and hard design)
 - Thread visibility: workers start with `ephemeral=True` and `thread_source=subagent` by default so they stay out of Codex Desktop's main user-thread list. Use `--main-thread` only for tools that require a visible/main thread.
 - N parallel workers OK. Overlapping file scopes → separate git worktrees via `--cwd`
-- A harness preamble is auto-prepended to every brief: **no commit/push** + end with a `QUESTION:` paragraph when blocked
+- A harness preamble is auto-prepended to every brief: **no commit/push** + end with a `QUESTION:` paragraph only for planner-owned decisions or blocks the orchestrator must resolve
 
 ## Consult a worker (sounding board, not just delegation)
 
@@ -101,7 +103,7 @@ This is the sibling of cross-model review: review checks a finished artifact, co
 
 ## When a worker asks a question (exit 3)
 
-A worker's `QUESTION:` isn't only "I'm blocked" — under the teammate preamble it's also how a worker flags a better approach, a shaky assumption, or a tradeoff that needs your call. Treat it as a discussion opener, not just an unblock request. In supervised mode, read it with `meight status <name>` (`needs_input_detail`) or `meight result <name>`; in one-shot `dispatch`/`reply` it's in the printed result. Answer — or discuss back — in one shot:
+A worker's `QUESTION:` isn't only "I'm blocked" — under the teammate preamble it's also how a worker flags a better approach, a shaky assumption, or a tradeoff that needs your call. Keep that channel narrow: `QUESTION:` is for planner-owned decisions such as scope, UX/product behavior, priority, risk appetite, irreversible action, or acceptance-criteria conflict. Technical uncertainty should be resolved with evidence first; local implementation choices should be decided by the worker and recorded as judgment calls, not escalated as planner questions. In supervised mode, read it with `meight status <name>` (`needs_input_detail`) or `meight result <name>`; in one-shot `dispatch`/`reply` it's in the printed result. Answer — or discuss back — in one shot:
 
 ```bash
 # via run_in_background → completion notification carries the last-turn result (same exit-code contract as dispatch)
@@ -155,16 +157,17 @@ meight wait review-X --timeout 300
 # After fixes, re-review on the same worker via follow/reply (context preserved)
 ```
 
-## Self-reviewing implementation worker (keeps the PM out of the technical ping-pong)
+## Self-reviewing implementation worker (keeps the planner out of the technical ping-pong)
 
-The pattern above has *you* dispatch the reviewer and relay findings back to the implementer — useful, but it drags you through every implement↔review↔fix round and pollutes your context with technical detail you shouldn't hold. For bounded implementation work, push that whole loop *inside* the implementing worker: it spawns its own independent reviewer, fixes the real defects, and hands you only a decision-surface report. You stay out of the ping-pong and do final sign-off (+ commit) only.
+The pattern above has *you* dispatch the reviewer and relay findings back to the implementer — useful, but it drags you through every implement↔review↔fix round and pollutes your context with technical detail you shouldn't hold. For bounded implementation work, push that whole loop *inside* the implementing worker: it spawns its own independent reviewer, fixes the real defects, and hands you only a planning report decision surface. You stay out of the technical execution and ping-pong, then do final sign-off (+ commit) only.
 
 The implementer spawns a **genuinely independent** reviewer (verified: separate context, not self-review) via Codex's own sub-agent tool — `multi_agent_v1.spawn_agent(agent_type="reviewer", fork_context=false)` then `wait_agent`. `fork_context=false` is what makes it independent: the reviewer starts from its prompt only, not the implementer's working context.
 
 Two guardrails are mandatory in the brief, or the loop runs away — an adversarial reviewer keeps finding deeper edge cases forever (observed: 3 straight NO-GOs on a trivial `slugify`):
 - **Bound the loop**: at most ~2 review rounds; fix only P1 (real defects), record P2/P3 without fixing.
-- **Abstract the report**: detailed findings, per-round review logs, and reasoning go to `result.md` on disk; the report body you receive is a fixed dashboard, nothing more. (This is the concrete form of the preamble's "report is a decision surface, not a technical log".)
-- **Avoid cwd artifact collisions**: the worker-isolated `~/.meight/repos/.../workers/<name>/result.md` remains the standard report channel because it is separated by worker name. But if a worker also leaves non-code artifact documents in the task cwd — reports, analyses, handoffs, or similar files — never use fixed generic names like `result.md`. Parallel workers in the same cwd can overwrite each other and pollute the repo. Require worker-unique names such as `<worker-name>-<short-topic>.md`, with the worker name as the prefix for every cwd artifact document. Code edits still go directly in their normal source paths; this naming rule is only for extra artifact documents in cwd.
+- **Abstract the report**: detailed findings, per-round review logs, command output, and reasoning go to a worker-unique evidence artifact such as `<worker-name>-evidence.md`; the report body you receive is a fixed dashboard plus concise verification summary. (This is the concrete form of the preamble's "report is a decision surface, not a technical log".)
+- **Keep sign-off evidence on the surface**: the report body must include `VERIFICATION` lines with `PASS` / `FAIL` / `NOT RUN` plus one short evidence note for each spec check or verification scenario. This summary is planner sign-off evidence, not technical log spill.
+- **Avoid cwd artifact collisions**: the worker-isolated `~/.meight/repos/.../workers/<name>/result.md` is the final message record, not a separate hidden detail channel. If a worker leaves non-code artifact documents in the task cwd — reports, analyses, evidence, handoffs, or similar files — never use fixed generic names like `result.md`. Parallel workers in the same cwd can overwrite each other and pollute the repo. Require worker-unique names such as `<worker-name>-evidence.md` or `<worker-name>-<short-topic>.md`, with the worker name as the prefix for every cwd artifact document. Code edits still go directly in their normal source paths; this naming rule is only for extra artifact documents in cwd.
 
 Brief block to paste:
 
@@ -174,19 +177,22 @@ Brief block to paste:
    multi_agent_v1.spawn_agent(agent_type="reviewer", fork_context=false) + wait_agent.
    Adversarial review. At most 2 rounds.
 2. Fix only P1 (real defects). Record P2/P3 — do not fix.
-3. Put all detailed findings / per-round review logs / technical reasoning in the worker-isolated result.md.
-   Never in the report body. If you also create cwd artifact docs, name them like
-   <worker-name>-<short-topic>.md, not fixed generic names like result.md.
-4. Report to the PM in exactly this shape, nothing else:
+3. Put all detailed findings / per-round review logs / command output / technical reasoning in
+   a worker-unique evidence artifact: <worker-name>-evidence.md. Make it self-contained for
+   a follow-up worker with handoff, file/line evidence, verification commands, and open decisions.
+   Never put technical logs in the report body; only the concise VERIFICATION summary belongs there.
+   Do not use fixed generic cwd artifact names like result.md.
+4. Report to the planner in exactly this shape, nothing else:
    VERDICT: GO / NO-GO        (does it meet the spec = the what/why I gave you)
+   VERIFICATION: <each spec check / verification scenario: PASS / FAIL / NOT RUN + one short evidence line>
    P1 RESOLVED: <count> — <one title line each, no code / no technical explanation>
-   NEEDS PM DECISION: <scope/UX/tradeoff calls only, one line each; "none" if none>
+   NEEDS PLANNER DECISION: <scope/UX/priority/product-judgment/tradeoff calls only, one line each; "none" if none>
    FILES: <changed files>
    COMMIT MSG: <one-line suggested commit message>
-   DETAILS: see result.md (or <worker-name>-<short-topic>.md for any cwd artifact doc you were explicitly asked to create)
+   DETAILS: see <worker-name>-evidence.md
 ```
 
-When to use which: **self-reviewing worker** = bounded implementation you want off your plate, where the technical detail is noise to you. **Separate review worker / cross-model A/B** (above) = high-stakes or architecture work where you *want* to read the findings and weigh them yourself.
+When to use which: **self-reviewing worker** = bounded implementation where Codex should own technical execution and keep the planner out of technical detail. **Separate review worker / cross-model A/B** (above) = high-stakes or architecture work where you *want* to read the findings and weigh them yourself.
 
 ## Writing briefs (template in README.md)
 
