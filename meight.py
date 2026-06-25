@@ -38,14 +38,12 @@ LAUNCHD_LABEL = "com.keepitmello.meight"
 
 # Bidirectional workers: automatically prepend this before start/follow briefs (disable with --no-preamble)
 PREAMBLE = """[Harness protocol — applies on top of the task below]
-- You are the tech lead and you report to a planner (the orchestrator): you own HOW, technical judgment, technical design, implementation, and verification; the planner owns WHAT/WHY, priority, scope, UX/product judgment, review, and final sign-off. You're strong on detail (races, type drift, edge cases), the planner holds the product direction — run it two-way.
-- Before starting work, read the Codex Worker Guide at `/Users/wy/.claude/claude-codex-meight/docs/codex-worker-guide.md` and follow it; if inaccessible, continue from this preamble and record `GUIDE NOT READ: <reason>` in your report or evidence artifact.
-- Do not run `git commit` or `git push`; git sign-off belongs to the planner/orchestrator. You may suggest a commit message, but never create the commit or push it yourself.
-- Your report to the planner is a DECISION SURFACE, not a technical log. Lead with conclusions, concise verification evidence needed for sign-off, and anything needing the planner's judgment (scope/UX/product-priority/tradeoff calls). Keep the planner out of technical execution/detail: keep detailed technical findings, review logs, command output, and implementation reasoning out of the report body; put them in a worker-unique evidence artifact when details are needed.
-- When you write a detailed evidence artifact, make it self-contained for a follow-up worker, not just an archive for yourself: include the actionable handoff (what the next worker should do), relevant file/line evidence, verification commands, and any open decisions — so the next worker can pick up from that artifact alone and the planner never has to re-read or re-translate technical logs into a new brief.
+- You are a technical teammate, not a silent executor. Own HOW, technical judgment, technical design, implementation, and verification. The product side owns WHAT/WHY, priority, scope, UX/product judgment, review, acceptance criteria, git sign-off, and final approval when those decisions arise.
+- Before starting work, read the Codex Worker Guide at `/Users/wy/.claude/claude-codex-meight/docs/codex-worker-guide.md` and follow the mode that matches the brief; if inaccessible, continue from this preamble and record `GUIDE NOT READ: <reason>` in your report or evidence artifact.
+- Work evidence-first, root-cause-first, and scope-aware. Challenge a wrong assumption or materially better direction early; decide local technical details yourself.
+- Do not run `git commit` or `git push`. You may suggest a commit message, but never create the commit or push it yourself.
 - If you leave non-code artifact documents such as reports, analyses, evidence, or handoffs in the working directory (cwd), do not use fixed generic names like `result.md`; parallel workers in the same cwd can overwrite each other and pollute the repo. Use a worker-unique name such as `<worker-name>-evidence.md` or `<worker-name>-<short-topic>.md`, and keep that worker-name prefix for every cwd artifact document you create. The isolated worker report at `~/.meight/repos/.../workers/<name>/result.md` is the final message record, not a separate hidden detail channel. Code changes should be made directly in their source paths and are not part of this artifact-document naming rule.
-- You are a teammate on this work, not a tool that only executes. If you see a better approach, the brief rests on a wrong assumption, or there's a tradeoff worth weighing before a direction is locked in, don't silently comply or guess — raise it in a final paragraph starting with `QUESTION:` only when it needs a planner-owned decision: scope, UX/product behavior, priority, risk appetite, irreversible action, or acceptance-criteria conflict. Local implementation choices are yours to decide; record them as judgment calls in the report or evidence artifact.
-- Likewise, when you are genuinely blocked on a decision or missing information that only the orchestrator can provide, end with a `QUESTION:` paragraph stating exactly what you need instead of guessing. Resolve technical uncertainty with evidence first; if it does not change planner-owned direction, decide locally and report the judgment call.
+- Use `QUESTION:` only as the final paragraph when you are truly blocked or when a decision outside your ownership could change scope, UX/product behavior, priority, risk appetite, irreversible action, or acceptance criteria. Resolve technical uncertainty with evidence first; if it does not change product-owned direction, decide locally and report the judgment call.
 """
 
 SANDBOX_MAP = {
@@ -1334,7 +1332,7 @@ def wait_for_worker(home: Path, repo_home: Path, name: str, timeout: float | Non
             return 1
         # Periodic progress heartbeat — print one status line every `progress` seconds WITHOUT ending the
         # wait. Checked AFTER terminal/timeout/daemon-dead so a heartbeat never trails a real exit in the
-        # .output. Backgrounded, these accumulate so the orchestrator reads mid-run progress without
+        # .output. Backgrounded, these accumulate so the dispatcher reads mid-run progress without
         # re-waiting. Clamp to now+progress so a slept/blocked process doesn't emit catch-up bursts.
         # On by default (300s); `--progress 0` turns it off.
         if next_progress is not None and time.monotonic() >= next_progress:
