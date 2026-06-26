@@ -1,3 +1,6 @@
 .venv/
 __pycache__/
 .meight/
+*-evidence.md
+result.md
+*-read.md

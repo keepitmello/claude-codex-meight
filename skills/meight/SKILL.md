@@ -17,7 +17,7 @@ Codex worker-facing details live in [`docs/codex-worker-guide.md`](../../docs/co
   - **Important architecture / high-stakes / irreversible work — run both (A/B)**: dispatch the Codex review worker *and* a cross-model Claude agent in parallel, so two independent perspectives land on it. Not because cross-model is higher quality — because critical work deserves two reads instead of one.
   The trap this still closes: accepting a worker's "done" with no independent read at all.
 - **Direction is set by two reads, never one**: when the work reaches a fork that sets direction — which approach, a design tradeoff, an architecture or diagnosis call, scope/sequencing, anything genuinely ambiguous — it gets **two independent analyses before you commit**: yours first (you analyze it directly — analysis is never outsourced), then a mandatory read-only Codex analysis of the *same* question, and you set direction by comparing the two reads. This is the sibling of cross-model review — review checks a finished artifact, this shapes the direction before the build — and like review, one side alone doesn't count: your reasoning alone is a claim, the cross-read makes it a decision. The trap it closes: deciding a direction-setting branch solo, without ever calling a worker. Run the Codex half via the **Consult** pattern below. (Trivial, unambiguous, or already-agreed calls don't need this.)
-- **Commit is the product side's sign-off (owns what/why, not how), not the worker's** — review the working tree and commit yourself; a worker's "done" is a claim, your verification makes it a fact. The preamble forbids workers from running `git commit` or `git push`; workers may suggest a commit message, but git stays yours.
+- **Verification still owns the outcome (owns what/why, not how)** — a worker's "done" is a claim, your verification makes it a fact. Workers may now run `git commit`/`git push` for their completed, verified work and report what they committed; you still own integration and final sign-off.
 
 ## Default: supervised dispatch
 
@@ -84,7 +84,7 @@ EOF
 - Model: gpt-5.5 with non-Fast service tier by default. Pass `--fast` on `start`/`dispatch` only when that specific worker should use the priority tier; omitted or `--no-fast` stays on the cheaper non-priority tier. **Pick effort by complexity**: medium (default, routine implementation) / high (tricky implementation, code review, debugging) / xhigh (precision verification — concurrency, irreversible or hard-to-verify changes — and hard design)
 - Thread visibility: workers start with `ephemeral=True` and `thread_source=subagent` by default so they stay out of Codex Desktop's main user-thread list. Use `--main-thread` only for tools that require a visible/main thread.
 - N parallel workers OK. Overlapping file scopes → separate git worktrees via `--cwd`
-- A harness preamble is auto-prepended to every brief: **no commit/push** + end with a `QUESTION:` paragraph only for product-owned decisions or true blocks
+- A harness preamble is auto-prepended to every brief: **workers may commit/push their verified work** + end with a `QUESTION:` paragraph only for product-owned decisions or true blocks
 
 ## Consult a worker (sounding board, not just delegation)
 

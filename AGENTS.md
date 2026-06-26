@@ -25,7 +25,7 @@ meight start <name> --brief-file - --cwd <dir> [--sandbox ws|ro|full, default fu
 ## Goal       <what this enables + success criteria>
 ## Scope      <file/dir boundary — do not exceed>
 ## Existing patterns  <file:line pointers to relevant code — REQUIRED; workers misdiagnose absent context as defects>
-## Constraints <domain rules only — no-commit & QUESTION protocol are auto-injected>
+## Constraints <domain rules only — QUESTION protocol is auto-injected>
 ## Verification <commands to run + expected outcome; include output in report>
 ## Report     <changed files, verification output, judgment calls, open risks>
 EOF
@@ -53,7 +53,7 @@ meight result <name>
 
 ## Rules that keep this safe
 
-1. **Workers never commit.** Git belongs to you (the harness preamble enforces it). Review the working tree, then commit yourself.
+1. **Workers may commit/push their verified work.** You still own integration and final sign-off; review the working tree when you take over.
 2. **Independent review before accepting is mandatory — default to a Codex review worker.** Every worker output gets an independent read; the implementer never reviews its own work (the one non-negotiable). There's no evidence cross-model reviews better than a fresh same-model read, so **default to a fresh Codex review worker** — a *separate* worker from the implementer, adversarial `--sandbox ro --effort high` — including for verifying Codex's own implementations; it's cheaper/faster than a Codex agent. For **important architecture / high-stakes / irreversible work, run both (A/B)**: the Codex review worker *and* a cross-model Codex agent in parallel, for two independent perspectives — not because cross-model is higher quality, but because critical work deserves two reads. Either way demand P1/P2/P3 + file:line + GO/NO-GO, re-review via `follow` on the *review* worker. What's banned is accepting "done" with no independent read.
 3. **Direction-setting forks get two reads, never one.** On a fork that sets direction — which approach, a design tradeoff, an architecture or diagnosis call, scope/sequencing — you analyze first (analysis is never outsourced), then run a mandatory independent read-only Codex analysis of the same question (the consult pattern above, `--sandbox ro`), and set direction by comparing the two reads. Same standing as cross-model review — your reasoning alone is a claim, the cross-read makes it a decision. The trap it closes: deciding such a branch solo, without ever calling a worker. Trivial or already-agreed calls are exempt.
 4. **NO-GO means "blockers found", not "stop".** Fix, then re-review on the same thread. Push back on findings you can refute with code evidence — workers occasionally misdiagnose existing patterns.
