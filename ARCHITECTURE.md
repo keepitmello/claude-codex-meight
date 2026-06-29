@@ -28,7 +28,7 @@ meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  g
 - The SDK spawns `codex app-server --listen stdio://` and speaks JSON-RPC; per-turn notifications are routed by the SDK's internal MessageRouter, which is what allows N concurrent turns over one process.
 - The daemon holds `Thread`/`TurnHandle` objects in a registry keyed by `(repo_key, worker_name)`. `steer` and `interrupt` require the live handle; `follow` can resume a completed/question worker from disk after a daemon restart through `thread_resume`.
 - Workers start with `ephemeral=True` and `thread_source=ThreadSource.subagent` by default so they stay out of Codex Desktop's main user-thread list. `--main-thread` is the explicit opt-in to `ephemeral=False` plus `ThreadSource.user` for tools that need a visible/main thread.
-- Lifecycle is explicit: `MEIGHT_IDLE_TIMEOUT_SEC` controls daemon idle shutdown (foreground default 1800s, `0` disables; managed `dispatch`/LaunchAgent starts set `0`), and `MEIGHT_WORKER_GC_TTL_SEC` controls how long terminal workers stay in daemon memory (default 3600s, disk artifacts remain).
+- Lifecycle is explicit: `MEIGHT_IDLE_TIMEOUT_SEC` controls daemon idle shutdown (foreground default 1800s, `0` disables; `daemon --idle-timeout-sec` overrides). Managed `dispatch`/LaunchAgent starts pass idle disable through both env and daemon args; LaunchAgent jobs also infer managed mode from `XPC_SERVICE_NAME` if an older loaded job lacks the env. `MEIGHT_WORKER_GC_TTL_SEC` controls how long terminal workers stay in daemon memory (default 3600s, disk artifacts remain).
 
 ## State machine
 
@@ -91,7 +91,7 @@ State-machine changes should re-run the fake-event scenarios (tool-wait→stream
 ## Operational notes
 
 - **Editing `meight.py` does not affect a running daemon** — restart it (`meight shutdown`, next dispatch auto-starts). Easy to forget.
-- Optional LaunchAgent support lives behind `meight launchd install --load`; `KeepAlive` stays off, and the LaunchAgent sets `MEIGHT_IDLE_TIMEOUT_SEC=0` so live control channels stay attached until explicit shutdown.
+- Optional LaunchAgent support lives behind `meight launchd install --load`; `KeepAlive` stays off, and the LaunchAgent sets both `MEIGHT_IDLE_TIMEOUT_SEC=0` and `daemon --idle-timeout-sec 0` so live control channels stay attached until explicit shutdown. Verify the loaded job with `launchctl print`, not only the plist file.
 - Beta SDK (`openai-codex==0.1.0b3`, pinned): before bumping, re-introspect the API surface (`inspect.signature`), dump real event payloads (`MEIGHT_DEBUG=1` → per-worker `debug-events.log`), and re-run the verification suite.
 - Approval requests arrive as SDK server-requests (auto-accepted by the SDK's default handler), not stream notifications — the `needs_input` tool path is defensive.
 - Per-turn `cwd`/`sandbox`/`model`/`effort` come from the SDK's `Thread.turn()` — worktree isolation is just `--cwd`.

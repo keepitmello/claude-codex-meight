@@ -142,8 +142,8 @@ The command table must match the `python3 meight.py --help` subcommand list exac
 
 | Command | Behavior |
 |---|---|
-| `daemon` | Run the foreground global daemon. The orchestrator starts it in the background. If a live daemon already exists, return exit `1`. |
-| `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid. |
+| `daemon [--idle-timeout-sec SEC]` | Run the foreground global daemon. The orchestrator starts it in the background. If a live daemon already exists, return exit `1`. `0` disables idle shutdown. |
+| `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid and runtime `idle_timeout_sec`. |
 | `launchd install [--load]` / `launchd status` / `launchd uninstall` | Manage an optional macOS LaunchAgent for the global daemon. The plist uses `RunAtLoad` and `KeepAlive=false`; CLI auto-start remains the on-demand path. |
 | `start <name> (--brief-file F\|- \| --brief TEXT) [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new hidden worker thread with `thread_start(ephemeral=True, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. Defaults: `sandbox=full`, `effort=medium`, `cwd=current directory`, `thread_source=subagent`, `thread_ephemeral=true`, `service_tier=default` so workers run non-Fast unless `--fast` is passed. `--main-thread` intentionally uses `thread_start(ephemeral=False, thread_source=ThreadSource.user)` for tools that require a visible/main thread. `--fast` maps the SDK turn's `service_tier` to `priority`; omitted or `--no-fast` maps it to `default`. Reject duplicate active worker names inside the same repo namespace. `--brief-file -` reads the brief from stdin. |
 | `dispatch <name> (--brief-file F\|- \| --brief TEXT) [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, `start`, `wait`, then print `result.md`. Default timeout is `1800` seconds. Exit code matches `wait`. `--shutdown-when-idle` asks the global daemon to stop after a terminal result if no workers are active. |
@@ -198,9 +198,12 @@ continue from this state on the same Codex thread.
 - Terminal workers remain on disk and are removed from daemon memory after
   `MEIGHT_WORKER_GC_TTL_SEC` (default `3600`; `0` disables). Foreground
   `meight daemon` exits after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with no active
-  workers (default `1800`; `0` disables). Managed daemon starts (`dispatch`
-  auto-start and LaunchAgent) set `MEIGHT_IDLE_TIMEOUT_SEC=0` to preserve live
-  control channels until explicit shutdown.
+  workers (default `1800`; `0` disables), unless `--idle-timeout-sec` overrides
+  it. Managed daemon starts (`dispatch` auto-start and LaunchAgent) set both
+  `MEIGHT_IDLE_TIMEOUT_SEC=0` and `daemon --idle-timeout-sec 0`; LaunchAgent
+  jobs also infer managed mode from `XPC_SERVICE_NAME=com.keepitmello.meight`
+  if an older loaded job is missing the env override. `meight ping` exposes the
+  runtime `idle_timeout_sec` for process-level verification.
 - `follow` can rehydrate a terminal/question worker after daemon restart with
   `Codex.thread_resume(thread_id, cwd=..., sandbox=..., model=..., service_tier=...)`.
 - `needs_input` handling:

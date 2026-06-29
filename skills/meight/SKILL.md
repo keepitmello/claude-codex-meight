@@ -133,7 +133,8 @@ Useful checks:
 
 ```bash
 MEIGHT_HOME="${MEIGHT_HOME:-$HOME/.meight}" meight ping
-ps -axo pid,command | rg 'meight.py daemon|codex app-server --listen stdio://'
+ps eww -axo pid,ppid,command | rg 'meight.py daemon|MEIGHT_IDLE_TIMEOUT_SEC|XPC_SERVICE_NAME=com.keepitmello.meight'
+launchctl print "gui/$(id -u)/com.keepitmello.meight"  # if LaunchAgent is installed
 meight list --all-repos --json
 ```
 
@@ -216,7 +217,7 @@ Combine evidence types before claiming UI / E2E / integration behavior is correc
 
 - Worker artifacts: `<daemon-home>/repos/<repo-key>/workers/<name>/{brief.md,status.json,events.log,result.md}`
 - Low-level commands: daemon / start / wait / result / list / shutdown [--force] / launchd
-- Lifecycle: foreground `MEIGHT_IDLE_TIMEOUT_SEC` default is 1800s, but managed `dispatch`/LaunchAgent starts set it to `0` so live steer/follow/interrupt channels stay attached; `MEIGHT_WORKER_GC_TTL_SEC` (default 3600s) removes terminal workers from daemon memory while keeping disk artifacts
+- Lifecycle: foreground `MEIGHT_IDLE_TIMEOUT_SEC` default is 1800s, but `daemon --idle-timeout-sec 0` disables it. Managed `dispatch`/LaunchAgent starts pass idle disable through both env and daemon args; LaunchAgent jobs also infer managed mode from `XPC_SERVICE_NAME=com.keepitmello.meight` if an older loaded job lacks the env. Trust `meight ping`/startup log for the running value, not just the plist file. `MEIGHT_WORKER_GC_TTL_SEC` (default 3600s) removes terminal workers from daemon memory while keeping disk artifacts
 - High-stakes or irreversible work: never accept a worker's "done" on its word — require runtime evidence plus your own sign-off, always
 - **Restart the daemon after editing meight.py** (a live daemon keeps running old code)
 - Beta SDK (`openai-codex==0.1.0b3`, pinned): re-run the SPEC.md verification suite when upgrading

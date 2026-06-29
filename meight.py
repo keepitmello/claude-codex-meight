@@ -80,6 +80,22 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _clamp_nonnegative_float(value: float | str) -> float:
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return DEFAULT_IDLE_TIMEOUT_SEC
+
+
+def default_daemon_idle_timeout_sec() -> float:
+    """LaunchAgent jobs are managed daemons even if an old loaded job lacks the env override."""
+    if os.environ.get("MEIGHT_IDLE_TIMEOUT_SEC") is not None:
+        return _env_float("MEIGHT_IDLE_TIMEOUT_SEC", DEFAULT_IDLE_TIMEOUT_SEC)
+    if os.environ.get("XPC_SERVICE_NAME") == LAUNCHD_LABEL:
+        return _clamp_nonnegative_float(MANAGED_DAEMON_IDLE_TIMEOUT_SEC)
+    return DEFAULT_IDLE_TIMEOUT_SEC
+
+
 def managed_daemon_env(home: Path) -> dict[str, str]:
     """Environment for CLI/launchd-managed daemons that must keep live channels open."""
     env = dict(os.environ)
@@ -614,7 +630,7 @@ class Worker:
 # ── Daemon ─────────────────────────────────────────────────────────────────
 
 class Daemon:
-    def __init__(self, home: Path):
+    def __init__(self, home: Path, idle_timeout_sec: float | None = None):
         self.home = home
         self.sock_path = home / "meight.sock"
         self.pid_path = home / "daemon.pid"
@@ -625,7 +641,11 @@ class Daemon:
         self.shutting_down = threading.Event()
         self.server: socket.socket | None = None
         self.lock_file = None  # flock handle kept while the daemon is alive
-        self.idle_timeout_sec = _env_float("MEIGHT_IDLE_TIMEOUT_SEC", DEFAULT_IDLE_TIMEOUT_SEC)
+        self.idle_timeout_sec = (
+            _clamp_nonnegative_float(idle_timeout_sec)
+            if idle_timeout_sec is not None
+            else default_daemon_idle_timeout_sec()
+        )
         self.worker_gc_ttl_sec = _env_float("MEIGHT_WORKER_GC_TTL_SEC", DEFAULT_WORKER_GC_TTL_SEC)
         self.last_activity = time.monotonic()
 
@@ -675,7 +695,10 @@ class Daemon:
         signal.signal(signal.SIGTERM, self._on_signal)
         signal.signal(signal.SIGINT, self._on_signal)
 
-        self.log(f"daemon started pid={os.getpid()} home={self.home}")
+        self.log(
+            f"daemon started pid={os.getpid()} home={self.home} "
+            f"idle_timeout_sec={self.idle_timeout_sec:g}"
+        )
         print(f"claude-codex-meight daemon listening on {self.sock_path} (pid {os.getpid()})", flush=True)
 
         try:
@@ -789,7 +812,7 @@ class Daemon:
         cmd = req.get("cmd")
         try:
             if cmd == "ping":
-                return {"ok": True, "pid": os.getpid()}
+                return {"ok": True, "pid": os.getpid(), "idle_timeout_sec": self.idle_timeout_sec}
             if cmd == "start":
                 return self.cmd_start(req)
             if cmd == "follow":
@@ -1194,7 +1217,7 @@ def print_status_table(statuses: list[dict], show_repo: bool = False) -> None:
 # ── CLI Commands ───────────────────────────────────────────────────────────
 
 def cmd_daemon(args, home: Path) -> int:
-    return Daemon(home).run()
+    return Daemon(home, idle_timeout_sec=getattr(args, "idle_timeout_sec", None)).run()
 
 
 def start_request(args, home: Path) -> dict:
@@ -1362,7 +1385,13 @@ def ensure_daemon(home: Path) -> bool:
     home.mkdir(parents=True, exist_ok=True)
     with open(home / "daemon.log", "a", encoding="utf-8") as log_f:
         subprocess.Popen(
-            [sys.executable, str(Path(__file__).resolve()), "daemon"],
+            [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "daemon",
+                "--idle-timeout-sec",
+                MANAGED_DAEMON_IDLE_TIMEOUT_SEC,
+            ],
             stdout=log_f, stderr=log_f, stdin=subprocess.DEVNULL,
             start_new_session=True,
             env=managed_daemon_env(home),
@@ -1440,7 +1469,7 @@ def cmd_shutdown(args, home: Path) -> int:
 
 def cmd_ping(args, home: Path) -> int:
     resp = expect_ok(send_request(home, {"cmd": "ping"}, timeout=10))
-    print(f"pong (daemon pid {resp.get('pid')})")
+    print(f"pong (daemon pid {resp.get('pid')}, idle_timeout_sec={resp.get('idle_timeout_sec')})")
     return 0
 
 
@@ -1452,7 +1481,13 @@ def launchd_payload(home: Path) -> dict:
     home.mkdir(parents=True, exist_ok=True)
     return {
         "Label": LAUNCHD_LABEL,
-        "ProgramArguments": [sys.executable, str(Path(__file__).resolve()), "daemon"],
+        "ProgramArguments": [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "daemon",
+            "--idle-timeout-sec",
+            MANAGED_DAEMON_IDLE_TIMEOUT_SEC,
+        ],
         "RunAtLoad": True,
         # KeepAlive stays off; managed daemon launches disable idle shutdown so live
         # steer/follow/interrupt channels remain attached until explicit shutdown.
@@ -1516,7 +1551,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="meight", description="claude-codex-meight: parallel Codex worker harness")
     sub = p.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("daemon", help="foreground daemon").set_defaults(fn=cmd_daemon)
+    dp = sub.add_parser("daemon", help="foreground daemon")
+    dp.add_argument("--idle-timeout-sec", type=float,
+                    help="override idle shutdown seconds; 0 disables")
+    dp.set_defaults(fn=cmd_daemon)
     sub.add_parser("ping", help="daemon health check").set_defaults(fn=cmd_ping)
 
     sp = sub.add_parser("launchd", help="manage optional macOS LaunchAgent for the global daemon")
