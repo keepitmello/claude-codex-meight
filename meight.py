@@ -35,6 +35,7 @@ EVENT_LINE_MAX = 300
 DEFAULT_IDLE_TIMEOUT_SEC = 30 * 60
 DEFAULT_WORKER_GC_TTL_SEC = 60 * 60
 LAUNCHD_LABEL = "com.keepitmello.meight"
+MANAGED_DAEMON_IDLE_TIMEOUT_SEC = "0"
 
 # Bidirectional workers: automatically prepend this before start/follow briefs (disable with --no-preamble)
 PREAMBLE = """[Harness protocol — applies on top of the task below]
@@ -77,6 +78,14 @@ def _env_float(name: str, default: float) -> float:
         return max(0.0, float(raw))
     except ValueError:
         return default
+
+
+def managed_daemon_env(home: Path) -> dict[str, str]:
+    """Environment for CLI/launchd-managed daemons that must keep live channels open."""
+    env = dict(os.environ)
+    env["MEIGHT_HOME"] = str(home)
+    env["MEIGHT_IDLE_TIMEOUT_SEC"] = MANAGED_DAEMON_IDLE_TIMEOUT_SEC
+    return env
 
 
 def state_home() -> Path:
@@ -1356,7 +1365,7 @@ def ensure_daemon(home: Path) -> bool:
             [sys.executable, str(Path(__file__).resolve()), "daemon"],
             stdout=log_f, stderr=log_f, stdin=subprocess.DEVNULL,
             start_new_session=True,
-            env={**os.environ, "MEIGHT_HOME": str(home)},
+            env=managed_daemon_env(home),
         )
     deadline = time.monotonic() + 6
     while time.monotonic() < deadline:
@@ -1445,12 +1454,13 @@ def launchd_payload(home: Path) -> dict:
         "Label": LAUNCHD_LABEL,
         "ProgramArguments": [sys.executable, str(Path(__file__).resolve()), "daemon"],
         "RunAtLoad": True,
-        # Do not KeepAlive: the daemon has its own idle timeout, and CLI auto-start
-        # remains the on-demand recovery path.
+        # KeepAlive stays off; managed daemon launches disable idle shutdown so live
+        # steer/follow/interrupt channels remain attached until explicit shutdown.
         "KeepAlive": False,
         "EnvironmentVariables": {
             **({"PATH": os.environ["PATH"]} if os.environ.get("PATH") else {}),
             "MEIGHT_HOME": str(home),
+            "MEIGHT_IDLE_TIMEOUT_SEC": MANAGED_DAEMON_IDLE_TIMEOUT_SEC,
         },
         "StandardOutPath": str(home / "launchd.out.log"),
         "StandardErrorPath": str(home / "launchd.err.log"),

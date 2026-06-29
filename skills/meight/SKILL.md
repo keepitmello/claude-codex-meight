@@ -216,7 +216,7 @@ Combine evidence types before claiming UI / E2E / integration behavior is correc
 
 - Worker artifacts: `<daemon-home>/repos/<repo-key>/workers/<name>/{brief.md,status.json,events.log,result.md}`
 - Low-level commands: daemon / start / wait / result / list / shutdown [--force] / launchd
-- Lifecycle: `MEIGHT_IDLE_TIMEOUT_SEC` (default 1800s) stops idle daemons; `MEIGHT_WORKER_GC_TTL_SEC` (default 3600s) removes terminal workers from daemon memory while keeping disk artifacts; set either to `0` to disable
+- Lifecycle: foreground `MEIGHT_IDLE_TIMEOUT_SEC` default is 1800s, but managed `dispatch`/LaunchAgent starts set it to `0` so live steer/follow/interrupt channels stay attached; `MEIGHT_WORKER_GC_TTL_SEC` (default 3600s) removes terminal workers from daemon memory while keeping disk artifacts
 - High-stakes or irreversible work: never accept a worker's "done" on its word — require runtime evidence plus your own sign-off, always
 - **Restart the daemon after editing meight.py** (a live daemon keeps running old code)
 - Beta SDK (`openai-codex==0.1.0b3`, pinned): re-run the SPEC.md verification suite when upgrading

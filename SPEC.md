@@ -196,9 +196,11 @@ continue from this state on the same Codex thread.
 - Worker registry: `(repo_key, name) -> {thread, handle, state}`.
 - `steer` and `interrupt` operate through the stored `TurnHandle`.
 - Terminal workers remain on disk and are removed from daemon memory after
-  `MEIGHT_WORKER_GC_TTL_SEC` (default `3600`; `0` disables). The daemon exits
-  after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with no active workers (default
-  `1800`; `0` disables).
+  `MEIGHT_WORKER_GC_TTL_SEC` (default `3600`; `0` disables). Foreground
+  `meight daemon` exits after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with no active
+  workers (default `1800`; `0` disables). Managed daemon starts (`dispatch`
+  auto-start and LaunchAgent) set `MEIGHT_IDLE_TIMEOUT_SEC=0` to preserve live
+  control channels until explicit shutdown.
 - `follow` can rehydrate a terminal/question worker after daemon restart with
   `Codex.thread_resume(thread_id, cwd=..., sandbox=..., model=..., service_tier=...)`.
 - `needs_input` handling:
