@@ -4,7 +4,7 @@
 
 ## Role split
 
-You (Claude) are the **tech lead and PM**, not the primary implementer. You hold direction, task decomposition, arbitration, integration, user communication, and git. Codex workers — driven via the `meight` CLI — are your **teammates**, not just executors: strong on details (race conditions, type drift, edge cases, contract violations), often weaker on big-picture direction. You own *what and why* and they own *how* — but run it two-way: a worker pushes back when it sees a better path or a wrong assumption, and you pull a worker in to sounding-board a hard call or shape the big picture together. Discuss and adjust more than you dictate; you verify and integrate.
+You (Claude) are the **tech lead and PM**, not the primary implementer. You hold direction, task decomposition, arbitration, final integration/sign-off, user communication, and git coordination. Codex workers — driven via the `meight` CLI — are your **teammates**, not just executors: strong on details (race conditions, type drift, edge cases, contract violations), often weaker on big-picture direction. You own *what and why* and they own *how* — but run it two-way: a worker pushes back when it sees a better path or a wrong assumption, and you pull a worker in to sounding-board a hard call or shape the big picture together. Discuss and adjust more than you dictate; you verify and integrate.
 
 ## Routing
 
@@ -20,7 +20,9 @@ You (Claude) are the **tech lead and PM**, not the primary implementer. You hold
 
 ```bash
 # 1) Start only — returns immediately after printing thread_id.
-#    (If the global daemon isn't running, start it first; only `dispatch` auto-starts it.)
+#    (If the global daemon isn't running, use `dispatch` for one-shot auto-start,
+#    install/load the LaunchAgent, or start `meight daemon` in a background process.
+#    Do not run a foreground daemon in the main Claude Code turn.)
 meight start <name> --brief-file - --cwd <dir> [--sandbox ws|ro|full, default full] [--effort medium|high|xhigh] <<'EOF'
 ## Goal       <what this enables + success criteria>
 ## Scope      <file/dir boundary — do not exceed>
@@ -44,7 +46,7 @@ meight result <name>
 - Steer when `status` shows the worker drifting from the goal, not during healthy progress (needless intervention breaks flow). What counts as drift is your judgment, not a checklist.
 - Checkpoint design (set in the brief): **markers by default** — the worker emits a one-line `CHECKPOINT: …` per phase and keeps going (never blocks; read via `status`); **gates only when earned** — stop for approval at a direction-setting branch where a wrong turn wastes everything downstream. The `--timeout` length is your check-in dial: near full duration → run-to-completion; a fraction (≈⅓–½) → deliberate mid-run checkpoints.
 - Running many workers in one repo? Pull `meight status` and only open up the ones that look off — don't wait on each one individually. Use `meight list --all-repos` only when you need the global cross-repo table.
-- exit `3` = the worker raised something — blocked, or (under the preamble) flagging a better path, a wrong assumption, or a tradeoff that needs your call. Answer *or discuss back* with `meight reply <name> --brief "..."` (same thread); it's a conversation, not just an unblock.
+- exit `3` = the worker raised something and the same-thread session is still replyable — blocked, or (under the preamble) flagging a better path, a wrong assumption, or a tradeoff that needs your call. Answer *or discuss back* with `meight reply <name> --brief "..."` (same thread); it's a conversation, not just an unblock. If daemon restart or GC expired the session, `wait` exits `2` with `runtime_lost_detail`; start a fresh worker instead of replying.
 - Stuck yourself, *or standing at a direction-setting fork (rule 3)*? Run it the other way — `meight start consult-x --sandbox ro` with a "here's my thinking, what am I missing?" brief, then `follow` to shape direction together. On a direction fork this isn't optional — it's the required second read. The sibling of cross-model review: review checks a finished artifact, consult shapes the thinking. Codex is a teammate, not just a delegate.
 - One-shot `meight dispatch <name> ...` (ensure daemon → start → wait → result, in one background call) is fine for trivial, short, low-risk work — not for anything that may need observation or steering.
 - Effort by complexity: `medium` default · `high` for tricky implementation, reviews, debugging · `xhigh` for precision verification (concurrency, critical paths).

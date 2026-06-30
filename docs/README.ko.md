@@ -50,7 +50,7 @@ OpenAI의 공식 **`openai-codex` Python SDK**(2026년 5월 릴리스)가 이 �
 | 진행 관찰 | stdout 스크래핑 / 컨텍스트로 스트리밍 | ✗ | **디스크 다이제스트, 필요할 때 pull (~토큰 0)** |
 | 양방향 대화 | ✗ (추측하거나 멈춤) | ✗ | **워커가 `QUESTION:` 제기(막힘 *또는* 더 나은 아이디어) → exit 3 → `meight reply`; 오케스트레이터는 `consult`로 되물음** |
 | 결과 전달 | 스크래핑 | 툴 반환값 | **exit code 계약 + stdout 결과 출력** |
-| 세션 연속성 | 취약 | threadId | **같은 스레드 `follow`/`reply` 턴** |
+| 세션 연속성 | 취약 | threadId | **같은 데몬 안의 `follow`/`reply` 턴** |
 
 ## 빠른 시작
 
@@ -70,7 +70,7 @@ src/foo.py에 X를 구현해. 기존 패턴: src/bar.py:42 참고.
 EOF
 
 meight wait impl-1 --timeout 300
-# exit 0=완료 · 2=실패/중단 · 3=워커 질문 · 4=데몬 사망 · 1=체크포인트 타임아웃
+# exit 0=완료 · 2=실패/중단/runtime lost · 3=답장 가능한 워커 질문 · 4=데몬 사망 · 1=체크포인트 타임아웃
 ```
 
 exit `1`이면 워커는 계속 실행 중입니다. 한 번만 상태를 보고, 다시 기다리거나 조향합니다:
@@ -87,7 +87,7 @@ exit `0`, `2`, `3`에서는 `wait`가 상태 요약만 출력합니다. 전체 �
 meight result impl-1
 ```
 
-워커가 질문했다면(exit 3) 질문은 `meight status impl-1`의 `needs_input_detail`에서도 볼 수 있습니다. 같은 스레드에서 원샷으로 답합니다:
+워커가 답장 가능한 질문을 했다면(exit 3) 질문은 `meight status impl-1`의 `needs_input_detail`에서도 볼 수 있습니다. 같은 스레드에서 원샷으로 답합니다:
 
 ```bash
 meight reply impl-1 --brief "config-a.json 쓰고, legacy 필드는 유지해."
@@ -121,9 +121,9 @@ Bash(command: "meight wait review-1 --timeout 300",
 → 정상이면 다시 wait · 틀어졌으면 meight steer review-1 "..."
 ```
 
-워커가 terminal 상태에 도달하면 알림은 `0`(완료), `2`(실패/중단), `3`(워커 질문)으로 옵니다. 전체 보고는 `meight result review-1`로 읽습니다. `0`이면 검증 후 받아들이고, `3`이면 `meight reply`로 답합니다.
+워커가 terminal 상태에 도달하면 알림은 `0`(완료), `2`(실패/중단/runtime lost), `3`(아직 데몬에 붙어 있어서 답장 가능한 워커 질문)으로 옵니다. 전체 보고는 `meight result review-1`로 읽습니다. `0`이면 검증 후 받아들이고, `3`이면 `meight reply`로 답합니다. 데몬 재시작이나 GC 때문에 같은 스레드가 만료된 경우에는 `wait`가 `runtime_lost_detail`과 함께 `2`를 내므로, 답장하지 말고 새 워커를 시작합니다.
 
-모든 브리프 앞에는 하네스 프리앰블이 자동으로 붙습니다: (a) `git commit`/`push` 금지 — git은 오케스트레이터 소유 — (b) 워커를 teammate로 규정 — 추측하거나 묵묵히 따르는 대신, 막혔을 때는 물론 더 나은 접근·틀린 가정·방향을 바꿀 결정이 보이면 `QUESTION:` 문단으로 짚을 것. `--no-preamble`로 끌 수 있습니다.
+모든 브리프 앞에는 하네스 프리앰블이 자동으로 붙습니다: (a) 워커도 완료·검증한 작업은 `git commit`/`push`할 수 있지만, 통합과 최종 승인 책임은 오케스트레이터가 가짐 — (b) 워커를 teammate로 규정 — 추측하거나 묵묵히 따르는 대신, 막혔을 때는 물론 더 나은 접근·틀린 가정·방향을 바꿀 결정이 보이면 `QUESTION:` 문단으로 짚을 것. `--no-preamble`로 끌 수 있습니다.
 
 바로 쓸 수 있는 오케스트레이터 프롬프트(역할 분담, 라우팅 테이블, 디스패치 프로토콜, 교차 리뷰 규칙)가 [`CLAUDE.md`](../CLAUDE.md)로 동봉됩니다 — 프로젝트나 글로벌 Claude Code 메모리에 복사해서 쓰면 됩니다. 자기완결형 Claude Code **스킬**도 [`skills/meight/`](../skills/meight/SKILL.md)에 들어 있습니다 — `~/.claude/skills/`에 복사하면 트리거 기반 JIT 로딩이 됩니다.
 
@@ -136,7 +136,7 @@ Bash(command: "meight wait review-1 --timeout 300",
 - **세션 ID가 아니라 이름.** 워커는 `review-1`처럼 이름으로 부르고, 후속 지시도 마찬가지입니다. 틀릴 UUID 장부가 없습니다.
 - **결과는 디스크에 남습니다.** `result.md`는 언제든 다시 읽을 수 있어서, 세션 도중 에이전트의 컨텍스트가 압축돼도 잃는 것이 없습니다.
 - **status는 이미 요약본입니다.** raw 로그 대신 판단에 필요한 것만 돌려줍니다: 지금 뭘 하는 중인지, 어떤 파일이 바뀌었는지, 마지막 생각이 뭐였는지. 기다릴지, 조향할지, 끊을지 고르는 데 딱 그만큼.
-- **규칙은 깜빡할 수 없습니다.** 커밋 금지와 QUESTION 프로토콜은 에이전트가 기억하는 게 아니라 하네스가 모든 브리프에 자동 주입합니다.
+- **규칙은 깜빡할 수 없습니다.** 워커 git 정책과 QUESTION 프로토콜은 에이전트가 기억하는 게 아니라 하네스가 모든 브리프에 자동 주입합니다.
 - **브리프는 stdin으로 받습니다.** 긴 멀티라인 브리프가 쉘 쿼팅 함정을 아예 우회합니다.
 
 ## 커맨드 레퍼런스
@@ -144,18 +144,18 @@ Bash(command: "meight wait review-1 --timeout 300",
 | 커맨드 | 동작 |
 |---|---|
 | `meight start <name> [opts]` | 워커를 시작하고 thread id를 출력한 뒤 바로 반환. 감독형 워크플로우 시작점 |
-| `meight wait <name> --timeout SEC` | 체크포인트 대기: terminal 상태, QUESTION, 데몬 사망, 타임아웃 중 하나에서 반환. 타임아웃은 워커를 계속 살려둠 |
+| `meight wait <name> --timeout SEC` | 체크포인트 대기: terminal 상태, 답장 가능한 QUESTION, 데몬 사망, 타임아웃 중 하나에서 반환. 타임아웃은 워커를 계속 살려둠 |
 | `meight dispatch <name> [opts]` | 원샷: 데몬 자동기동 → 워커 시작 → 대기 → 결과 출력. 짧고 단순하고 위험 낮은 작업용 |
-| `meight reply <name> --brief ...` | 워커 질문에 원샷 답변: follow + 대기 + 마지막 턴 결과 출력 |
+| `meight reply <name> --brief ...` | 답장 가능한 워커 질문에 원샷 답변: follow + 대기 + 마지막 턴 결과 출력 |
 | `meight status [name]` | 다이제스트 pull (테이블/상세). 디스크 직접 읽기 — 데몬 없이도 동작 |
 | `meight steer <name> "text"` | 실행 중 턴에 지시 주입 (작업 손실 없음) |
 | `meight interrupt <name>` | 실행 중 턴 취소 (idempotent) |
-| `meight follow <name> --brief ...` | 저수준: 같은 스레드에 새 턴 (컨텍스트 유지) |
+| `meight follow <name> --brief ...` | 저수준: 워커가 아직 데몬에 붙어 있을 때 같은 스레드에 새 턴 |
 | `meight result / list / daemon / ping / shutdown / launchd` | 저수준 보조 커맨드 |
 
 옵션: `--cwd`(워커 작업 디렉토리 — 파일 범위가 겹치면 git worktree로 분리), `--sandbox ws|ro|full`(기본 `full`=샌드박스 없음, 리뷰는 `ro`), `--effort low|medium|high|xhigh`(기본 `medium`, 복잡도에 따라 상향), `--model`, `--fast`/`--no-fast`(기본은 non-Fast이고, `--fast`를 넣은 워커만 codex Fast/priority tier 사용), `--timeout`. 워커는 기본적으로 hidden ephemeral Codex subagent thread로 시작해서 Codex Desktop의 메인 사용자 스레드 목록에 뜨지 않게 합니다. 보이는/main thread가 꼭 필요한 도구에서만 `--main-thread`를 쓰세요.
 
-워커 상태는 `<daemon-home>/repos/<repo-key>/workers/<name>/`에 기록됩니다: `brief.md`, `status.json`(상태머신+토큰+변경 파일+현재 활동), `events.log`(의미 있는 이벤트당 1줄), `result.md`(턴별 최종 메시지). 전체 레포 상태는 `meight list --all-repos`로 볼 수 있습니다. 완료된 워커는 기본적으로 `MEIGHT_WORKER_GC_TTL_SEC` 동안만 데몬 메모리에 남습니다. Foreground `meight daemon`은 기본적으로 활성 워커가 없으면 `MEIGHT_IDLE_TIMEOUT_SEC` 뒤 종료되며, `daemon --idle-timeout-sec 0`으로 명시 비활성화할 수 있습니다. 관리형 기동(`dispatch` auto-start와 LaunchAgent)은 env와 daemon 인자 둘 다로 idle 비활성을 전달하고, 오래 로드된 LaunchAgent job이 env를 빠뜨린 경우에도 `XPC_SERVICE_NAME`으로 관리형을 판별합니다. 실제 적용값은 `meight ping`의 `idle_timeout_sec`로 확인하세요.
+워커 상태는 `<daemon-home>/repos/<repo-key>/workers/<name>/`에 기록됩니다: `brief.md`, `status.json`(상태머신+토큰+변경 파일+현재 활동), `events.log`(의미 있는 이벤트당 1줄), `result.md`(턴별 최종 메시지). 전체 레포 상태는 `meight list --all-repos`로 볼 수 있습니다. 완료된 워커는 기본적으로 `MEIGHT_WORKER_GC_TTL_SEC` 동안 데몬 메모리에 남고, 그 동안만 같은 스레드 follow가 가능합니다. 데몬 재시작 또는 terminal-worker GC 뒤에는 디스크 산출물은 남지만 같은 스레드 follow는 만료되므로 새 워커를 시작해야 합니다. Foreground `meight daemon`은 기본적으로 활성 워커가 없으면 `MEIGHT_IDLE_TIMEOUT_SEC` 뒤 종료되며, `daemon --idle-timeout-sec 0`으로 명시 비활성화할 수 있습니다. 관리형 기동(`dispatch` auto-start와 LaunchAgent)은 env와 daemon 인자 둘 다로 idle 비활성을 전달하고, 오래 로드된 LaunchAgent job이 env를 빠뜨린 경우에도 `XPC_SERVICE_NAME`으로 관리형을 판별합니다. 실제 적용값은 `meight ping`의 `idle_timeout_sec`로 확인하세요.
 
 ## 알아두면 좋은 것
 

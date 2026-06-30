@@ -45,7 +45,7 @@ h.steer("text")
 h.interrupt()
 h.stream()                            # -> Iterator[Notification]
 h.run()
-codex.thread_resume(thread_id)        # exists; introspect signature in code if needed
+codex.thread_resume(thread_id)        # exists, but hidden ephemeral workers are not treated as resumable
 ```
 
 - `Notification` objects expose `.method` as a string and `.payload` as a
@@ -107,6 +107,7 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   "updated_at": "ISO8601 KST",
   "repo_root": "/abs/path/to/repo",
   "repo_key": "repo-0123456789abcdef",
+  "daemon_pid": 12345,
   "cwd": "...",
   "sandbox": "workspace-write",
   "model": null,
@@ -120,6 +121,7 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   "last_message_tail": "last 500 chars of the agent message",
   "needs_input_detail": null,
   "needs_input_source": null,
+  "runtime_lost_detail": null,
   "turns": 1
 }
 ```
@@ -128,7 +130,8 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
 - Update status at event granularity, but throttle high-volume delta updates to
   once every two seconds.
 - `needs_input_source` is the public source of truth for `needs_input`:
-  `"question"` means a final `QUESTION:` blocker and makes `wait` exit `3`;
+  `"question"` means a final `QUESTION:` blocker; `wait` exits `3` only when
+  the worker is still attached to the live daemon and can accept `reply`;
   `"tool"` means an SDK tool or approval wait and is treated as active until
   stream-end cleanup.
 - `events.log` line format:
@@ -147,24 +150,25 @@ The command table must match the `python3 meight.py --help` subcommand list exac
 | `launchd install [--load]` / `launchd status` / `launchd uninstall` | Manage an optional macOS LaunchAgent for the global daemon. The plist uses `RunAtLoad` and `KeepAlive=false`; CLI auto-start remains the on-demand path. |
 | `start <name> (--brief-file F\|- \| --brief TEXT) [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new hidden worker thread with `thread_start(ephemeral=True, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. Defaults: `sandbox=full`, `effort=medium`, `cwd=current directory`, `thread_source=subagent`, `thread_ephemeral=true`, `service_tier=default` so workers run non-Fast unless `--fast` is passed. `--main-thread` intentionally uses `thread_start(ephemeral=False, thread_source=ThreadSource.user)` for tools that require a visible/main thread. `--fast` maps the SDK turn's `service_tier` to `priority`; omitted or `--no-fast` maps it to `default`. Reject duplicate active worker names inside the same repo namespace. `--brief-file -` reads the brief from stdin. |
 | `dispatch <name> (--brief-file F\|- \| --brief TEXT) [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, `start`, `wait`, then print `result.md`. Default timeout is `1800` seconds. Exit code matches `wait`. `--shutdown-when-idle` asks the global daemon to stop after a terminal result if no workers are active. |
-| `follow <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble]` | Start a new turn on the same thread for a terminal worker or a worker waiting on a final `QUESTION:`. If the daemon restarted, resume the thread from the repo-scoped `status.json` via `thread_resume`. Reset status, increment `turns`, and append to `result.md` and `events.log` with a separator. |
+| `follow <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble]` | Start a new turn on the same thread for a terminal worker or a worker waiting on a final `QUESTION:` only while that worker remains attached to the current daemon. Hidden ephemeral workers are not resumed from disk after daemon restart or terminal-worker GC; in that case `follow` fails clearly and the orchestrator must start a new worker. Reset status, increment `turns`, and append to `result.md` and `events.log` with a separator. |
 | `reply <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot answer path for `QUESTION:` blockers: `follow`, `wait`, then print only the latest turn result. Default timeout is `1800` seconds. |
 | `steer <name> TEXT` | Inject mid-turn text into a running turn. Return an error unless the worker is currently running. |
 | `interrupt <name>` | Interrupt the active turn. |
 | `status [name] [--json] [--all-repos]` | Does not require the daemon. Read repo-scoped `status.json` directly. With no name, print a one-line table for workers in the invoking repo; `--all-repos` reads every repo namespace. With a name, print details. `--json` prints JSON. |
 | `list [--json] [--all-repos]` | Alias for `status` with no worker name. |
 | `result <name>` | Print `result.md`. |
-| `wait <name> [--timeout SEC]` | Poll `status.json` once per second. Terminal states return `completed=0`, `failed=2`, `interrupted=2`. Final `QUESTION:` returns `3`. Daemon death returns `4`. Timeout returns `1`. Print one final status summary line to stdout. |
-| `shutdown [--force]` | Refuse shutdown while active workers exist. With `--force`, interrupt all active workers and then shut down. |
+| `wait <name> [--timeout SEC]` | Poll `status.json` once per second. Terminal states return `completed=0`, `failed=2`, `interrupted=2`. Final `QUESTION:` returns `3` only while the worker is still attached to the live daemon and can accept `reply`. Daemon death returns `4`. Timeout returns `1`. Print one final status summary line to stdout. |
+| `shutdown [--force]` | Refuse shutdown while active workers exist. With `--force`, interrupt live turns, mark final `QUESTION:` waits interrupted, and then shut down. |
 
 ## Harness Preamble and QUESTION Protocol
 
 By default, `start`, `dispatch`, `follow`, and `reply` prepend the harness
 protocol preamble to the brief. `--no-preamble` disables this.
 
-The preamble requires workers to leave changes in the working tree and to avoid
-`git commit` or `git push`. It also frames the worker as a teammate: rather than
-guessing or silently complying, a worker ends its final response with a paragraph
+The preamble allows workers to `git commit` and `git push` their completed,
+verified work while the orchestrator still owns integration and final sign-off.
+It also frames the worker as a teammate: rather than guessing or silently complying,
+a worker ends its final response with a paragraph
 starting with `QUESTION:` — either when blocked on information only the
 orchestrator can provide, or to raise a better approach, a wrong assumption, or a
 decision that could shift direction.
@@ -180,8 +184,9 @@ promotes the worker to:
 }
 ```
 
-`wait` returns exit `3` for this state. `follow` and `reply` are allowed to
-continue from this state on the same Codex thread.
+`wait` returns exit `3` for this state only while the worker is still attached
+to the live daemon. `follow` and `reply` are allowed to continue from this state
+on the same Codex thread before daemon restart or terminal-worker GC.
 
 ## Daemon Internals
 
@@ -192,20 +197,31 @@ continue from this state on the same Codex thread.
   Example: `{"cmd":"start",...}` -> `{"ok":true}` or
   `{"ok":false,"error":"..."}`.
 - Socket-dispatched commands: `start`, `follow`, `steer`, `interrupt`,
-  `shutdown`, `ping`.
+  `shutdown`, `ping`, `runtime_status`.
 - Worker registry: `(repo_key, name) -> {thread, handle, state}`.
 - `steer` and `interrupt` operate through the stored `TurnHandle`.
-- Terminal workers remain on disk and are removed from daemon memory after
+- Completed workers and final `QUESTION:` workers keep their disk state but
+  detach the live SDK `TurnHandle` after the stream ends; same-daemon
+  `follow`/`reply` keeps using the stored `Thread`. Disk `thread_id` is an
+  audit pointer, not a same-thread recovery mechanism for hidden ephemeral
+  workers.
+  Terminal workers are removed from daemon memory after
   `MEIGHT_WORKER_GC_TTL_SEC` (default `3600`; `0` disables). Foreground
   `meight daemon` exits after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with no active
-  workers (default `1800`; `0` disables), unless `--idle-timeout-sec` overrides
-  it. Managed daemon starts (`dispatch` auto-start and LaunchAgent) set both
+  workers (default `1800`; `0` disables), unless `--idle-timeout-sec`
+  overrides it. Managed daemon starts (`dispatch` auto-start and LaunchAgent)
+  set both
   `MEIGHT_IDLE_TIMEOUT_SEC=0` and `daemon --idle-timeout-sec 0`; LaunchAgent
   jobs also infer managed mode from `XPC_SERVICE_NAME=com.keepitmello.meight`
   if an older loaded job is missing the env override. `meight ping` exposes the
   runtime `idle_timeout_sec` for process-level verification.
-- `follow` can rehydrate a terminal/question worker after daemon restart with
-  `Codex.thread_resume(thread_id, cwd=..., sandbox=..., model=..., service_tier=...)`.
+- `follow` does not rehydrate hidden ephemeral workers after daemon restart or
+  terminal-worker GC. Same-daemon follow before GC is the supported path for
+  final `QUESTION:` replies and low-level follow-up turns.
+- `wait` checks daemon `runtime_status` for active disk states, including final
+  `QUESTION:` waits. If a new daemon is alive but does not know that worker,
+  `wait` marks the worker failed with `runtime_lost_detail` instead of polling
+  forever or returning a misleading exit `3`.
 - `needs_input` handling:
   - `tool/requestUserInput` or `item/*/requestApproval` records a summarized
     payload in `needs_input_detail` with `needs_input_source="tool"`.
@@ -249,11 +265,18 @@ Run these checks after implementation and attach the evidence.
 5. Multi-repo namespace test: run same-name workers from two git repos with the
    same `MEIGHT_HOME`; confirm one daemon pid and separate repo-scoped
    `status.json` files.
-6. Follow-up test: restart the daemon, send a follow-up instruction to completed
-   `t1`, and confirm the new turn uses the same `thread_id`.
+6. Follow-up test: send a follow-up instruction to completed `t1` before GC
+   and confirm the new turn uses the same `thread_id`.
 7. Lifecycle test: with small `MEIGHT_IDLE_TIMEOUT_SEC` and
    `MEIGHT_WORKER_GC_TTL_SEC`, confirm terminal workers are GC'd from daemon
-   memory while disk result files remain, and the daemon exits when idle.
+   memory while disk result files remain, `follow` after GC fails clearly, and
+   the daemon exits when idle.
+8. Restart/lost-worker test: create a running or final-`QUESTION` worker,
+   restart the daemon, then confirm `wait` marks the active disk state failed
+   with `runtime_lost_detail` instead of polling forever or returning stale
+   `QUESTION`.
+9. Force-shutdown test: create a final-`QUESTION` worker, run
+   `shutdown --force`, and confirm the worker state becomes `interrupted`.
 
 ## Scope-Outs
 

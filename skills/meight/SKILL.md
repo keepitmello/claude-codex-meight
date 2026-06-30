@@ -10,7 +10,7 @@ Harness for driving Codex workers in parallel from a Claude-side dispatcher — 
 Codex worker-facing details live in [`docs/codex-worker-guide.md`](../../docs/codex-worker-guide.md); the harness preamble points workers there before work starts, while this skill remains the dispatcher-facing guide for supervising workers.
 
 **Operating model (self-contained — works without any other prompt file):**
-- **You (Claude) hold the direction**: task decomposition, integration, verification, user communication, and git. **Codex workers are teammates, not just executors**: strong on details (races, type drift, edge cases), often weaker on the big picture. So you own *what and why* and they own *how* — but run it two-way: pull a worker in to sounding-board a hard call or sketch the big picture together, and expect workers to push back when they spot a better path. Discuss and adjust more than you dictate. **And holding the direction is not deciding it alone**: when the work hits a fork that *sets* direction, you cross-read it with a Codex worker before committing (see "Direction is set by two reads, never one" below). "Teammates, not executors" means the hard calls are made together, not just the easy implementation handed off.
+- **You (Claude) hold the direction**: task decomposition, final integration/sign-off, verification, user communication, and git coordination. **Codex workers are teammates, not just executors**: strong on details (races, type drift, edge cases), often weaker on the big picture. So you own *what and why* and they own *how* — but run it two-way: pull a worker in to sounding-board a hard call or sketch the big picture together, and expect workers to push back when they spot a better path. Discuss and adjust more than you dictate. **And holding the direction is not deciding it alone**: when the work hits a fork that *sets* direction, you cross-read it with a Codex worker before committing (see "Direction is set by two reads, never one" below). "Teammates, not executors" means the hard calls are made together, not just the easy implementation handed off.
 - **Routing**: bounded implementation with a clear spec / code review / browser, visual, desktop, and runtime QA work → Codex workers. Exploration fan-out / fresh-context verification / harness-tool work → Claude subagents.
 - **Independent review before accepting is mandatory — default to a Codex review worker**: every worker output gets an independent read, and the one non-negotiable is that the implementer never reviews its own work. There's no evidence cross-model reviews *better* than a fresh same-model read — independent context is what does the work — so:
   - **Default (single review) — fresh Codex review worker**: a *separate* worker from the implementer, adversarial `--sandbox ro`. This is the standard independent review for most work, including verifying Codex implementations. Cheaper and faster than spinning up a Claude agent.
@@ -26,7 +26,9 @@ For anything beyond trivial, short, low-risk work, drive the worker with `start`
 
 ```bash
 # 1) Start only. This returns immediately after printing thread_id.
-# If the daemon is not running, start the global daemon separately first.
+# If the daemon is not running, use `meight dispatch` for a one-shot auto-start,
+# install/load the LaunchAgent, or start `meight daemon` in a background process.
+# Do not run a foreground daemon in the main Claude Code turn.
 meight start <name> --brief-file - --cwd <dir> \
   [--sandbox ws|ro|full, default full] [--effort low|medium|high|xhigh, default medium] <<'EOF'
 <brief>
@@ -38,7 +40,8 @@ EOF
 #    heartbeat every 300s (--progress N to retune, 0 to disable) into the .output, so you read mid-run
 #    progress without re-waiting. Foreground works but blocks your turn = waste.
 meight wait <name> --timeout 300
-# exit: 0=completed, 2=failed/interrupted, 3=needs_input (worker question),
+# exit: 0=completed, 2=failed/interrupted/runtime-lost,
+#       3=needs_input (worker question still attached and replyable),
 #       4=daemon dead, 1=checkpoint timeout while worker continues
 
 # 3) On exit 1, inspect once and decide.
@@ -65,7 +68,7 @@ Set in the brief how the worker reports mid-run:
 
 Steer when `status` shows the worker drifting from the goal — and not during healthy progress, since needless intervention breaks its flow. What counts as drift is your judgment, not a checklist.
 
-When the worker reaches a terminal state, `wait` returns immediately with `0` (completed), `2` (failed/interrupted), or `3` (QUESTION). `wait` prints a status summary; use `meight result <name>` for the full report or question. On exit `0`, get an independent review before accepting the work — a fresh Codex review worker by default, or both that and a cross-model Claude agent for critical/architecture work (see the review rule above). On exit `3`, answer with `reply`.
+When the worker reaches a terminal state, `wait` returns immediately with `0` (completed), `2` (failed/interrupted/runtime-lost), or `3` (QUESTION that is still attached and replyable). `wait` prints a status summary; use `meight result <name>` for the full report or question. On exit `0`, get an independent review before accepting the work — a fresh Codex review worker by default, or both that and a cross-model Claude agent for critical/architecture work (see the review rule above). On exit `3`, answer with `reply`. If daemon restart or GC expired the same-thread session, `wait` returns `2` with `runtime_lost_detail`; start a fresh worker.
 
 ## One-shot dispatch only for trivial safe work
 
@@ -75,7 +78,7 @@ meight dispatch <name> --brief-file - --cwd <dir> \
   [--sandbox ws|ro|full, default full] [--effort low|medium|high|xhigh, default medium] [--timeout 1800] <<'EOF'
 <brief>
 EOF
-# exit: 0=completed, 2=failed/interrupted, 3=needs_input (worker question), 4=daemon dead, 1=timeout
+# exit: 0=completed, 2=failed/interrupted/runtime-lost, 3=replyable worker question, 4=daemon dead, 1=timeout
 ```
 
 - `dispatch` still exists and is useful for small, bounded work: it auto-starts the daemon, starts the worker, waits, and prints the result in one call
@@ -111,7 +114,7 @@ A worker's `QUESTION:` isn't only "I'm blocked" — under the teammate preamble 
 meight reply <name> --brief "answer" [--timeout 1800]
 ```
 
-For low-level control use follow (starts the turn only) + wait + result. At most ~2 follow/reply turns per thread, then reset with a fresh brief. Terminal/question workers can be followed after a daemon restart because meight rehydrates the thread from repo-scoped `status.json`.
+For low-level control use follow (starts the turn only) + wait + result. At most ~2 follow/reply turns per thread, then reset with a fresh brief. Same-thread follow requires the worker to still be attached to the current daemon; after daemon restart or terminal-worker GC, disk artifacts remain but follow is expired, so start a new worker.
 
 ## Status / steer / interrupt
 
@@ -217,7 +220,7 @@ Combine evidence types before claiming UI / E2E / integration behavior is correc
 
 - Worker artifacts: `<daemon-home>/repos/<repo-key>/workers/<name>/{brief.md,status.json,events.log,result.md}`
 - Low-level commands: daemon / start / wait / result / list / shutdown [--force] / launchd
-- Lifecycle: foreground `MEIGHT_IDLE_TIMEOUT_SEC` default is 1800s, but `daemon --idle-timeout-sec 0` disables it. Managed `dispatch`/LaunchAgent starts pass idle disable through both env and daemon args; LaunchAgent jobs also infer managed mode from `XPC_SERVICE_NAME=com.keepitmello.meight` if an older loaded job lacks the env. Trust `meight ping`/startup log for the running value, not just the plist file. `MEIGHT_WORKER_GC_TTL_SEC` (default 3600s) removes terminal workers from daemon memory while keeping disk artifacts
+- Lifecycle: foreground `MEIGHT_IDLE_TIMEOUT_SEC` default is 1800s, but `daemon --idle-timeout-sec 0` disables it. Managed `dispatch`/LaunchAgent starts pass idle disable through both env and daemon args; LaunchAgent jobs also infer managed mode from `XPC_SERVICE_NAME=com.keepitmello.meight` if an older loaded job lacks the env. Trust `meight ping`/startup log for the running value, not just the plist file. `MEIGHT_WORKER_GC_TTL_SEC` (default 3600s) removes terminal workers from daemon memory while keeping disk artifacts; after that, same-thread follow is expired
 - High-stakes or irreversible work: never accept a worker's "done" on its word — require runtime evidence plus your own sign-off, always
 - **Restart the daemon after editing meight.py** (a live daemon keeps running old code)
 - Beta SDK (`openai-codex==0.1.0b3`, pinned): re-run the SPEC.md verification suite when upgrading

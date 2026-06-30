@@ -280,7 +280,8 @@ class Worker:
         self._current_item_label: str | None = None
         self._current_item_since: float | None = None
         # The public status.json field needs_input_source is the SSOT for needs_input:
-        # "question" (final QUESTION; wait exits 3) | "tool" (mid-turn wait; treated as active)
+        # "question" (final QUESTION; wait exits 3 only while daemon-attached) |
+        # "tool" (mid-turn wait; treated as active)
         self.status: dict = {}
 
     # ── status.json ──
@@ -299,6 +300,7 @@ class Worker:
             "updated_at": now_iso(),
             "repo_root": self.repo_root,
             "repo_key": self.repo_key,
+            "daemon_pid": os.getpid(),
             "cwd": self.cwd,
             "sandbox": self.sandbox.replace("_", "-"),
             "model": self.model,
@@ -313,6 +315,7 @@ class Worker:
             "last_message_tail": "",
             "needs_input_detail": None,
             "needs_input_source": None,
+            "runtime_lost_detail": None,
             "turns": turns,
         }
         self.write_status(force=True)
@@ -363,6 +366,7 @@ class Worker:
                     self.write_status(force=True)
             daemon.log(f"worker={self.name} stream exception: {traceback.format_exc(limit=3)}")
         finally:
+            self.detach_runtime_refs_if_idle(daemon, gen, "stream ended")
             daemon.touch_activity()
 
     def on_event(self, note, daemon: "Daemon", gen: int) -> None:
@@ -600,12 +604,14 @@ class Worker:
                 "turn_id": None,
                 "state": "starting",
                 "started_at": now_iso(),
+                "daemon_pid": os.getpid(),
                 "current_item": None,
                 "plan": [],
                 "files_changed": [],
                 "last_message_tail": "",
                 "needs_input_detail": None,
                 "needs_input_source": None,
+                "runtime_lost_detail": None,
                 "turns": turns,
             })
             self.write_status(force=True)
@@ -614,10 +620,46 @@ class Worker:
         with self.lock:
             return self.status.get("state", "unknown")
 
+    def has_live_turn(self) -> bool:
+        """True only while a Codex turn may still need a live TurnHandle."""
+        with self.lock:
+            state = self.status.get("state")
+            source = self.status.get("needs_input_source")
+        return state in ("starting", "running") or (state == "needs_input" and source != "question")
+
+    def detach_runtime_refs_if_idle(self, daemon: "Daemon", gen: int, reason: str,
+                                    keep_thread: bool = True) -> None:
+        """Drop completed stream refs; keep Thread only when same-daemon follow can use it."""
+        with self.ctl_lock:
+            with self.lock:
+                state = self.status.get("state")
+                source = self.status.get("needs_input_source")
+                detachable = state in TERMINAL_STATES or (state == "needs_input" and source == "question")
+                if gen != self.generation or not detachable:
+                    return
+                had_refs = self.handle is not None or (not keep_thread and self.thread is not None)
+                self.handle = None
+                if not keep_thread:
+                    self.thread = None
+            if had_refs:
+                detached = "turn handle" if keep_thread else "runtime refs"
+                daemon.log(f"detached {detached} worker={self.name} repo={self.repo_key} reason={reason}")
+
     def mark_failed(self, reason: str) -> None:
         with self.lock:
             self.status["state"] = "failed"
+            self.status["runtime_lost_detail"] = None
             self.log_event("daemon/error", reason)
+            self.write_status(force=True)
+
+    def mark_interrupted(self, reason: str) -> None:
+        with self.lock:
+            self.interrupt_requested = True
+            self.status["state"] = "interrupted"
+            self.status["needs_input_detail"] = None
+            self.status["needs_input_source"] = None
+            self.status["runtime_lost_detail"] = None
+            self.log_event("interrupt", reason)
             self.write_status(force=True)
 
     def consumer_finished(self, join_timeout: float = 3.0) -> bool:
@@ -727,12 +769,15 @@ class Daemon:
             workers = list(self.workers.values())
         for w in workers:
             with w.ctl_lock:
-                if w.current_state() in ACTIVE_STATES and w.handle is not None:
+                state = w.current_state()
+                if w.has_live_turn() and w.handle is not None:
                     w.interrupt_requested = True
                     try:
                         w.handle.interrupt()
                     except Exception as e:
                         self.log(f"interrupt {w.name} failed: {e!r}")
+                elif state in ACTIVE_STATES:
+                    w.mark_interrupted("daemon shutdown")
         deadline = time.monotonic() + 10
         for w in workers:
             if w.consumer is not None:
@@ -823,6 +868,8 @@ class Daemon:
                 return self.cmd_interrupt(req)
             if cmd == "shutdown":
                 return self.cmd_shutdown(req)
+            if cmd == "runtime_status":
+                return self.cmd_runtime_status(req)
             return {"ok": False, "error": f"unknown cmd: {cmd}"}
         except Exception as e:
             self.log(f"cmd={cmd} error: {traceback.format_exc(limit=5)}")
@@ -841,58 +888,37 @@ class Daemon:
     def _worker_key(self, repo_key: str, name: str) -> str:
         return registry_key(repo_key, name)
 
-    def _resume_worker_locked(self, repo_key: str, repo_root: str, repo_home: Path, name: str):
+    def _load_worker_status(self, repo_home: Path, name: str) -> dict | None:
         sj = repo_home / "workers" / name / "status.json"
         if not sj.is_file():
             return None
         try:
-            st = json.loads(sj.read_text(encoding="utf-8"))
+            return json.loads(sj.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return None
-        thread_id = st.get("thread_id")
-        if not thread_id:
-            return None
 
-        from openai_codex import Sandbox
-
-        sandbox_key = str(st.get("sandbox") or "full-access").replace("-", "_")
-        if sandbox_key not in set(SANDBOX_MAP.values()):
-            sandbox_key = "full_access"
-        cwd = st.get("cwd") or repo_root
-        model = st.get("model")
-        effort = st.get("effort") or "medium"
-        service_tier = st.get("service_tier")
-        thread_source = st.get("thread_source") or "subagent"
-        thread_ephemeral = bool(st.get("thread_ephemeral", thread_source != "user"))
-
-        thread = self.codex.thread_resume(
-            thread_id,
-            cwd=cwd,
-            sandbox=getattr(Sandbox, sandbox_key),
-            model=model,
-            service_tier=service_tier,
-        )
-        w = Worker(
-            name,
-            repo_home,
-            st.get("repo_root") or repo_root,
-            st.get("repo_key") or repo_key,
-            cwd,
-            sandbox_key,
-            model,
-            effort,
-            service_tier,
-            thread_source,
-            thread_ephemeral,
-        )
-        w.status = st
-        w.thread = thread
-        w.generation = int(st.get("turns") or 1)
-        if w.current_state() in TERMINAL_STATES:
-            w.terminal_since = time.monotonic()
-        self.workers[self._worker_key(repo_key, name)] = w
-        self.log(f"resumed worker={name} repo={repo_key} thread={thread_id}")
-        return w
+    def cmd_runtime_status(self, req: dict) -> dict:
+        name = req["name"]
+        repo_key, _, _ = self._repo_from_req(req)
+        with self.reg_lock:
+            w = self.workers.get(self._worker_key(repo_key, name))
+        if w is None:
+            return {"ok": True, "known": False, "pid": os.getpid()}
+        with w.lock:
+            state = w.status.get("state", "unknown")
+            source = w.status.get("needs_input_source")
+            daemon_pid = w.status.get("daemon_pid")
+        return {
+            "ok": True,
+            "known": True,
+            "pid": os.getpid(),
+            "worker_daemon_pid": daemon_pid,
+            "state": state,
+            "needs_input_source": source,
+            "has_live_turn": w.has_live_turn(),
+            "has_thread": w.thread is not None,
+            "has_handle": w.handle is not None,
+        }
 
     def cmd_start(self, req: dict) -> dict:
         from openai_codex import Sandbox
@@ -974,6 +1000,7 @@ class Daemon:
             except Exception as e:
                 # If SDK failure leaves a starting zombie, wait polls until timeout.
                 w.mark_failed(f"start failed: {type(e).__name__}: {e}")
+                w.detach_runtime_refs_if_idle(self, w.generation, "start failed", keep_thread=False)
                 self.workers[wid] = w
                 self.log(f"start worker={name} repo={repo_key} failed: {e!r}")
                 return {"ok": False, "error": f"start failed: {type(e).__name__}: {e}"}
@@ -1005,8 +1032,11 @@ class Daemon:
         with self.reg_lock:
             w = self.workers.get(wid)
             if w is None:
-                w = self._resume_worker_locked(repo_key, repo_root, repo_home, name)
-            if w is None:
+                st = self._load_worker_status(repo_home, name)
+                if st is not None:
+                    return {"ok": False, "error":
+                            f"worker '{name}' is not attached to this daemon; "
+                            "same-thread follow expired after daemon restart or GC — start a new worker"}
                 return {"ok": False, "error": f"unknown worker: {name}"}
             prev_state = w.current_state()
             # needs_input (waiting on QUESTION) can also follow; send the answer as a new turn on the same thread.
@@ -1015,7 +1045,7 @@ class Daemon:
                         f"worker '{name}' is not in a terminal state ({prev_state})"}
             if w.thread is None:
                 return {"ok": False, "error":
-                        f"worker '{name}' has no codex thread (start failed earlier) — use 'start' instead"}
+                        f"worker '{name}' has no live codex thread; same-thread follow is unavailable — start a new worker"}
             # Reject follow until the old consumer fully exits (first guard against late-event contamination).
             if not w.consumer_finished():
                 return {"ok": False,
@@ -1056,6 +1086,8 @@ class Daemon:
             state = w.current_state()
             if state != "running":
                 return {"ok": False, "error": f"worker '{name}' is not running ({state})"}
+            if w.handle is None:
+                return {"ok": False, "error": f"worker '{name}' has no live turn handle"}
             w.handle.steer(req["text"])
             w.log_event("steer", truncate(req["text"], 200))
         self.touch_activity()
@@ -1077,6 +1109,18 @@ class Daemon:
                 return {"ok": False, "error": f"worker '{name}' is not active ({state})"}
             if w.interrupt_requested:
                 return {"ok": True, "note": "interrupt already requested"}  # idempotent
+            if w.handle is None:
+                if state == "needs_input":
+                    with w.lock:
+                        if w.status.get("needs_input_source") == "question":
+                            w.interrupt_requested = True
+                            w.status["state"] = "interrupted"
+                            w.status["needs_input_detail"] = None
+                            w.status["needs_input_source"] = None
+                            w.log_event("interrupt", "cleared final QUESTION wait")
+                            w.write_status(force=True)
+                            return {"ok": True, "note": "cleared QUESTION wait"}
+                return {"ok": False, "error": f"worker '{name}' has no live turn handle"}
             w.interrupt_requested = True
             try:
                 w.handle.interrupt()
@@ -1126,6 +1170,40 @@ def send_request(home: Path, req: dict, timeout: float = SOCKET_TIMEOUT_SEC) -> 
         raise SystemExit(f"daemon response timed out after {timeout}s")
     finally:
         s.close()
+
+
+def query_runtime_status(home: Path, repo_home: Path, name: str, st: dict) -> dict | None:
+    req = {
+        "cmd": "runtime_status",
+        "name": name,
+        "repo_key": st.get("repo_key"),
+        "repo_root": st.get("repo_root") or str(repo_home),
+        "repo_home": str(repo_home),
+    }
+    if not req["repo_key"]:
+        return None
+    try:
+        return send_request(home, req, timeout=5)
+    except SystemExit:
+        return None
+
+
+def mark_worker_runtime_lost(repo_home: Path, name: str, st: dict, reason: str) -> dict:
+    lost = dict(st)
+    lost["state"] = "failed"
+    lost["needs_input_detail"] = None
+    lost["needs_input_source"] = None
+    lost["runtime_lost_detail"] = reason
+    lost["updated_at"] = now_iso()
+    worker_dir = repo_home / "workers" / name
+    try:
+        atomic_write_json(worker_dir / "status.json", lost)
+        line = f"{now_iso()} [runtime/lost] {truncate(reason, EVENT_LINE_MAX - 60)}"
+        with open(worker_dir / "events.log", "a", encoding="utf-8") as f:
+            f.write(line[:EVENT_LINE_MAX] + "\n")
+    except OSError:
+        pass
+    return lost
 
 
 def expect_ok(resp: dict) -> dict:
@@ -1285,8 +1363,9 @@ def cmd_status(args, home: Path) -> int:
             print(summary_line(st))
             for key in ("thread_id", "turn_id", "repo_root", "repo_key", "cwd",
                         "sandbox", "model", "effort", "service_tier", "thread_source",
-                        "thread_ephemeral", "started_at", "updated_at", "turns",
-                        "needs_input_source", "needs_input_detail"):
+                        "thread_ephemeral", "daemon_pid", "started_at", "updated_at",
+                        "turns", "needs_input_source", "needs_input_detail",
+                        "runtime_lost_detail"):
                 print(f"  {key}: {st.get(key)}")
             if st.get("plan"):
                 print("  plan:")
@@ -1319,7 +1398,8 @@ def cmd_result(args, home: Path) -> int:
 
 def classify_wait_state(st: dict) -> int | None:
     """Map a status dict to a wait exit code. None means keep polling.
-    needs_input exits 3 only when source=="question" (final QUESTION);
+    needs_input can exit 3 only when source=="question" (final QUESTION);
+    wait_for_worker checks daemon attachment before exposing that exit.
     tool/approval waits are treated as active until stream-end cleanup."""
     state = st.get("state")
     if state in TERMINAL_STATES:
@@ -1344,10 +1424,27 @@ def wait_for_worker(home: Path, repo_home: Path, name: str, timeout: float | Non
             except (OSError, json.JSONDecodeError):
                 st = None
         if st is not None:
-            code = classify_wait_state(st)
-            if code is not None:
-                print(summary_line(st))
-                return code
+            if st.get("state") in ACTIVE_STATES:
+                runtime = query_runtime_status(home, repo_home, name, st)
+                if runtime and runtime.get("ok"):
+                    dead_strikes = 0
+                    if not runtime.get("known"):
+                        reason = (
+                            f"worker is active on disk but not attached to daemon pid "
+                            f"{runtime.get('pid')} (recorded daemon_pid={st.get('daemon_pid')})"
+                        )
+                        st = mark_worker_runtime_lost(repo_home, name, st, reason)
+                        print(summary_line(st))
+                        return 2
+                    code = classify_wait_state(st)
+                    if code is not None:
+                        print(summary_line(st))
+                        return code
+            else:
+                code = classify_wait_state(st)
+                if code is not None:
+                    print(summary_line(st))
+                    return code
         # Daemon death check: ping success means definitely alive. pid alone is insufficient due to pid reuse.
         if probe_daemon_socket(home / "meight.sock"):
             dead_strikes = 0

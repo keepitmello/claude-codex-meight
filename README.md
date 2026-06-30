@@ -50,7 +50,7 @@ OpenAI's official **`openai-codex` Python SDK** (released May 2026) removed thos
 | Progress observation | scrape stdout / stream into context | ✗ | **disk digest, pull on demand (~0 tokens)** |
 | Two-way conversation | ✗ (guesses or stalls) | ✗ | **worker raises `QUESTION:` (blocked *or* better idea) → exit 3 → `meight reply`; orchestrator can `consult` back** |
 | Result delivery | scrape | tool return | **exit-code contract + result on stdout** |
-| Session continuity | fragile | threadId | **same-thread `follow`/`reply` turns** |
+| Session continuity | fragile | threadId | **same-daemon `follow`/`reply` turns** |
 
 ## Quick start
 
@@ -70,7 +70,7 @@ Verify with: pytest tests/test_foo.py. Report changed files + test output.
 EOF
 
 meight wait impl-1 --timeout 300
-# exit 0=completed · 2=failed/interrupted · 3=worker asked a question · 4=daemon dead · 1=checkpoint timeout
+# exit 0=completed · 2=failed/interrupted/runtime-lost · 3=replyable worker question · 4=daemon dead · 1=checkpoint timeout
 ```
 
 On exit `1`, the worker is still running. Inspect once, then either wait again or steer:
@@ -87,7 +87,7 @@ On exit `0`, `2`, or `3`, `wait` prints a status summary. Read the full message 
 meight result impl-1
 ```
 
-The worker asked a question (exit 3)? The question is also visible in `meight status impl-1` as `needs_input_detail`. Answer in one shot, same thread:
+The worker asked a replyable question (exit 3)? The question is also visible in `meight status impl-1` as `needs_input_detail`. Answer in one shot, same thread:
 
 ```bash
 meight reply impl-1 --brief "Use config-a.json, and keep the legacy field."
@@ -121,9 +121,9 @@ Bash(command: "meight wait review-1 --timeout 300",
 → healthy: wait again · drifting: meight steer review-1 "..."
 ```
 
-When the worker reaches a terminal state, the notification is `0` (completed), `2` (failed/interrupted), or `3` (worker question). Use `meight result review-1` for the full report. On `0`, verify the work before accepting it. On `3`, answer with `meight reply`.
+When the worker reaches a terminal state, the notification is `0` (completed), `2` (failed/interrupted/runtime-lost), or `3` (worker question that is still attached and replyable). Use `meight result review-1` for the full report. On `0`, verify the work before accepting it. On `3`, answer with `meight reply`. If a daemon restart or GC expired the same-thread session, `wait` returns `2` with `runtime_lost_detail`; start a fresh worker instead of replying.
 
-Every brief is automatically prefixed with a harness preamble that (a) forbids `git commit`/`push` — git stays owned by the orchestrator — and (b) frames the worker as a teammate: rather than guessing or silently complying, end with a `QUESTION:` paragraph when blocked *or* to flag a better approach, a wrong assumption, or a decision that could shift direction. Disable with `--no-preamble`.
+Every brief is automatically prefixed with a harness preamble that (a) allows workers to commit and push their completed, verified work while the orchestrator still owns integration and final sign-off, and (b) frames the worker as a teammate: rather than guessing or silently complying, end with a `QUESTION:` paragraph when blocked *or* to flag a better approach, a wrong assumption, or a decision that could shift direction. Disable with `--no-preamble`.
 
 A drop-in orchestrator prompt (role split, routing table, dispatch protocol, cross-model review rules) ships as [`CLAUDE.md`](./CLAUDE.md) — copy it into your project or global Claude Code memory. A self-contained Claude Code **skill** ships at [`skills/meight/`](./skills/meight/SKILL.md) — copy it into `~/.claude/skills/` for trigger-based JIT loading.
 
@@ -136,7 +136,7 @@ Small decisions everywhere assume the user is an LLM agent, not a person at a te
 - **Names, not session IDs.** Workers are addressed as `review-1`, follow-ups included. No UUID bookkeeping to get wrong.
 - **Results survive on disk.** `result.md` stays re-readable — if the agent's context gets compacted mid-session, nothing is lost.
 - **Status is pre-digested.** Instead of raw logs, `status` returns what a decision needs: what the worker is doing now, which files changed, its last thought. Exactly enough to choose between wait, steer, and interrupt.
-- **Policy can't be forgotten.** The no-commit rule and the QUESTION protocol are injected into every brief by the harness, not remembered by the agent.
+- **Policy can't be forgotten.** The worker git policy and the QUESTION protocol are injected into every brief by the harness, not remembered by the agent.
 - **Briefs go through stdin.** Long multi-line briefs avoid shell-quoting traps entirely.
 
 ## Command reference
@@ -144,18 +144,18 @@ Small decisions everywhere assume the user is an LLM agent, not a person at a te
 | Command | What it does |
 |---|---|
 | `meight start <name> [opts]` | Start a worker and return immediately with the thread id. Supervised workflow entry point. |
-| `meight wait <name> --timeout SEC` | Checkpoint wait: return on terminal state, QUESTION, daemon death, or timeout. Timeout leaves the worker running. |
+| `meight wait <name> --timeout SEC` | Checkpoint wait: return on terminal state, replyable QUESTION, daemon death, or timeout. Timeout leaves the worker running. |
 | `meight dispatch <name> [opts]` | One-shot: auto-start daemon → start worker → wait → print result. Use for trivial, short, low-risk work. Add `--shutdown-when-idle` to stop the daemon after the result when no workers are active. |
-| `meight reply <name> --brief ...` | One-shot answer to a worker question: follow + wait + print last-turn result |
+| `meight reply <name> --brief ...` | One-shot answer to a replyable worker question: follow + wait + print last-turn result |
 | `meight status [name]` | Pull digest (table or detail). Reads disk — works without the daemon |
 | `meight steer <name> "text"` | Inject instruction into the running turn (no work lost) |
 | `meight interrupt <name>` | Cancel the running turn (idempotent) |
-| `meight follow <name> --brief ...` | Low-level: new turn on the same thread (context preserved) |
+| `meight follow <name> --brief ...` | Low-level: new turn on the same thread while that worker is still attached to the daemon |
 | `meight result / list / daemon / ping / shutdown / launchd` | Low-level support commands |
 
 Options: `--cwd` (worker workdir — use separate git worktrees for overlapping file scopes), `--sandbox ws|ro|full` (default `full` = no sandbox, so Codex can verify freely — builds, daemon restarts, writes outside cwd; `ws` = workspace-write scoped to cwd; reviews run `ro`), `--effort low|medium|high|xhigh` (default `medium`; raise by task complexity), `--model`, `--fast`/`--no-fast` (workers run non-Fast by default; pass `--fast` to use the codex Fast/priority tier), `--timeout`. Workers start as hidden ephemeral Codex subagent threads by default so they stay out of Codex Desktop's main user-thread list; use `--main-thread` only when a tool needs a visible/main thread.
 
-Worker state lives in `<daemon-home>/repos/<repo-key>/workers/<name>`: `brief.md`, `status.json` (state machine + tokens + files changed + last activity), `events.log` (one line per meaningful event), `result.md` (final message per turn). Use `meight list --all-repos` for a global view. Terminal workers stay in daemon memory for `MEIGHT_WORKER_GC_TTL_SEC` seconds by default. Foreground `meight daemon` exits after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with no active workers by default; `daemon --idle-timeout-sec 0` disables it explicitly. Managed starts (`dispatch` auto-start and LaunchAgent) pass idle disable through both env and daemon args, and LaunchAgent jobs infer managed mode from `XPC_SERVICE_NAME` if an older loaded job missed the env. Check `meight ping` for the running daemon's actual `idle_timeout_sec`.
+Worker state lives in `<daemon-home>/repos/<repo-key>/workers/<name>`: `brief.md`, `status.json` (state machine + tokens + files changed + last activity), `events.log` (one line per meaningful event), `result.md` (final message per turn). Use `meight list --all-repos` for a global view. Terminal workers stay in daemon memory, and remain same-thread followable, for `MEIGHT_WORKER_GC_TTL_SEC` seconds by default. After daemon restart or terminal-worker GC, disk artifacts remain but same-thread follow is expired; start a new worker instead. Foreground `meight daemon` exits after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with no active workers by default; `daemon --idle-timeout-sec 0` disables it explicitly. Managed starts (`dispatch` auto-start and LaunchAgent) pass idle disable through both env and daemon args, and LaunchAgent jobs infer managed mode from `XPC_SERVICE_NAME` if an older loaded job missed the env. Check `meight ping` for the running daemon's actual `idle_timeout_sec`.
 
 ## Good to know
 
