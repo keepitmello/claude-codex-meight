@@ -125,7 +125,7 @@ When the worker reaches a terminal state, the notification is `0` (completed), `
 
 Every brief is automatically prefixed with a harness preamble that (a) allows workers to commit and push their completed, verified work while the orchestrator still owns integration and final sign-off, and (b) frames the worker as a teammate: rather than guessing or silently complying, end with a `QUESTION:` paragraph when blocked *or* to flag a better approach, a wrong assumption, or a decision that could shift direction. Disable with `--no-preamble`.
 
-A drop-in orchestrator prompt (role split, routing table, dispatch protocol, cross-model review rules) ships as [`CLAUDE.md`](./CLAUDE.md) — copy it into your project or global Claude Code memory. A self-contained Claude Code **skill** ships at [`skills/meight/`](./skills/meight/SKILL.md) — copy it into `~/.claude/skills/` for trigger-based JIT loading.
+A drop-in orchestrator prompt (role split, routing table, dispatch protocol, cross-model review rules) ships as [`CLAUDE.md`](./CLAUDE.md) — copy it into your project or global Claude Code memory. The dispatcher-facing Claude Code skill ships at [`skills/meight/`](./skills/meight/SKILL.md). The worker-facing Codex skill ships at [`skills/meight-worker/`](./skills/meight-worker/SKILL.md) and is loaded by the harness preamble for delegated workers.
 
 ## What "easy for an agent" actually means
 

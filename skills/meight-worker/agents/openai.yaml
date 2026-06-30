@@ -1,0 +1,4 @@
+interface:
+  display_name: "Meight Worker"
+  short_description: "Worker-side contract for Codex sessions launched by meight."
+  default_prompt: "Use meight-worker as the worker-side operating contract for this delegated task."

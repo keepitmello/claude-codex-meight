@@ -125,7 +125,7 @@ Bash(command: "meight wait review-1 --timeout 300",
 
 모든 브리프 앞에는 하네스 프리앰블이 자동으로 붙습니다: (a) 워커도 완료·검증한 작업은 `git commit`/`push`할 수 있지만, 통합과 최종 승인 책임은 오케스트레이터가 가짐 — (b) 워커를 teammate로 규정 — 추측하거나 묵묵히 따르는 대신, 막혔을 때는 물론 더 나은 접근·틀린 가정·방향을 바꿀 결정이 보이면 `QUESTION:` 문단으로 짚을 것. `--no-preamble`로 끌 수 있습니다.
 
-바로 쓸 수 있는 오케스트레이터 프롬프트(역할 분담, 라우팅 테이블, 디스패치 프로토콜, 교차 리뷰 규칙)가 [`CLAUDE.md`](../CLAUDE.md)로 동봉됩니다 — 프로젝트나 글로벌 Claude Code 메모리에 복사해서 쓰면 됩니다. 자기완결형 Claude Code **스킬**도 [`skills/meight/`](../skills/meight/SKILL.md)에 들어 있습니다 — `~/.claude/skills/`에 복사하면 트리거 기반 JIT 로딩이 됩니다.
+바로 쓸 수 있는 오케스트레이터 프롬프트(역할 분담, 라우팅 테이블, 디스패치 프로토콜, 교차 리뷰 규칙)가 [`CLAUDE.md`](../CLAUDE.md)로 동봉됩니다 — 프로젝트나 글로벌 Claude Code 메모리에 복사해서 쓰면 됩니다. 디스패처용 Claude Code 스킬은 [`skills/meight/`](../skills/meight/SKILL.md)에 있고, 워커용 Codex 스킬은 [`skills/meight-worker/`](../skills/meight-worker/SKILL.md)에 있습니다. 워커용 스킬은 하네스 프리앰블이 위임된 Codex 워커에게 읽힙니다.
 
 ## "에이전트에게 편하다"는 것의 실제 의미
 

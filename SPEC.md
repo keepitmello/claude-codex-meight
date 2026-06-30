@@ -167,7 +167,8 @@ protocol preamble to the brief. `--no-preamble` disables this.
 
 The preamble allows workers to `git commit` and `git push` their completed,
 verified work while the orchestrator still owns integration and final sign-off.
-It also frames the worker as a teammate: rather than guessing or silently complying,
+It also points workers at `skills/meight-worker/SKILL.md` as the worker-side
+contract and frames the worker as a teammate: rather than guessing or silently complying,
 a worker ends its final response with a paragraph
 starting with `QUESTION:` — either when blocked on information only the
 orchestrator can provide, or to raise a better approach, a wrong assumption, or a

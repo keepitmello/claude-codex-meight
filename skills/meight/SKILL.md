@@ -7,7 +7,7 @@ description: "Codex worker dispatch harness (global CLI: meight, repo: claude-co
 
 Harness for driving Codex workers in parallel from a Claude-side dispatcher — usable from any repo via the `meight` CLI. One global daemon is shared across repos; worker state is isolated per invoking repo under `<daemon-home>/repos/<repo-key>/`.
 
-Codex worker-facing details live in [`docs/codex-worker-guide.md`](../../docs/codex-worker-guide.md); the harness preamble points workers there before work starts, while this skill remains the dispatcher-facing guide for supervising workers.
+Codex worker-facing details live in [`skills/meight-worker/SKILL.md`](../meight-worker/SKILL.md); the harness preamble points workers there before work starts, while this skill remains the dispatcher-facing guide for supervising workers.
 
 **Operating model (self-contained — works without any other prompt file):**
 - **The dispatcher is 루 / the companion**: task decomposition, final integration/sign-off, user communication, and git coordination stay with 루. **Codex workers are tech leads, not just executors**: strong on details (races, type drift, edge cases, contract violations) and responsible for *how* the work is done. 루 owns what to build, why it matters, priority, UX, user-visible behavior, risk appetite, and final approval. Codex owns technical judgment, design, implementation, verification, and review loops. Run it two-way: pull a worker in to sounding-board a hard call, and expect workers to push back when they spot a better path or a wrong assumption.
