@@ -27,7 +27,7 @@
         │            (어느 쪽이든 다음 턴을 열 수 있음, 같은 스레드)
         │
         ▼   오케스트레이터가 필요할 때만 디스크 다이제스트 pull — 컨텍스트 ~0, 스트리밍 없음
-   전역 데몬 ── 공식 openai-codex SDK ── codex app-server (프로세스 1개, 스레드 N개)
+   전역 데몬 ── 공식 openai-codex SDK ── 워커별 codex app-server
         status.json · events.log · result.md
 ```
 
@@ -41,11 +41,11 @@ Meight는 이 둘을 묶어 비용은 낮추고 품질은 올립니다. Claude�
 
 2026년 6월 기준, 공개된 Claude↔Codex 프로젝트는 전부 Codex를 **CLI로** 부립니다 — `codex exec` 서브프로세스를 띄우거나 tmux에 타이핑하는 방식입니다. 그렇게 만든 도구들은 같은 한계를 공유합니다: 실행 중인 워커의 방향을 바꾸려면 죽여야 하고(작업이 날아갑니다), 진행을 보려면 모든 출력을 오케스트레이터 컨텍스트로 부어야 하고, 막힌 워커는 도움을 청할 방법이 없습니다.
 
-OpenAI의 공식 **`openai-codex` Python SDK**(2026년 5월 릴리스)가 이 한계를 없앴습니다. `codex app-server`와 직접 통신하면서 조향·중단·스트리밍을 정식 API로 제공하고, Codex 프로세스 하나가 여러 워커를 동시에 돌립니다. **Meight는 — 우리가 아는 한 — 이 SDK 위에 구축된 최초의 공개 하네스입니다.** 비교하면:
+OpenAI의 공식 **`openai-codex` Python SDK**(2026년 5월 릴리스)가 이 한계를 없앴습니다. `codex app-server`와 직접 통신하면서 조향·중단·스트리밍을 정식 API로 제공합니다. Meight는 활성 워커마다 SDK 런타임을 하나씩 두고, 워커가 끝나면 MCP subprocess와 파일 디스크립터를 바로 회수합니다. **Meight는 — 우리가 아는 한 — 이 SDK 위에 구축된 최초의 공개 하네스입니다.** 비교하면:
 
 | | tmux/exec 브릿지 | MCP 래퍼 | **Meight** |
 |---|---|---|---|
-| 병렬 워커 | 워커당 프로세스 1개 | 블로킹 툴 콜 | 스레드 N개, codex 프로세스 1개 |
+| 병렬 워커 | 워커당 프로세스 1개 | 블로킹 툴 콜 | 활성 워커당 SDK 런타임 1개 |
 | mid-turn 조향 | 사람이 attach해서 타이핑, 또는 kill+resume(작업 손실) | ✗ | **`meight steer` — 프로그래매틱, 작업 손실 없음** |
 | 진행 관찰 | stdout 스크래핑 / 컨텍스트로 스트리밍 | ✗ | **디스크 다이제스트, 필요할 때 pull (~토큰 0)** |
 | 양방향 대화 | ✗ (추측하거나 멈춤) | ✗ | **워커가 `QUESTION:` 제기(막힘 *또는* 더 나은 아이디어) → exit 3 → `meight reply`; 오케스트레이터는 `consult`로 되물음** |
@@ -155,7 +155,7 @@ Bash(command: "meight wait review-1 --timeout 300",
 
 옵션: `--cwd`(워커 작업 디렉토리 — 파일 범위가 겹치면 git worktree로 분리), `--sandbox ws|ro|full`(기본 `full`=샌드박스 없음, 리뷰는 `ro`), `--effort low|medium|high|xhigh`(기본 `medium`, 복잡도에 따라 상향), `--model`, `--fast`/`--no-fast`(기본은 non-Fast이고, `--fast`를 넣은 워커만 codex Fast/priority tier 사용), `--timeout`. 워커는 기본적으로 hidden ephemeral Codex subagent thread로 시작해서 Codex Desktop의 메인 사용자 스레드 목록에 뜨지 않게 합니다. 보이는/main thread가 꼭 필요한 도구에서만 `--main-thread`를 쓰세요.
 
-워커 상태는 `<daemon-home>/repos/<repo-key>/workers/<name>/`에 기록됩니다: `brief.md`, `status.json`(상태머신+토큰+변경 파일+현재 활동), `events.log`(의미 있는 이벤트당 1줄), `result.md`(턴별 최종 메시지). 전체 레포 상태는 `meight list --all-repos`로 볼 수 있습니다. 완료된 워커는 기본적으로 `MEIGHT_WORKER_GC_TTL_SEC` 동안 데몬 메모리에 남고, 그 동안만 같은 스레드 follow가 가능합니다. 데몬 재시작 또는 terminal-worker GC 뒤에는 디스크 산출물은 남지만 같은 스레드 follow는 만료되므로 새 워커를 시작해야 합니다. Foreground `meight daemon`은 기본적으로 활성 워커가 없으면 `MEIGHT_IDLE_TIMEOUT_SEC` 뒤 종료되며, `daemon --idle-timeout-sec 0`으로 명시 비활성화할 수 있습니다. 관리형 기동(`dispatch` auto-start와 LaunchAgent)은 env와 daemon 인자 둘 다로 idle 비활성을 전달하고, 오래 로드된 LaunchAgent job이 env를 빠뜨린 경우에도 `XPC_SERVICE_NAME`으로 관리형을 판별합니다. 실제 적용값은 `meight ping`의 `idle_timeout_sec`로 확인하세요.
+워커 상태는 `<daemon-home>/repos/<repo-key>/workers/<name>/`에 기록됩니다: `brief.md`, `status.json`(상태머신+토큰+변경 파일+현재 활동), `events.log`(의미 있는 이벤트당 1줄), `result.md`(턴별 최종 메시지). 전체 레포 상태는 `meight list --all-repos`로 볼 수 있습니다. 완료된 워커의 디스크 산출물은 남지만, SDK 런타임은 MCP subprocess와 파일 디스크립터를 닫기 위해 즉시 해제됩니다. 후속 작업은 새 워커를 시작하세요. 마지막 `QUESTION:` 상태만 live daemon에 붙어 있어 `meight reply`로 같은 스레드 답장이 가능합니다. 데몬 재시작 뒤에는 디스크 산출물은 남지만 같은 스레드 reply는 만료되므로 새 워커를 시작해야 합니다. Foreground `meight daemon`은 기본적으로 활성 워커가 없으면 `MEIGHT_IDLE_TIMEOUT_SEC` 뒤 종료되며, `daemon --idle-timeout-sec 0`으로 명시 비활성화할 수 있습니다. 관리형 기동(`dispatch` auto-start와 LaunchAgent)은 env와 daemon 인자 둘 다로 idle 비활성을 전달하고, 오래 로드된 LaunchAgent job이 env를 빠뜨린 경우에도 `XPC_SERVICE_NAME`으로 관리형을 판별합니다. 실제 적용값은 `meight ping`의 `idle_timeout_sec`로 확인하세요.
 
 ## 알아두면 좋은 것
 

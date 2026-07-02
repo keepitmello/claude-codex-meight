@@ -114,7 +114,7 @@ A worker's `QUESTION:` isn't only "I'm blocked" — under the teammate preamble 
 meight reply <name> --brief "answer" [--timeout 1800]
 ```
 
-For low-level control use follow (starts the turn only) + wait + result. At most ~2 follow/reply turns per thread, then reset with a fresh brief. Same-thread follow requires the worker to still be attached to the current daemon; after daemon restart or terminal-worker GC, disk artifacts remain but follow is expired, so start a new worker.
+For low-level control of a replyable `QUESTION`, use follow (starts the turn only) + wait + result. At most ~2 follow/reply turns per thread, then reset with a fresh brief. Same-thread follow requires the worker to still be attached to the current daemon. Terminal workers release their SDK runtime when the stream ends, so disk artifacts remain but follow-up work should start a new worker.
 
 ## Status / steer / interrupt
 
@@ -219,7 +219,7 @@ Combine evidence types before claiming UI / E2E / integration behavior is correc
 
 - Worker artifacts: `<daemon-home>/repos/<repo-key>/workers/<name>/{brief.md,status.json,events.log,result.md}`
 - Low-level commands: daemon / start / wait / result / list / shutdown [--force] / launchd
-- Lifecycle: foreground `MEIGHT_IDLE_TIMEOUT_SEC` default is 1800s, but `daemon --idle-timeout-sec 0` disables it. Managed `dispatch`/LaunchAgent starts pass idle disable through both env and daemon args; LaunchAgent jobs also infer managed mode from `XPC_SERVICE_NAME=com.keepitmello.meight` if an older loaded job lacks the env. Trust `meight ping`/startup log for the running value, not just the plist file. `MEIGHT_WORKER_GC_TTL_SEC` (default 3600s) removes terminal workers from daemon memory while keeping disk artifacts; after that, same-thread follow is expired
+- Lifecycle: foreground `MEIGHT_IDLE_TIMEOUT_SEC` default is 1800s, but `daemon --idle-timeout-sec 0` disables it. Managed `dispatch`/LaunchAgent starts pass idle disable through both env and daemon args; LaunchAgent jobs also infer managed mode from `XPC_SERVICE_NAME=com.keepitmello.meight` if an older loaded job lacks the env. Trust `meight ping`/startup log for the running value, not just the plist file. Terminal workers release their SDK runtime immediately after stream end; `MEIGHT_WORKER_GC_TTL_SEC` (default 3600s) only removes terminal worker status from daemon memory while keeping disk artifacts.
 - High-stakes or irreversible work: never accept a worker's "done" on its word — require runtime evidence plus your own sign-off, always
 - **Restart the daemon after editing meight.py** (a live daemon keeps running old code)
 - Beta SDK (`openai-codex==0.1.0b3`, pinned): re-run the SPEC.md verification suite when upgrading

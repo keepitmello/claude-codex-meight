@@ -270,6 +270,7 @@ class Worker:
         self.thread_ephemeral = thread_ephemeral
         self.thread = None       # openai_codex.Thread (kept while daemon lives -> reused for follow)
         self.handle = None       # TurnHandle
+        self.codex = None        # openai_codex.Codex runtime owned by this worker
         self.consumer: threading.Thread | None = None
         self.interrupt_requested = False
         self.lock = threading.Lock()       # serialize status/event handling
@@ -631,7 +632,8 @@ class Worker:
 
     def detach_runtime_refs_if_idle(self, daemon: "Daemon", gen: int, reason: str,
                                     keep_thread: bool = True) -> None:
-        """Drop completed stream refs; keep Thread only when same-daemon follow can use it."""
+        """Release SDK runtime after a turn; keep it only for a replyable final QUESTION."""
+        codex_to_close = None
         with self.ctl_lock:
             with self.lock:
                 state = self.status.get("state")
@@ -639,13 +641,21 @@ class Worker:
                 detachable = state in TERMINAL_STATES or (state == "needs_input" and source == "question")
                 if gen != self.generation or not detachable:
                     return
-                had_refs = self.handle is not None or (not keep_thread and self.thread is not None)
+                keep_runtime = keep_thread and state == "needs_input" and source == "question"
+                had_refs = self.handle is not None or self.thread is not None or self.codex is not None
                 self.handle = None
-                if not keep_thread:
+                if not keep_runtime:
                     self.thread = None
+                    codex_to_close = self.codex
+                    self.codex = None
             if had_refs:
-                detached = "turn handle" if keep_thread else "runtime refs"
+                detached = "turn handle" if codex_to_close is None else "runtime refs"
                 daemon.log(f"detached {detached} worker={self.name} repo={self.repo_key} reason={reason}")
+        if codex_to_close is not None:
+            try:
+                codex_to_close.close()
+            except Exception as e:
+                daemon.log(f"codex.close worker={self.name} repo={self.repo_key} error: {e!r}")
 
     def mark_failed(self, reason: str) -> None:
         with self.lock:
@@ -679,7 +689,6 @@ class Daemon:
         self.sock_path = home / "meight.sock"
         self.pid_path = home / "daemon.pid"
         self.log_path = home / "daemon.log"
-        self.codex = None
         self.workers: dict[str, Worker] = {}
         self.reg_lock = threading.Lock()
         self.shutting_down = threading.Event()
@@ -726,9 +735,6 @@ class Daemon:
                 p.unlink()
             except FileNotFoundError:
                 pass
-
-        from openai_codex import Codex
-        self.codex = Codex()
 
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.server.bind(str(self.sock_path))
@@ -810,11 +816,10 @@ class Daemon:
             threading.Thread(target=self._shutdown_now, daemon=True).start()
 
     def _cleanup(self) -> None:
-        try:
-            if self.codex is not None:
-                self.codex.close()
-        except Exception as e:
-            self.log(f"codex.close() error: {e!r}")
+        with self.reg_lock:
+            workers = list(self.workers.values())
+        for w in workers:
+            w.detach_runtime_refs_if_idle(self, w.generation, "daemon cleanup", keep_thread=False)
         for p in (self.sock_path, self.pid_path):
             try:
                 p.unlink()
@@ -910,6 +915,8 @@ class Daemon:
             state = w.status.get("state", "unknown")
             source = w.status.get("needs_input_source")
             daemon_pid = w.status.get("daemon_pid")
+            codex = w.codex
+        codex_proc = getattr(getattr(codex, "_client", None), "_proc", None)
         return {
             "ok": True,
             "known": True,
@@ -920,10 +927,12 @@ class Daemon:
             "has_live_turn": w.has_live_turn(),
             "has_thread": w.thread is not None,
             "has_handle": w.handle is not None,
+            "has_codex": codex is not None,
+            "codex_pid": getattr(codex_proc, "pid", None),
         }
 
     def cmd_start(self, req: dict) -> dict:
-        from openai_codex import Sandbox
+        from openai_codex import Codex, Sandbox
         try:
             from openai_codex.types import ThreadSource
         except ImportError:
@@ -984,7 +993,8 @@ class Daemon:
 
             w.init_status(thread_id=None)
             try:
-                thread = self.codex.thread_start(
+                w.codex = Codex()
+                thread = w.codex.thread_start(
                     cwd=cwd,
                     # Hidden workers must be ephemeral subagent threads. Persistent user
                     # threads are opt-in because Codex Desktop lists them.
@@ -1047,7 +1057,7 @@ class Daemon:
                         f"worker '{name}' is not in a terminal state ({prev_state})"}
             if w.thread is None:
                 return {"ok": False, "error":
-                        f"worker '{name}' has no live codex thread; same-thread follow is unavailable — start a new worker"}
+                        f"worker '{name}' has no live codex thread; terminal worker runtime was released — start a new worker"}
             # Reject follow until the old consumer fully exits (first guard against late-event contamination).
             if not w.consumer_finished():
                 return {"ok": False,
@@ -1113,14 +1123,28 @@ class Daemon:
                 return {"ok": True, "note": "interrupt already requested"}  # idempotent
             if w.handle is None:
                 if state == "needs_input":
+                    codex_to_close = None
                     with w.lock:
                         if w.status.get("needs_input_source") == "question":
                             w.interrupt_requested = True
                             w.status["state"] = "interrupted"
                             w.status["needs_input_detail"] = None
                             w.status["needs_input_source"] = None
+                            w.thread = None
+                            codex_to_close = w.codex
+                            w.codex = None
                             w.log_event("interrupt", "cleared final QUESTION wait")
                             w.write_status(force=True)
+                            self.log(f"detached runtime refs worker={w.name} repo={w.repo_key} reason=question interrupted")
+                    if codex_to_close is not None:
+                        try:
+                            codex_to_close.close()
+                        except Exception as e:
+                            self.log(f"codex.close worker={w.name} repo={w.repo_key} error: {e!r}")
+                        self.touch_activity()
+                        return {"ok": True, "note": "cleared QUESTION wait"}
+                    with w.lock:
+                        if w.status.get("state") == "interrupted":
                             return {"ok": True, "note": "cleared QUESTION wait"}
                 return {"ok": False, "error": f"worker '{name}' has no live turn handle"}
             w.interrupt_requested = True

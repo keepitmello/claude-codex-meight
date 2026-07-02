@@ -15,20 +15,20 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
 
 ```
 meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  global daemon
-                                                                │ openai-codex SDK (1 client)
+                                                                │ openai-codex SDK (per active worker)
    status/result/wait read disk directly                        ▼
-   (work without the daemon)                              codex app-server (1 process)
-                                                                │ N threads multiplexed
+   (work without the daemon)                              codex app-server (worker-owned)
+                                                                │ released after terminal turn
 ~/.meight/repos/<repo-key>/workers/<name>/              ▼
    brief.md · status.json · events.log · result.md   ◀── per-worker consumer thread
 ```
 
 - **Daemon home** = `$MEIGHT_HOME` if set, otherwise `$XDG_STATE_HOME/meight` or `~/.meight` → one daemon shared across repos.
 - **Repo state home** = `<daemon-home>/repos/<repo-key>/`, where `<repo-key>` is a stable slug plus hash of the invoking repo root. `--cwd` still controls the worker execution directory; it does not change the repo namespace for status/result lookup.
-- The SDK spawns `codex app-server --listen stdio://` and speaks JSON-RPC; per-turn notifications are routed by the SDK's internal MessageRouter, which is what allows N concurrent turns over one process.
-- The daemon holds `Thread` objects in a registry keyed by `(repo_key, worker_name)` and keeps a `TurnHandle` only while a stream is live. `steer` and `interrupt` require the live handle; completed workers and final `QUESTION:` waits detach the handle after stream end, while same-daemon `follow`/`reply` starts the next turn from the stored thread.
+- The SDK spawns `codex app-server --listen stdio://` and speaks JSON-RPC. Meight owns one SDK runtime per active worker so terminal workers can close their app-server, MCP subprocesses, and stdio file descriptors without waiting for daemon shutdown.
+- The daemon holds `Thread` objects in a registry keyed by `(repo_key, worker_name)` only while that worker is active or waiting on a final `QUESTION:`. It keeps a `TurnHandle` only while a stream is live. `steer` and `interrupt` require the live handle; terminal workers release the whole SDK runtime after stream end, while a final `QUESTION:` keeps the worker-owned thread so `reply` can start the next turn.
 - Workers start with `ephemeral=True` and `thread_source=ThreadSource.subagent` by default so they stay out of Codex Desktop's main user-thread list. `--main-thread` is the explicit opt-in to `ephemeral=False` plus `ThreadSource.user` for tools that need a visible/main thread. Hidden ephemeral worker `thread_id`s are audit pointers, not daemon-restart recovery handles.
-- Lifecycle is explicit: `MEIGHT_IDLE_TIMEOUT_SEC` controls daemon idle shutdown (foreground default 1800s, `0` disables; `daemon --idle-timeout-sec` overrides). Managed `dispatch`/LaunchAgent starts pass idle disable through both env and daemon args; LaunchAgent jobs also infer managed mode from `XPC_SERVICE_NAME` if an older loaded job lacks the env. `MEIGHT_WORKER_GC_TTL_SEC` controls how long terminal workers stay in daemon memory and remain same-thread followable (default 3600s, disk artifacts remain).
+- Lifecycle is explicit: `MEIGHT_IDLE_TIMEOUT_SEC` controls daemon idle shutdown (foreground default 1800s, `0` disables; `daemon --idle-timeout-sec` overrides). Managed `dispatch`/LaunchAgent starts pass idle disable through both env and daemon args; LaunchAgent jobs also infer managed mode from `XPC_SERVICE_NAME` if an older loaded job lacks the env. `MEIGHT_WORKER_GC_TTL_SEC` controls how long terminal worker status remains in daemon memory for visibility (default 3600s, disk artifacts remain); terminal SDK runtimes are already released.
 
 ## State machine
 
@@ -52,7 +52,7 @@ Three locks, one direction — **adding any reverse acquisition is a deadlock**:
 - **Turn generation ids**: each `follow` bumps `worker.generation`; the consumer thread carries its generation and every event/stream-end/exception handler drops work from stale generations. This is the mechanism that makes follow safe against a previous turn's late events.
 - **Daemon singleton**: `flock(LOCK_EX|LOCK_NB)` on `daemon.lock`, plus a live-socket ping probe before ever unlinking an existing socket. Two concurrent cold dispatches may both spawn — flock guarantees one survives.
 - **Liveness**: never trust `pid_alive` alone (pid reuse); socket ping is the primary signal, with a 2-strike policy in `wait`.
-- **FD hygiene**: final `QUESTION:` is not a live stream. It keeps the same-daemon `Thread` for follow-up, but must not keep the completed turn's `TurnHandle`.
+- **FD hygiene**: terminal workers close their worker-owned SDK runtime immediately after stream end. Final `QUESTION:` is not a live stream; it keeps the same-daemon `Thread` and SDK runtime for reply, but must not keep the completed turn's `TurnHandle`.
 - **Runtime ownership**: daemon registry, not disk `thread_id`, is the source of truth for live/followable sessions. `wait` asks the daemon for `runtime_status`; if a disk-active worker is not attached to the live daemon, it is marked failed/lost instead of being polled forever.
 - `status.json` writes: temp name includes pid+thread-id, then `os.replace` (a fixed temp name lets concurrent writers steal each other's files).
 - **Namespace isolation**: worker names only need to be unique inside the invoking repo namespace. `list --all-repos` reads every repo namespace when a global view is needed.

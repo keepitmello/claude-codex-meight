@@ -27,7 +27,7 @@ Most Claude↔Codex bridges are built for *a human watching a terminal* — tmux
         │            (either side can open the next turn, same thread)
         │
         ▼   orchestrator pulls disk digests on demand — ~0 context, never streamed
-   global daemon ── official openai-codex SDK ── codex app-server (1 process, N threads)
+   global daemon ── official openai-codex SDK ── per-worker codex app-server
         status.json · events.log · result.md
 ```
 
@@ -41,11 +41,11 @@ Meight pairs them so you get higher quality at lower cost: Claude holds the *wha
 
 As of June 2026, every public Claude↔Codex project we could find drives Codex through its **CLI** — spawning `codex exec` subprocesses or typing into tmux. Tools built that way share the same limits: to redirect a running worker you have to kill it (and lose its work), to see progress you have to pipe everything into the orchestrator's context, and a stuck worker has no way to ask for help.
 
-OpenAI's official **`openai-codex` Python SDK** (released May 2026) removed those limits: it talks to `codex app-server` directly and exposes steering, interrupting, and streaming as real APIs, with a single Codex process running many workers at once. **Meight is — to our knowledge — the first public harness built on it.** Side by side:
+OpenAI's official **`openai-codex` Python SDK** (released May 2026) removed those limits: it talks to `codex app-server` directly and exposes steering, interrupting, and streaming as real APIs. Meight runs one SDK runtime per active worker so MCP subprocesses and file descriptors are released when the worker finishes. **Meight is — to our knowledge — the first public harness built on it.** Side by side:
 
 | | tmux/exec bridges | MCP wrappers | **Meight** |
 |---|---|---|---|
-| Parallel workers | 1 process per worker | blocking tool calls | N threads, 1 codex process |
+| Parallel workers | 1 process per worker | blocking tool calls | one SDK runtime per active worker |
 | Mid-turn steering | attach & type (human) or kill+resume (loses work) | ✗ | **`meight steer` — programmatic, no work lost** |
 | Progress observation | scrape stdout / stream into context | ✗ | **disk digest, pull on demand (~0 tokens)** |
 | Two-way conversation | ✗ (guesses or stalls) | ✗ | **worker raises `QUESTION:` (blocked *or* better idea) → exit 3 → `meight reply`; orchestrator can `consult` back** |
@@ -155,7 +155,7 @@ Small decisions everywhere assume the user is an LLM agent, not a person at a te
 
 Options: `--cwd` (worker workdir — use separate git worktrees for overlapping file scopes), `--sandbox ws|ro|full` (default `full` = no sandbox, so Codex can verify freely — builds, daemon restarts, writes outside cwd; `ws` = workspace-write scoped to cwd; reviews run `ro`), `--effort low|medium|high|xhigh` (default `medium`; raise by task complexity), `--model`, `--fast`/`--no-fast` (workers run non-Fast by default; pass `--fast` to use the codex Fast/priority tier), `--timeout`. Workers start as hidden ephemeral Codex subagent threads by default so they stay out of Codex Desktop's main user-thread list; use `--main-thread` only when a tool needs a visible/main thread.
 
-Worker state lives in `<daemon-home>/repos/<repo-key>/workers/<name>`: `brief.md`, `status.json` (state machine + tokens + files changed + last activity), `events.log` (one line per meaningful event), `result.md` (final message per turn). Use `meight list --all-repos` for a global view. Terminal workers stay in daemon memory, and remain same-thread followable, for `MEIGHT_WORKER_GC_TTL_SEC` seconds by default. After daemon restart or terminal-worker GC, disk artifacts remain but same-thread follow is expired; start a new worker instead. Foreground `meight daemon` exits after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with no active workers by default; `daemon --idle-timeout-sec 0` disables it explicitly. Managed starts (`dispatch` auto-start and LaunchAgent) pass idle disable through both env and daemon args, and LaunchAgent jobs infer managed mode from `XPC_SERVICE_NAME` if an older loaded job missed the env. Check `meight ping` for the running daemon's actual `idle_timeout_sec`.
+Worker state lives in `<daemon-home>/repos/<repo-key>/workers/<name>`: `brief.md`, `status.json` (state machine + tokens + files changed + last activity), `events.log` (one line per meaningful event), `result.md` (final message per turn). Use `meight list --all-repos` for a global view. Terminal workers keep disk artifacts, but their SDK runtime is released immediately to close MCP subprocesses and file descriptors; start a new worker for follow-up work. A final `QUESTION:` remains attached to the live daemon so `meight reply` can answer on the same thread. After daemon restart, disk artifacts remain but same-thread reply is expired; start a fresh worker instead. Foreground `meight daemon` exits after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with no active workers by default; `daemon --idle-timeout-sec 0` disables it explicitly. Managed starts (`dispatch` auto-start and LaunchAgent) pass idle disable through both env and daemon args, and LaunchAgent jobs infer managed mode from `XPC_SERVICE_NAME` if an older loaded job missed the env. Check `meight ping` for the running daemon's actual `idle_timeout_sec`.
 
 ## Good to know
 
