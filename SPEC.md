@@ -256,9 +256,17 @@ Required fields:
 }
 ```
 
+The schema is strict (`additionalProperties: false` on every object): every
+field above is required on every object, nested objects included. Workers use
+empty arrays or `"N/A"` where a field does not apply; omitting a field fails
+SDK schema validation and the turn.
+
 If `outcome=needs_decision`, `decisions[]` must contain at least one entry.
 The daemon routes the worker to `needs_input` / exit `3` using the first
-decision's `target` and `kind`.
+decision's `target` and `kind`. Decision-report workers cannot emit a text
+`QUESTION:` paragraph; `outcome=needs_decision` + `decisions[]` is their
+escalation channel, and the harness preamble teaches whichever channel matches
+the worker's report mode.
 
 ## Daemon Internals
 

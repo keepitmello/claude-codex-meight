@@ -125,6 +125,12 @@ Required decision fields:
 
 Rules:
 
+- The schema is strict: every field is required on every object (nested
+  included). Use empty arrays or `"N/A"` where a field does not apply —
+  omitting a field fails schema validation and the turn.
+- In decision-report mode you cannot end with a text `QUESTION:` paragraph;
+  `outcome=needs_decision` + `decisions[]` (target/kind/question/recommendation)
+  is your escalation channel, with the same ownership boundaries.
 - `outcome=done` requires no P1 blockers and enough verification for the brief.
 - `outcome=needs_decision` requires at least one `decisions[]` entry. The daemon
   routes it as `needs_input`/exit `3` using the first decision's `target` and
