@@ -48,6 +48,11 @@ MODE_MAP = {
     "delegated": "delegated",
 }
 
+# Single source of the teaching error shown wherever --mode is missing (validated before any side effect).
+MODE_TEACHING_ERROR = """error: --mode is required. Pick one:
+  --mode collab    think together: consult, design, diagnosis, alternatives — worker exposes options and reasoning
+  --mode delegate  own the technical loop: bounded implementation, fix, review — worker reports a decision surface"""
+
 _MODE_BLOCKS = {
     "collaborative": (
         "- Mode: COLLABORATIVE — think with the dispatcher. Expose options, tradeoffs, risks, and your "
@@ -71,26 +76,42 @@ _PREAMBLE_TEMPLATE = """[Harness protocol — mode: {mode} — applies on top of
 - Work evidence-first, root-cause-first, and scope-aware. Challenge wrong assumptions or materially better directions early; decide local technical details yourself.
 - You may run `git commit` and `git push` to commit and push your completed, verified work.
 - If you leave non-code artifact documents such as reports, analyses, evidence, or handoffs in the working directory (cwd), do not use fixed generic names like `result.md`; parallel workers in the same cwd can overwrite each other and pollute the repo. Use a worker-unique name such as `<worker-name>-evidence.md` or `<worker-name>-<short-topic>.md`, and keep that worker-name prefix for every cwd artifact document you create. The isolated worker report at `~/.meight/repos/.../workers/<name>/result.md` is the final message record, not a separate hidden detail channel. Code changes should be made directly in their source paths and are not part of this artifact-document naming rule.
-- Use `QUESTION:` only as the final paragraph when you are truly blocked or when a decision outside your ownership could change scope, UX, user-visible behavior, priority, risk appetite, irreversible action, or acceptance criteria. Resolve technical uncertainty with evidence first; if it does not change dispatcher-owned direction, decide locally and report the judgment call. Structure the paragraph so it can be routed without parsing prose:
+{question_block}
+"""
+
+# Escalation channel depends on the report mode: text workers end with a QUESTION: paragraph;
+# decision workers cannot (their final message is schema-forced JSON), so they escalate via
+# outcome=needs_decision + decisions[]. The preamble must teach the channel that actually works.
+_QUESTION_BLOCKS = {
+    "text": """- Use `QUESTION:` only as the final paragraph when you are truly blocked or when a decision outside your ownership could change scope, UX, user-visible behavior, priority, risk appetite, irreversible action, or acceptance criteria. Resolve technical uncertainty with evidence first; if it does not change dispatcher-owned direction, decide locally and report the judgment call. Structure the paragraph so it can be routed without parsing prose:
   QUESTION:
   TARGET: dispatcher | user   (dispatcher = the orchestrating agent; user = the human it reports to — scope, UX, priority, risk appetite, and irreversible actions usually belong to the user)
   KIND: scope | ux | priority | risk | irreversible | acceptance | missing-info | better-direction | technical
-  <the question itself, with options and your recommendation>
-"""
+  <the question itself, with options and your recommendation>""",
+    "decision": """- Your final message MUST be JSON matching the decision-report schema the harness supplies (strict mode: every field is required — use empty arrays or "N/A" where inapplicable; keep detail in evidence artifacts, not the report). Do not end with a text `QUESTION:` paragraph — it cannot be emitted under the schema. To escalate a decision outside your ownership (scope, UX, user-visible behavior, priority, risk appetite, irreversible action, acceptance criteria) or a true block, set `outcome: "needs_decision"` and add a `decisions[]` entry with `target` ("dispatcher" = the orchestrating agent, "user" = the human it reports to), `kind`, `question`, and `recommendation`. Resolve technical uncertainty with evidence first; if it does not change dispatcher-owned direction, decide locally and record the judgment call.""",
+}
 
 
-def build_preamble(mode: str) -> str:
+def build_preamble(mode: str, report: str = "text") -> str:
+    question_block = _QUESTION_BLOCKS["decision" if report == "decision" else "text"]
     return _PREAMBLE_TEMPLATE.format(
         mode=mode, skill_path=WORKER_SKILL_PATH, mode_block=_MODE_BLOCKS[mode],
+        question_block=question_block,
     )
 
 
-def build_follow_reminder(mode: str) -> str:
+def build_follow_reminder(mode: str, report: str = "text") -> str:
     """Follow/reply turns get a one-line reminder instead of re-injecting the full preamble."""
+    if report == "decision":
+        tail = ('final message is schema-forced JSON (all fields required); escalate via '
+                'outcome: "needs_decision" + decisions[] (target/kind), only for '
+                "dispatcher/user-owned decisions or true blocks.]\n")
+    else:
+        tail = ("QUESTION: as the final paragraph with TARGET:/KIND: lines, only for "
+                "dispatcher/user-owned decisions or true blocks.]\n")
     return (
         f"[Harness reminder — mode: {mode} — same protocol as the initial brief: evidence-first; "
-        "commit/push allowed for verified work; QUESTION: as the final paragraph with TARGET:/KIND: "
-        "lines, only for dispatcher/user-owned decisions or true blocks.]\n"
+        f"commit/push allowed for verified work; {tail}"
     )
 
 
@@ -688,7 +709,10 @@ class Worker:
     def _write_decision(self, decision: dict) -> str:
         atomic_write_json(self.dir / "decision.json", decision)
         rendered = render_decision(decision)
-        (self.dir / "decision.md").write_text(rendered, encoding="utf-8")
+        path = self.dir / "decision.md"
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(rendered, encoding="utf-8")
+        os.replace(tmp, path)
         return rendered
 
     def _on_turn_completed(self, turn: dict) -> None:
@@ -1149,9 +1173,16 @@ class Daemon:
         wid = self._worker_key(repo_key, name)
         brief = req["brief"]
         use_preamble = not req.get("no_preamble")
-        mode = MODE_MAP.get(req.get("mode") or "", "delegated")
+        raw_mode = req.get("mode")
+        mode = MODE_MAP.get(raw_mode or "")
+        if mode is None:
+            # Enforced at the daemon boundary too: stale CLIs and direct socket clients
+            # must not get an implicitly delegated worker.
+            return {"ok": False,
+                    "error": f"missing or invalid mode: {raw_mode!r} "
+                             "(expected collab|collaborative|delegate|delegated)"}
         report = "decision" if req.get("report") == "decision" else "text"
-        preamble = build_preamble(mode)
+        preamble = build_preamble(mode, report)
         turn_input = f"{preamble}\n{brief}" if use_preamble else brief
         file_brief = f"{preamble}\n---\n\n{brief}" if use_preamble else brief
         cwd = req.get("cwd") or os.getcwd()
@@ -1274,7 +1305,7 @@ class Daemon:
                 return {"ok": False,
                         "error": f"worker '{name}' previous stream is still finishing — retry shortly"}
 
-            reminder = build_follow_reminder(w.mode)
+            reminder = build_follow_reminder(w.mode, w.report)
             turn_input = f"{reminder}{brief}" if use_preamble else brief
             file_brief = f"{reminder}---\n\n{brief}" if use_preamble else brief
             w.reset_for_follow(file_brief)  # generation+1; also ignores any leftover old events (second guard)
@@ -1520,8 +1551,9 @@ def fmt_tokens(st: dict) -> str:
 
 def summary_line(st: dict, show_repo: bool = False) -> str:
     repo = f"{truncate(st.get('repo_key') or '-', 24):<24} " if show_repo else ""
-    mode = (st.get("mode") or "-")[:6]
-    return (f"{repo}{st.get('name', '?'):<14} {st.get('state', '?'):<12} {mode:<7} "
+    mode_full = st.get("mode") or "-"
+    mode = {"collaborative": "collab", "delegated": "delegate"}.get(mode_full, mode_full)[:8]
+    return (f"{repo}{st.get('name', '?'):<14} {st.get('state', '?'):<12} {mode:<9} "
             f"{fmt_elapsed(st):>8} "
             f"files:{len(st.get('files_changed') or []):<3} {fmt_tokens(st):<22} "
             f"{truncate(st.get('current_item') or '-', 60)}")
@@ -1532,7 +1564,7 @@ def print_status_table(statuses: list[dict], show_repo: bool = False) -> None:
         print("(no workers)")
         return
     repo = f"{'REPO':<24} " if show_repo else ""
-    print(f"{repo}{'NAME':<14} {'STATE':<12} {'MODE':<7} {'ELAPSED':>8} {'FILES':<9} {'TOKENS':<22} CURRENT")
+    print(f"{repo}{'NAME':<14} {'STATE':<12} {'MODE':<9} {'ELAPSED':>8} {'FILES':<9} {'TOKENS':<22} CURRENT")
     for st in statuses:
         print(summary_line(st, show_repo=show_repo))
 
@@ -1543,13 +1575,15 @@ def cmd_daemon(args, home: Path) -> int:
     return Daemon(home, idle_timeout_sec=getattr(args, "idle_timeout_sec", None)).run()
 
 
-def start_request(args, home: Path) -> dict:
-    if not getattr(args, "mode", None):
-        print("""error: --mode is required. Pick one:
-  --mode collab    think together: consult, design, diagnosis, alternatives — worker exposes options and reasoning
-  --mode delegate  own the technical loop: bounded implementation, fix, review — worker reports a decision surface""",
-              file=sys.stderr)
+def require_mode(args) -> None:
+    """Validate --mode before any side effect (daemon auto-start included)."""
+    if not MODE_MAP.get(getattr(args, "mode", None) or ""):
+        print(MODE_TEACHING_ERROR, file=sys.stderr)
         raise SystemExit(2)
+
+
+def start_request(args, home: Path) -> dict:
+    require_mode(args)
     # --fast/--no-fast is the user-facing knob; map it to a codex service tier.
     # priority = Fast; default = a non-priority tier. The default is deliberately non-Fast.
     fast = bool(getattr(args, "fast", False))
@@ -1760,6 +1794,7 @@ def ensure_daemon(home: Path) -> bool:
 
 def cmd_dispatch(args, home: Path) -> int:
     """One-shot: auto-start daemon -> start -> wait -> print full result.md. Exit matches wait."""
+    require_mode(args)  # before ensure_daemon: a rejected call must not auto-start a daemon
     if not ensure_daemon(home):
         print("error: daemon auto-start failed — check daemon.log", file=sys.stderr)
         return 4
