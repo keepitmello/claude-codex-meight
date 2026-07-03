@@ -72,6 +72,21 @@ Three locks, one direction — **adding any reverse acquisition is a deadlock**:
 | `ctl_lock` (per worker) | all `TurnHandle` control calls: steer / interrupt / force-shutdown | acquired before… |
 | `w.lock` (per worker) | status dict + digest writes | …innermost. Consumer threads take only this |
 
+- **Control plane never waits on the data plane.** The daemon control plane
+  (accept loop, `ping`, registry lookups, `_maintenance`) never shares a lock
+  hold or a thread with worker data-plane operations (SDK calls, stream
+  consumption, consumer joins). Any change that makes accept-loop latency
+  depend on worker progress is a defect. Concretely: `cmd_start`/`cmd_follow`
+  register a name-reserving placeholder under `reg_lock`, then run
+  `Codex()`/`thread_start`/`turn` (seconds of subprocess+RPC) outside it, and
+  `_maintenance` uses non-blocking `is_alive()` instead of joining consumers.
+  The failure mode this prevents: a slow `thread_start` holding `reg_lock`
+  starves `accept()` via `_maintenance`, and a concurrent `wait`'s socket
+  probes time out twice — a false daemon-dead exit `4` plus a healthy worker
+  wrongly marked runtime-lost. Because shutdown can now race the uncovered SDK
+  phase, `cmd_start`/`cmd_follow` re-check `shutting_down`/`interrupt_requested`
+  after the SDK phase and abort instead of starting a consumer.
+
 - **Turn generation ids**: each `follow` bumps `worker.generation`; the consumer thread carries its generation and every event/stream-end/exception handler drops work from stale generations. This is the mechanism that makes follow safe against a previous turn's late events.
 - **Daemon singleton**: `flock(LOCK_EX|LOCK_NB)` on `daemon.lock`, plus a live-socket ping probe before ever unlinking an existing socket. Two concurrent cold dispatches may both spawn — flock guarantees one survives.
 - **Liveness**: never trust `pid_alive` alone (pid reuse); socket ping is the primary signal, with a 2-strike policy in `wait`.
@@ -119,6 +134,7 @@ Built by a Claude orchestrator, adversarially reviewed by Codex across five roun
 8. pid-reuse false-alive (→ ping-first liveness)
 9. Tool-wait `needs_input` surfacing as exit 3 / masking failures; stale question detail after failure (→ `needs_input_source`, terminal-transition clears)
 10. Enum-vs-string comparison silently broken by pydantic's default `model_dump()` (→ `mode="json"` everywhere)
+11. `reg_lock` held across SDK calls / consumer joins starving the accept loop — head-of-line blocking that surfaced as false daemon-dead exit `4` under concurrent `wait` (→ placeholder registration + SDK phase outside the lock, non-blocking `_maintenance`, post-SDK shutdown re-check; "control plane never waits on the data plane")
 
 State-machine changes should re-run the fake-event scenarios (tool-wait→stream-end, question persistence, failed-preservation, multi-line question, wait classification) plus the live checks in `SPEC.md`.
 

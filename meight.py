@@ -1033,11 +1033,18 @@ class Daemon:
         now = time.monotonic()
         with self.reg_lock:
             for key, w in list(self.workers.items()):
-                if w.current_state() in TERMINAL_STATES and w.consumer_finished():
-                    terminal_since = w.terminal_since or now
-                    if self.worker_gc_ttl_sec and now - terminal_since >= self.worker_gc_ttl_sec:
-                        self.log(f"gc worker={w.name} repo={w.repo_key} state={w.current_state()}")
-                        del self.workers[key]
+                if w.current_state() not in TERMINAL_STATES:
+                    continue
+                consumer = w.consumer
+                # Non-blocking liveness only: the accept loop runs maintenance, and a
+                # consumer join here would stall every socket command (control plane
+                # never waits on the data plane). A live consumer just defers GC.
+                if consumer is not None and consumer.is_alive():
+                    continue
+                terminal_since = w.terminal_since or now
+                if self.worker_gc_ttl_sec and now - terminal_since >= self.worker_gc_ttl_sec:
+                    self.log(f"gc worker={w.name} repo={w.repo_key} state={w.current_state()}")
+                    del self.workers[key]
             active = self._active_workers_locked()
         if active:
             return
@@ -1233,41 +1240,60 @@ class Daemon:
                     pass
             (w.dir / "brief.md").write_text(file_brief + "\n", encoding="utf-8")
 
-            w.init_status(thread_id=None)
-            try:
-                w.codex = Codex()
-                thread = w.codex.thread_start(
-                    cwd=cwd,
-                    # Hidden workers must be ephemeral subagent threads. Persistent user
-                    # threads are opt-in because Codex Desktop lists them.
-                    ephemeral=thread_ephemeral,
-                    sandbox=getattr(Sandbox, sandbox_key),
-                    thread_source=(ThreadSource.user if main_thread else ThreadSource.subagent),
-                )
-                w.thread = thread
-                with w.lock:
-                    w.status["thread_id"] = thread.id
-                extra = {"output_schema": REPORT_SCHEMA} if report == "decision" else {}
-                w.handle = thread.turn(
-                    turn_input,
-                    model=model, effort=effort, service_tier=service_tier,
-                    **extra,
-                )
-            except Exception as e:
-                # If SDK failure leaves a starting zombie, wait polls until timeout.
-                w.mark_failed(f"start failed: {type(e).__name__}: {e}")
-                w.detach_runtime_refs_if_idle(self, w.generation, "start failed", keep_thread=False)
-                self.workers[wid] = w
-                self.log(f"start worker={name} repo={repo_key} failed: {e!r}")
-                return {"ok": False, "error": f"start failed: {type(e).__name__}: {e}"}
-
-            w.generation = 1
-            w.consumer = threading.Thread(
-                target=w.consume_stream, args=(self, w.generation, w.handle), daemon=True,
-                name=f"worker-{name}",
-            )
-            w.consumer.start()
+            w.init_status(thread_id=None)  # in-memory state "starting" makes the reservation below effective
+            # Register the placeholder BEFORE the SDK phase: a concurrent same-name start
+            # must fail the active check above instead of racing the slow thread_start.
             self.workers[wid] = w
+
+        # Data-plane phase — deliberately OUTSIDE reg_lock. thread_start spawns a codex
+        # app-server (seconds of subprocess+RPC); holding reg_lock across it starves the
+        # accept loop via _maintenance and made concurrent waits misread the daemon as
+        # dead (false exit 4). Control plane never waits on the data plane.
+        try:
+            w.codex = Codex()
+            thread = w.codex.thread_start(
+                cwd=cwd,
+                # Hidden workers must be ephemeral subagent threads. Persistent user
+                # threads are opt-in because Codex Desktop lists them.
+                ephemeral=thread_ephemeral,
+                sandbox=getattr(Sandbox, sandbox_key),
+                thread_source=(ThreadSource.user if main_thread else ThreadSource.subagent),
+            )
+            w.thread = thread
+            with w.lock:
+                w.status["thread_id"] = thread.id
+            extra = {"output_schema": REPORT_SCHEMA} if report == "decision" else {}
+            w.handle = thread.turn(
+                turn_input,
+                model=model, effort=effort, service_tier=service_tier,
+                **extra,
+            )
+        except Exception as e:
+            # The failed placeholder stays registered so status/wait see a terminal state
+            # instead of a zombie that blocks its name forever.
+            w.mark_failed(f"start failed: {type(e).__name__}: {e}")
+            w.detach_runtime_refs_if_idle(self, w.generation, "start failed", keep_thread=False)
+            self.log(f"start worker={name} repo={repo_key} failed: {e!r}")
+            return {"ok": False, "error": f"start failed: {type(e).__name__}: {e}"}
+
+        # Shutdown can race the SDK phase now that reg_lock no longer covers it: _shutdown_now
+        # may have marked the placeholder interrupted while thread_start was in flight.
+        if self.shutting_down.is_set() or w.interrupt_requested:
+            with w.ctl_lock:
+                try:
+                    w.handle.interrupt()
+                except Exception:
+                    pass
+            w.mark_interrupted("start aborted: daemon shutting down")
+            w.detach_runtime_refs_if_idle(self, w.generation, "start aborted", keep_thread=False)
+            return {"ok": False, "error": "start aborted: daemon shutting down"}
+
+        w.generation = 1
+        w.consumer = threading.Thread(
+            target=w.consume_stream, args=(self, w.generation, w.handle), daemon=True,
+            name=f"worker-{name}",
+        )
+        w.consumer.start()
 
         self.touch_activity()
         self.log(
@@ -1308,27 +1334,43 @@ class Daemon:
             reminder = build_follow_reminder(w.mode, w.report)
             turn_input = f"{reminder}{brief}" if use_preamble else brief
             file_brief = f"{reminder}---\n\n{brief}" if use_preamble else brief
+            # reset_for_follow flips the worker back to "starting", which reserves it:
+            # concurrent follow/start on the same name is rejected while we run the SDK
+            # phase below without holding reg_lock.
             w.reset_for_follow(file_brief)  # generation+1; also ignores any leftover old events (second guard)
-            try:
-                extra = {"output_schema": REPORT_SCHEMA} if w.report == "decision" else {}
-                w.handle = w.thread.turn(
-                    turn_input,
-                    model=w.model, effort=w.effort, service_tier=w.service_tier,
-                    **extra,
-                )
-            except Exception as e:
-                w.mark_failed(f"follow turn failed (was {prev_state}): {type(e).__name__}: {e}")
-                self.log(f"follow worker={name} failed: {e!r}")
-                return {"ok": False, "error": f"follow failed: {type(e).__name__}: {e}"}
-            with w.lock:
-                gen = w.generation
-                turns = w.status["turns"]
-                thread_id = w.status["thread_id"]
-            w.consumer = threading.Thread(
-                target=w.consume_stream, args=(self, gen, w.handle), daemon=True,
-                name=f"worker-{name}-t{turns}",
+
+        # Data-plane phase — outside reg_lock for the same reason as cmd_start.
+        try:
+            extra = {"output_schema": REPORT_SCHEMA} if w.report == "decision" else {}
+            w.handle = w.thread.turn(
+                turn_input,
+                model=w.model, effort=w.effort, service_tier=w.service_tier,
+                **extra,
             )
-            w.consumer.start()
+        except Exception as e:
+            w.mark_failed(f"follow turn failed (was {prev_state}): {type(e).__name__}: {e}")
+            self.log(f"follow worker={name} failed: {e!r}")
+            return {"ok": False, "error": f"follow failed: {type(e).__name__}: {e}"}
+
+        if self.shutting_down.is_set() or w.interrupt_requested:
+            with w.ctl_lock:
+                try:
+                    w.handle.interrupt()
+                except Exception:
+                    pass
+            w.mark_interrupted("follow aborted: daemon shutting down")
+            w.detach_runtime_refs_if_idle(self, w.generation, "follow aborted", keep_thread=False)
+            return {"ok": False, "error": "follow aborted: daemon shutting down"}
+
+        with w.lock:
+            gen = w.generation
+            turns = w.status["turns"]
+            thread_id = w.status["thread_id"]
+        w.consumer = threading.Thread(
+            target=w.consume_stream, args=(self, gen, w.handle), daemon=True,
+            name=f"worker-{name}-t{turns}",
+        )
+        w.consumer.start()
 
         self.touch_activity()
         self.log(f"follow worker={name} repo={repo_key} thread={thread_id} turn#{turns}")
