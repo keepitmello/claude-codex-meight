@@ -37,17 +37,165 @@ DEFAULT_WORKER_GC_TTL_SEC = 60 * 60
 LAUNCHD_LABEL = "com.keepitmello.meight"
 MANAGED_DAEMON_IDLE_TIMEOUT_SEC = "0"
 
-# Bidirectional workers: automatically prepend this before start/follow briefs (disable with --no-preamble)
-PREAMBLE = """[Harness protocol — applies on top of the task below]
-- First read and follow the meight-worker skill at `~/.claude/claude-codex-meight/skills/meight-worker/SKILL.md`. That skill is the worker-side SSOT for role split, modes, reporting, evidence, review, and QUESTION boundaries.
+# Worker-side skill path resolves relative to this file so any clone location works.
+WORKER_SKILL_PATH = Path(__file__).resolve().parent / "skills" / "meight-worker" / "SKILL.md"
+
+# Every worker runs in an explicit mode; the CLI requires it so the choice cannot be skipped.
+MODE_MAP = {
+    "collab": "collaborative",
+    "collaborative": "collaborative",
+    "delegate": "delegated",
+    "delegated": "delegated",
+}
+
+_MODE_BLOCKS = {
+    "collaborative": (
+        "- Mode: COLLABORATIVE — think with the dispatcher. Expose options, tradeoffs, risks, and your "
+        "reasoning; challenge assumptions; give a clear recommendation. A useful report shape: "
+        "CONCLUSION / OPTIONS / RECOMMENDATION / EVIDENCE / ASK."
+    ),
+    "delegated": (
+        "- Mode: DELEGATED — own the technical loop end-to-end. Keep implementation ping-pong, logs, and "
+        "low-level detail out of the report; put them in a worker-unique evidence artifact and report a "
+        "decision surface: verdict, verification PASS/FAIL/NOT RUN with one-line evidence, decisions "
+        "needed (or none), changed files, commit status, evidence artifact path."
+    ),
+}
+
+# Bidirectional workers: automatically prepend this before start briefs (disable with --no-preamble)
+_PREAMBLE_TEMPLATE = """[Harness protocol — mode: {mode} — applies on top of the task below]
+- First read and follow the meight-worker skill at `{skill_path}`. That skill is the worker-side SSOT for role split, modes, reporting, evidence, review, and QUESTION boundaries.
 - If the skill is inaccessible, continue from this compact fallback and record `SKILL NOT READ: <reason>` in your report or evidence artifact.
 - You are a Codex technical teammate. The dispatcher owns WHAT/WHY, priority, scope, UX, user-visible behavior, risk appetite, acceptance criteria, and final approval. You own HOW, technical judgment, technical design, implementation, verification, and review-loop handling.
-- Apply the right mode from the brief: collaborative for consult/design/diagnosis/alternatives; delegated for bounded implementation/fix/verification/review. In delegated mode, keep technical ping-pong out of the dispatcher report.
+{mode_block}
 - Work evidence-first, root-cause-first, and scope-aware. Challenge wrong assumptions or materially better directions early; decide local technical details yourself.
 - You may run `git commit` and `git push` to commit and push your completed, verified work.
 - If you leave non-code artifact documents such as reports, analyses, evidence, or handoffs in the working directory (cwd), do not use fixed generic names like `result.md`; parallel workers in the same cwd can overwrite each other and pollute the repo. Use a worker-unique name such as `<worker-name>-evidence.md` or `<worker-name>-<short-topic>.md`, and keep that worker-name prefix for every cwd artifact document you create. The isolated worker report at `~/.meight/repos/.../workers/<name>/result.md` is the final message record, not a separate hidden detail channel. Code changes should be made directly in their source paths and are not part of this artifact-document naming rule.
-- Use `QUESTION:` only as the final paragraph when you are truly blocked or when a decision outside your ownership could change scope, UX, user-visible behavior, priority, risk appetite, irreversible action, or acceptance criteria. Resolve technical uncertainty with evidence first; if it does not change dispatcher-owned direction, decide locally and report the judgment call.
+- Use `QUESTION:` only as the final paragraph when you are truly blocked or when a decision outside your ownership could change scope, UX, user-visible behavior, priority, risk appetite, irreversible action, or acceptance criteria. Resolve technical uncertainty with evidence first; if it does not change dispatcher-owned direction, decide locally and report the judgment call. Structure the paragraph so it can be routed without parsing prose:
+  QUESTION:
+  TARGET: dispatcher | user   (dispatcher = the orchestrating agent; user = the human it reports to — scope, UX, priority, risk appetite, and irreversible actions usually belong to the user)
+  KIND: scope | ux | priority | risk | irreversible | acceptance | missing-info | better-direction | technical
+  <the question itself, with options and your recommendation>
 """
+
+
+def build_preamble(mode: str) -> str:
+    return _PREAMBLE_TEMPLATE.format(
+        mode=mode, skill_path=WORKER_SKILL_PATH, mode_block=_MODE_BLOCKS[mode],
+    )
+
+
+def build_follow_reminder(mode: str) -> str:
+    """Follow/reply turns get a one-line reminder instead of re-injecting the full preamble."""
+    return (
+        f"[Harness reminder — mode: {mode} — same protocol as the initial brief: evidence-first; "
+        "commit/push allowed for verified work; QUESTION: as the final paragraph with TARGET:/KIND: "
+        "lines, only for dispatcher/user-owned decisions or true blocks.]\n"
+    )
+
+
+# Structured decision-surface report (--report decision): the SDK forces the final agent message
+# to match this schema; the daemon renders decision.md and routes outcome=needs_decision to
+# needs_input so the dispatcher reads a decision surface instead of a technical log.
+REPORT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "outcome": {"type": "string", "enum": ["done", "blocked", "needs_decision", "failed"]},
+        "verdict": {"type": "string", "enum": ["GO", "NO-GO", "PARTIAL", "N/A"]},
+        "summary": {"type": "string"},
+        "verification": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "check": {"type": "string"},
+                    "status": {"type": "string", "enum": ["PASS", "FAIL", "NOT_RUN"]},
+                    "evidence": {"type": "string"},
+                },
+                "required": ["check", "status", "evidence"],
+            },
+        },
+        "remaining_p1": {"type": "array", "items": {"type": "string"}},
+        "decisions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "target": {"type": "string", "enum": ["dispatcher", "user"]},
+                    "kind": {"type": "string"},
+                    "question": {"type": "string"},
+                    "recommendation": {"type": "string"},
+                },
+                "required": ["target", "kind", "question", "recommendation"],
+            },
+        },
+        "changed_files": {"type": "array", "items": {"type": "string"}},
+        "commits": {"type": "array", "items": {"type": "string"}},
+        "evidence_artifacts": {"type": "array", "items": {"type": "string"}},
+        "risks": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": [
+        "outcome",
+        "verdict",
+        "summary",
+        "verification",
+        "remaining_p1",
+        "decisions",
+        "changed_files",
+        "commits",
+        "evidence_artifacts",
+        "risks",
+    ],
+}
+
+
+def render_decision(d: dict) -> str:
+    """Render decision.json into the short decision.md the dispatcher actually reads."""
+    head = f"OUTCOME: {d.get('outcome', '?')}"
+    if d.get("verdict"):
+        head += f" · VERDICT: {d['verdict']}"
+    lines = [head, f"SUMMARY: {d.get('summary', '')}"]
+    for v in d.get("verification") or []:
+        line = f"VERIFICATION: {v.get('status', '?')} - {v.get('check', '')}"
+        if v.get("evidence"):
+            line += f" ({v['evidence']})"
+        lines.append(line)
+    if d.get("remaining_p1"):
+        lines.append("P1 REMAINING: " + "; ".join(str(x) for x in d["remaining_p1"]))
+    decisions = d.get("decisions") or []
+    if decisions:
+        lines.append("DECISIONS NEEDED:")
+        for q in decisions:
+            rec = f" → recommend: {q['recommendation']}" if q.get("recommendation") else ""
+            lines.append(f"  [{q.get('target', 'dispatcher')}/{q.get('kind', '?')}] {q.get('question', '')}{rec}")
+    else:
+        lines.append("DECISIONS NEEDED: none")
+    if d.get("changed_files"):
+        lines.append("FILES: " + ", ".join(str(x) for x in d["changed_files"]))
+    if d.get("commits"):
+        lines.append("COMMITS: " + ", ".join(str(x) for x in d["commits"]))
+    if d.get("evidence_artifacts"):
+        lines.append("EVIDENCE: " + ", ".join(str(x) for x in d["evidence_artifacts"]))
+    if d.get("risks"):
+        lines.append("RISKS: " + "; ".join(str(x) for x in d["risks"]))
+    return "\n".join(lines) + "\n"
+
+
+def parse_question_metadata(question: str) -> tuple[str, str | None]:
+    """Lenient TARGET:/KIND: extraction from a QUESTION paragraph. Missing target routes to dispatcher."""
+    target, kind = "dispatcher", None
+    for line in question.splitlines():
+        m = re.match(r"^\s*TARGET:\s*([A-Za-z_-]+)", line, re.IGNORECASE)
+        if m:
+            target = "user" if m.group(1).lower().startswith("user") else "dispatcher"
+            continue
+        m = re.match(r"^\s*KIND:\s*([A-Za-z_-]+)", line, re.IGNORECASE)
+        if m:
+            kind = m.group(1).lower()
+    return target, kind
 
 SANDBOX_MAP = {
     "ws": "workspace_write",
@@ -255,7 +403,8 @@ class Worker:
 
     def __init__(self, name: str, repo_home: Path, repo_root: str, repo_key: str, cwd: str, sandbox: str,
                  model: str | None, effort: str, service_tier: str | None = None,
-                 thread_source: str = "subagent", thread_ephemeral: bool = True):
+                 thread_source: str = "subagent", thread_ephemeral: bool = True,
+                 mode: str = "delegated", report: str = "text"):
         self.name = name
         self.repo_home = repo_home
         self.repo_root = repo_root
@@ -268,6 +417,8 @@ class Worker:
         self.service_tier = service_tier  # "default" unless --fast maps the worker to "priority"
         self.thread_source = thread_source
         self.thread_ephemeral = thread_ephemeral
+        self.mode = mode          # "collaborative" | "delegated"; follow/reply turns inherit it
+        self.report = report      # "text" | "decision" (decision = output_schema-forced final report)
         self.thread = None       # openai_codex.Thread (kept while daemon lives -> reused for follow)
         self.handle = None       # TurnHandle
         self.codex = None        # openai_codex.Codex runtime owned by this worker
@@ -311,6 +462,8 @@ class Worker:
             "service_tier": self.service_tier,
             "thread_source": self.thread_source,
             "thread_ephemeral": self.thread_ephemeral,
+            "mode": self.mode,
+            "report": self.report,
             "current_item": None,
             "plan": [],
             "files_changed": [],
@@ -318,6 +471,8 @@ class Worker:
             "last_message_tail": "",
             "needs_input_detail": None,
             "needs_input_source": None,
+            "needs_input_target": None,
+            "needs_input_kind": None,
             "runtime_lost_detail": None,
             "turns": turns,
         }
@@ -346,6 +501,12 @@ class Worker:
         with open(self.dir / "events.log", "a", encoding="utf-8") as f:
             f.write(line[:EVENT_LINE_MAX] + "\n")
 
+    def _clear_needs_input_locked(self) -> None:
+        self.status["needs_input_detail"] = None
+        self.status["needs_input_source"] = None
+        self.status["needs_input_target"] = None
+        self.status["needs_input_kind"] = None
+
     # ── Event Handling ──
 
     def consume_stream(self, daemon: "Daemon", gen: int, handle) -> None:
@@ -363,8 +524,7 @@ class Worker:
                                   and self.status.get("needs_input_source") == "question")
                 if gen == self.generation and state not in TERMINAL_STATES and not question_final:
                     self.status["state"] = "interrupted" if self.interrupt_requested else "failed"
-                    self.status["needs_input_detail"] = None
-                    self.status["needs_input_source"] = None
+                    self._clear_needs_input_locked()
                     self.log_event("stream/exception", f"{type(e).__name__}: {e}")
                     self.write_status(force=True)
             daemon.log(f"worker={self.name} stream exception: {traceback.format_exc(limit=3)}")
@@ -407,8 +567,7 @@ class Worker:
                 self._agent_msg_buf = ""
             if self.status["state"] in ("starting", "needs_input"):
                 self.status["state"] = "running"
-                self.status["needs_input_detail"] = None
-                self.status["needs_input_source"] = None
+                self._clear_needs_input_locked()
             self.write_status(force=True)
 
         elif method == "item/agentMessage/delta":
@@ -451,8 +610,7 @@ class Worker:
             self.log_event(method, f"{msg} (will_retry={will_retry})")
             if not will_retry:
                 self.status["state"] = "failed"
-                self.status["needs_input_detail"] = None
-                self.status["needs_input_source"] = None
+                self._clear_needs_input_locked()
                 self.write_status(force=True)
 
         elif method == "tool/requestUserInput" or method.endswith("/requestApproval"):
@@ -460,6 +618,8 @@ class Worker:
             self.status["state"] = "needs_input"
             self.status["needs_input_detail"] = truncate(json.dumps(p, ensure_ascii=False, default=str), 500)
             self.status["needs_input_source"] = "tool"  # mid-turn wait, not final; wait treats it as active
+            self.status["needs_input_target"] = None
+            self.status["needs_input_kind"] = None
             self.log_event(method, self.status["needs_input_detail"])
             self.write_status(force=True)
 
@@ -515,6 +675,22 @@ class Worker:
             return paragraphs[-1]
         return None
 
+    def _parse_decision(self) -> dict:
+        msg = (self._last_agent_msg or self._agent_msg_buf).strip()
+        if msg.startswith("```"):
+            msg = re.sub(r"^```(?:json)?\s*", "", msg, flags=re.IGNORECASE)
+            msg = re.sub(r"\s*```$", "", msg).strip()
+        parsed = json.loads(msg)
+        if not isinstance(parsed, dict):
+            raise ValueError("decision report is not a JSON object")
+        return parsed
+
+    def _write_decision(self, decision: dict) -> str:
+        atomic_write_json(self.dir / "decision.json", decision)
+        rendered = render_decision(decision)
+        (self.dir / "decision.md").write_text(rendered, encoding="utf-8")
+        return rendered
+
     def _on_turn_completed(self, turn: dict) -> None:
         turn_status = turn.get("status")  # completed | interrupted | failed | (future SDK values)
         prior = self.status.get("state")
@@ -527,14 +703,40 @@ class Worker:
             self.status["state"] = "interrupted"
         elif turn_status == "completed":
             # Promote QUESTION only for normally completed turns so it cannot conflict with interrupted/failed.
-            question = self._extract_question()
-            if question:
-                self.status["state"] = "needs_input"
-                self.status["needs_input_detail"] = question if len(question) <= 500 else question[:499] + "…"
-                self.status["needs_input_source"] = "question"
-                self.log_event("question", question)
+            decision = None
+            rendered = None
+            if self.report == "decision":
+                try:
+                    decision = self._parse_decision()
+                    rendered = self._write_decision(decision)
+                except Exception as e:
+                    self.log_event("decision/parse-failed", f"{type(e).__name__}: {e}")
+            if decision is not None:
+                decisions = decision.get("decisions") or []
+                if decision.get("outcome") == "needs_decision" and decisions:
+                    routed = next((d for d in decisions if d.get("target") == "user"), decisions[0])
+                    self.status["state"] = "needs_input"
+                    self.status["needs_input_detail"] = truncate(rendered or render_decision(decision), 500)
+                    self.status["needs_input_source"] = "question"
+                    self.status["needs_input_target"] = (
+                        "user" if routed.get("target") == "user" else "dispatcher"
+                    )
+                    self.status["needs_input_kind"] = routed.get("kind")
+                    self.log_event("decision/needs-decision", self.status["needs_input_detail"])
+                else:
+                    self.status["state"] = "completed"
             else:
-                self.status["state"] = "completed"
+                question = self._extract_question()
+                if question:
+                    target, kind = parse_question_metadata(question)
+                    self.status["state"] = "needs_input"
+                    self.status["needs_input_detail"] = truncate(question, 500)
+                    self.status["needs_input_source"] = "question"
+                    self.status["needs_input_target"] = target
+                    self.status["needs_input_kind"] = kind
+                    self.log_event("question", question)
+                else:
+                    self.status["state"] = "completed"
         elif turn_status == "failed":
             self.status["state"] = "failed"
             err = dig(turn, "error", "message")
@@ -547,8 +749,7 @@ class Worker:
                            f"unexpected turn status {turn_status!r} → {self.status['state']}")
         # Clear stale tool wait details for every non-question terminal state (failed/interrupted/completed).
         if self.status["state"] != "needs_input":
-            self.status["needs_input_detail"] = None
-            self.status["needs_input_source"] = None
+            self._clear_needs_input_locked()
         self._current_item_label = None
         self._current_item_since = None
         self.write_result()
@@ -565,8 +766,7 @@ class Worker:
                     return  # final QUESTION; keep waiting for a follow-up answer
                 # Stream ended while waiting on tool/approval without a terminal event = failure, not hidden.
                 self.status["state"] = "interrupted" if self.interrupt_requested else "failed"
-                self.status["needs_input_detail"] = None
-                self.status["needs_input_source"] = None
+                self._clear_needs_input_locked()
                 self.log_event("stream/ended",
                                f"stream ended while awaiting tool/approval → {self.status['state']}")
                 self.write_result()
@@ -614,9 +814,16 @@ class Worker:
                 "last_message_tail": "",
                 "needs_input_detail": None,
                 "needs_input_source": None,
+                "needs_input_target": None,
+                "needs_input_kind": None,
                 "runtime_lost_detail": None,
                 "turns": turns,
             })
+            for fname in ("decision.json", "decision.md"):
+                try:
+                    (self.dir / fname).unlink()
+                except FileNotFoundError:
+                    pass
             self.write_status(force=True)
 
     def current_state(self) -> str:
@@ -668,8 +875,7 @@ class Worker:
         with self.lock:
             self.interrupt_requested = True
             self.status["state"] = "interrupted"
-            self.status["needs_input_detail"] = None
-            self.status["needs_input_source"] = None
+            self._clear_needs_input_locked()
             self.status["runtime_lost_detail"] = None
             self.log_event("interrupt", reason)
             self.write_status(force=True)
@@ -943,8 +1149,11 @@ class Daemon:
         wid = self._worker_key(repo_key, name)
         brief = req["brief"]
         use_preamble = not req.get("no_preamble")
-        turn_input = f"{PREAMBLE}\n{brief}" if use_preamble else brief
-        file_brief = f"{PREAMBLE}\n---\n\n{brief}" if use_preamble else brief
+        mode = MODE_MAP.get(req.get("mode") or "", "delegated")
+        report = "decision" if req.get("report") == "decision" else "text"
+        preamble = build_preamble(mode)
+        turn_input = f"{preamble}\n{brief}" if use_preamble else brief
+        file_brief = f"{preamble}\n---\n\n{brief}" if use_preamble else brief
         cwd = req.get("cwd") or os.getcwd()
         sandbox_key = SANDBOX_MAP.get(req.get("sandbox") or "full")
         if sandbox_key is None:
@@ -981,10 +1190,12 @@ class Daemon:
                 service_tier,
                 thread_source_label,
                 thread_ephemeral,
+                mode,
+                report,
             )
             w.dir.mkdir(parents=True, exist_ok=True)
             # Restarting the same name creates a new worker, so reset prior outputs.
-            for fname in ("events.log", "result.md", "debug-events.log"):
+            for fname in ("events.log", "result.md", "debug-events.log", "decision.json", "decision.md"):
                 try:
                     (w.dir / fname).unlink()
                 except FileNotFoundError:
@@ -1005,9 +1216,11 @@ class Daemon:
                 w.thread = thread
                 with w.lock:
                     w.status["thread_id"] = thread.id
+                extra = {"output_schema": REPORT_SCHEMA} if report == "decision" else {}
                 w.handle = thread.turn(
                     turn_input,
                     model=model, effort=effort, service_tier=service_tier,
+                    **extra,
                 )
             except Exception as e:
                 # If SDK failure leaves a starting zombie, wait polls until timeout.
@@ -1039,8 +1252,6 @@ class Daemon:
         wid = self._worker_key(repo_key, name)
         brief = req["brief"]
         use_preamble = not req.get("no_preamble")
-        turn_input = f"{PREAMBLE}\n{brief}" if use_preamble else brief
-        file_brief = f"{PREAMBLE}\n---\n\n{brief}" if use_preamble else brief
         with self.reg_lock:
             w = self.workers.get(wid)
             if w is None:
@@ -1063,11 +1274,16 @@ class Daemon:
                 return {"ok": False,
                         "error": f"worker '{name}' previous stream is still finishing — retry shortly"}
 
+            reminder = build_follow_reminder(w.mode)
+            turn_input = f"{reminder}{brief}" if use_preamble else brief
+            file_brief = f"{reminder}---\n\n{brief}" if use_preamble else brief
             w.reset_for_follow(file_brief)  # generation+1; also ignores any leftover old events (second guard)
             try:
+                extra = {"output_schema": REPORT_SCHEMA} if w.report == "decision" else {}
                 w.handle = w.thread.turn(
                     turn_input,
                     model=w.model, effort=w.effort, service_tier=w.service_tier,
+                    **extra,
                 )
             except Exception as e:
                 w.mark_failed(f"follow turn failed (was {prev_state}): {type(e).__name__}: {e}")
@@ -1128,8 +1344,7 @@ class Daemon:
                         if w.status.get("needs_input_source") == "question":
                             w.interrupt_requested = True
                             w.status["state"] = "interrupted"
-                            w.status["needs_input_detail"] = None
-                            w.status["needs_input_source"] = None
+                            w._clear_needs_input_locked()
                             w.thread = None
                             codex_to_close = w.codex
                             w.codex = None
@@ -1219,6 +1434,8 @@ def mark_worker_runtime_lost(repo_home: Path, name: str, st: dict, reason: str) 
     lost["state"] = "failed"
     lost["needs_input_detail"] = None
     lost["needs_input_source"] = None
+    lost["needs_input_target"] = None
+    lost["needs_input_kind"] = None
     lost["runtime_lost_detail"] = reason
     lost["updated_at"] = now_iso()
     worker_dir = repo_home / "workers" / name
@@ -1303,7 +1520,9 @@ def fmt_tokens(st: dict) -> str:
 
 def summary_line(st: dict, show_repo: bool = False) -> str:
     repo = f"{truncate(st.get('repo_key') or '-', 24):<24} " if show_repo else ""
-    return (f"{repo}{st.get('name', '?'):<14} {st.get('state', '?'):<12} {fmt_elapsed(st):>8} "
+    mode = (st.get("mode") or "-")[:6]
+    return (f"{repo}{st.get('name', '?'):<14} {st.get('state', '?'):<12} {mode:<7} "
+            f"{fmt_elapsed(st):>8} "
             f"files:{len(st.get('files_changed') or []):<3} {fmt_tokens(st):<22} "
             f"{truncate(st.get('current_item') or '-', 60)}")
 
@@ -1313,7 +1532,7 @@ def print_status_table(statuses: list[dict], show_repo: bool = False) -> None:
         print("(no workers)")
         return
     repo = f"{'REPO':<24} " if show_repo else ""
-    print(f"{repo}{'NAME':<14} {'STATE':<12} {'ELAPSED':>8} {'FILES':<9} {'TOKENS':<22} CURRENT")
+    print(f"{repo}{'NAME':<14} {'STATE':<12} {'MODE':<7} {'ELAPSED':>8} {'FILES':<9} {'TOKENS':<22} CURRENT")
     for st in statuses:
         print(summary_line(st, show_repo=show_repo))
 
@@ -1325,6 +1544,12 @@ def cmd_daemon(args, home: Path) -> int:
 
 
 def start_request(args, home: Path) -> dict:
+    if not getattr(args, "mode", None):
+        print("""error: --mode is required. Pick one:
+  --mode collab    think together: consult, design, diagnosis, alternatives — worker exposes options and reasoning
+  --mode delegate  own the technical loop: bounded implementation, fix, review — worker reports a decision surface""",
+              file=sys.stderr)
+        raise SystemExit(2)
     # --fast/--no-fast is the user-facing knob; map it to a codex service tier.
     # priority = Fast; default = a non-priority tier. The default is deliberately non-Fast.
     fast = bool(getattr(args, "fast", False))
@@ -1336,6 +1561,8 @@ def start_request(args, home: Path) -> dict:
         "service_tier": service_tier,
         "no_preamble": args.no_preamble,
         "main_thread": getattr(args, "main_thread", False),
+        "mode": args.mode,
+        "report": args.report,
     }
     req.update(request_repo_context(home))
     return send_request(home, req)
@@ -1390,7 +1617,8 @@ def cmd_status(args, home: Path) -> int:
             for key in ("thread_id", "turn_id", "repo_root", "repo_key", "cwd",
                         "sandbox", "model", "effort", "service_tier", "thread_source",
                         "thread_ephemeral", "daemon_pid", "started_at", "updated_at",
-                        "turns", "needs_input_source", "needs_input_detail",
+                        "turns", "mode", "report", "needs_input_source",
+                        "needs_input_target", "needs_input_kind", "needs_input_detail",
                         "runtime_lost_detail"):
                 print(f"  {key}: {st.get(key)}")
             if st.get("plan"):
@@ -1414,7 +1642,10 @@ def cmd_status(args, home: Path) -> int:
 
 
 def cmd_result(args, home: Path) -> int:
-    rp = repo_home_for_cli(home) / "workers" / args.name / "result.md"
+    worker_dir = repo_home_for_cli(home) / "workers" / args.name
+    decision = worker_dir / "decision.md"
+    result = worker_dir / "result.md"
+    rp = result if getattr(args, "raw", False) or not decision.is_file() else decision
     if not rp.is_file():
         print(f"no result for worker '{args.name}'", file=sys.stderr)
         return 1
@@ -1539,7 +1770,9 @@ def cmd_dispatch(args, home: Path) -> int:
     print(f"started worker '{args.name}' thread={resp.get('thread_id')}", flush=True)
     repo_home = repo_home_for_cli(home)
     code = wait_for_worker(home, repo_home, args.name, args.timeout, args.progress)
-    rp = repo_home / "workers" / args.name / "result.md"
+    worker_dir = repo_home / "workers" / args.name
+    decision = worker_dir / "decision.md"
+    rp = decision if decision.is_file() else worker_dir / "result.md"
     if code in (0, 2, 3) and rp.is_file():
         print("--- result ---")
         print(rp.read_text(encoding="utf-8"), end="", flush=True)
@@ -1563,12 +1796,15 @@ def cmd_reply(args, home: Path) -> int:
     print(f"reply turn #{resp.get('turns')} on worker '{args.name}'", flush=True)
     repo_home = repo_home_for_cli(home)
     code = wait_for_worker(home, repo_home, args.name, args.timeout, args.progress)
-    rp = repo_home / "workers" / args.name / "result.md"
+    worker_dir = repo_home / "workers" / args.name
+    decision = worker_dir / "decision.md"
+    rp = decision if decision.is_file() else worker_dir / "result.md"
     if code in (0, 2, 3) and rp.is_file():
         text = rp.read_text(encoding="utf-8")
-        marker = "\n---\n## Turn "
-        if marker in text:
-            text = "## Turn " + text.rsplit(marker, 1)[1]
+        if rp.name == "result.md":
+            marker = "\n---\n## Turn "
+            if marker in text:
+                text = "## Turn " + text.rsplit(marker, 1)[1]
         print("--- result ---")
         print(text, end="", flush=True)
     if getattr(args, "shutdown_when_idle", False) and code in (0, 2, 3):
@@ -1693,6 +1929,8 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--brief-file", help="read from stdin when '-'")
         sp.add_argument("--brief")
         sp.add_argument("--cwd")
+        sp.add_argument("--mode", choices=sorted(MODE_MAP.keys()))
+        sp.add_argument("--report", choices=["text", "decision"], default="text")
         sp.add_argument("--sandbox", default="full", choices=sorted(SANDBOX_MAP.keys()))
         sp.add_argument("--model")
         sp.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh"])
@@ -1756,8 +1994,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--all-repos", action="store_true", help="show workers from every repo namespace")
     sp.set_defaults(fn=cmd_status, name=None)
 
-    sp = sub.add_parser("result", help="print result.md")
+    sp = sub.add_parser("result", help="print decision.md when present, else result.md")
     sp.add_argument("name")
+    sp.add_argument("--raw", action="store_true", help="print raw result.md even when decision.md exists")
     sp.set_defaults(fn=cmd_result)
 
     sp = sub.add_parser("wait", help="poll until terminal state")
