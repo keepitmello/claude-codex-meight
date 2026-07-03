@@ -9,7 +9,27 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
 1. **Observation is pull, completion is push.** Streaming worker events into the orchestrator's context would burn tokens linearly with worker runtime. Instead the daemon reduces the event stream to disk digests (`status.json`, `events.log`, `result.md`); the orchestrator polls only when it cares, and a blocking `wait`/`dispatch` (run as a background shell) delivers a push — the completion notification with the result attached, or a checkpoint wake-up when `wait --timeout` elapses while the worker keeps running. Supervised dispatch leans on that second case: a `wait --timeout` set near the expected duration is a sparse checkpoint, letting the orchestrator read one `status` and `steer` mid-run without ever streaming.
 2. **Exit codes are the API.** `0` done, `2` failed/interrupted, `3` worker has a question, `4` daemon dead, `1` timeout. An agent branches on these without parsing prose.
 3. **One call per intent (one-shot), or a supervised loop.** `dispatch` = (ensure daemon → start → wait → print result) and `reply` = (follow → wait → print last-turn result) are symmetric single background calls — one-shot driving costs the same tool calls as a native subagent, which suits trivial work. For substantial work the orchestrator instead uses `start` plus `wait`, so the door to `status`/`steer` stays open mid-run; how often it actually checks is its judgment, not a fixed cadence. Same pull/push primitives — just sampled when it matters instead of a single fire-and-forget.
-4. **Two-way by protocol, not plumbing.** A preamble (auto-prepended to every brief) frames the worker as a teammate: workers may commit/push completed verified work while the orchestrator owns integration and final sign-off; and rather than guessing or silently complying, end with a `QUESTION:` paragraph — when blocked, or to flag a better approach, a wrong assumption, or a tradeoff before a direction locks in. The daemon promotes that to `needs_input` → exit 3 → the orchestrator answers or discusses with `reply` on the same thread. The same primitives run the other way: the orchestrator can dispatch a read-only `consult` brief to think a problem through with a worker, not just hand off work.
+4. **Mode is harness policy, not memory.** `start` and `dispatch` require
+   `--mode collab|delegate`. The preamble is built per mode at dispatch time,
+   recorded in `status.json`, and shown in status tables. `follow`/`reply`
+   inherit the mode and receive only a one-line reminder. The consumer is an LLM
+   agent, so the harness enforces policy instead of hoping the agent remembers
+   it.
+5. **Two-way by protocol, not plumbing.** A preamble frames the worker as a
+   teammate: workers may commit/push completed verified work while the
+   orchestrator owns integration and final sign-off; and rather than guessing or
+   silently complying, end with a structured `QUESTION:` paragraph when blocked,
+   or to flag a better approach, a wrong assumption, or a tradeoff before a
+   direction locks in. The daemon promotes that to `needs_input` -> exit 3 -> the
+   orchestrator triages `TARGET: dispatcher|user` and replies or escalates. The
+   same primitives run the other way: the orchestrator can dispatch a read-only
+   blind consult to think a problem through with a worker, not just hand off
+   work.
+6. **Decision reports contain technical context.** `--report decision` uses the
+   SDK `output_schema` to produce `decision.json` and rendered `decision.md`.
+   `result.md` remains the raw audit record, but `result`/`dispatch`/`reply`
+   prefer the decision surface so the orchestrator can communicate with the user
+   without absorbing every implementation detail.
 
 ## Process topology
 
@@ -20,7 +40,8 @@ meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  g
    (work without the daemon)                              codex app-server (worker-owned)
                                                                 │ released after terminal turn
 ~/.meight/repos/<repo-key>/workers/<name>/              ▼
-   brief.md · status.json · events.log · result.md   ◀── per-worker consumer thread
+   brief.md · status.json · events.log · result.md
+   decision.json · decision.md                    ◀── per-worker consumer thread
 ```
 
 - **Daemon home** = `$MEIGHT_HOME` if set, otherwise `$XDG_STATE_HOME/meight` or `~/.meight` → one daemon shared across repos.
@@ -36,7 +57,9 @@ meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  g
 
 - Transition priority: **preserve failed/interrupted > QUESTION promotion > completed**. A non-retryable `error` event marks the worker failed and a later `turn/completed(status=completed)` must not overwrite it.
 - Unknown/missing terminal turn status maps to `failed`, never `completed` (the wait contract depends on it).
-- `needs_input` carries a **source**: `"question"` (final-paragraph `QUESTION:` detected after a completed turn — a real, final state) vs `"tool"` (mid-turn tool/approval wait — transient). `classify_wait_state()` returns exit 3 **only for source=question**; a tool-wait that survives to stream-end is converted to `failed`. This distinction exists because an early review showed tool-waits masquerading as final states.
+- `needs_input` carries a **source**: `"question"` (final-paragraph structured `QUESTION:` or `outcome=needs_decision` detected after a completed turn — a real, final state) vs `"tool"` (mid-turn tool/approval wait — transient). `classify_wait_state()` returns exit 3 **only for source=question**; a tool-wait that survives to stream-end is converted to `failed`. This distinction exists because an early review showed tool-waits masquerading as final states.
+- Structured questions also carry `needs_input_target` (`dispatcher|user`) and
+  `needs_input_kind` (`scope|ux|priority|risk|irreversible|acceptance|missing-info|better-direction|technical`) so a middle-layer agent can decide whether to answer or escalate.
 - Non-question terminal transitions clear `needs_input_detail`/`source` (stale-question bug, found in review).
 
 ## Concurrency design
@@ -59,15 +82,24 @@ Three locks, one direction — **adding any reverse acquisition is a deadlock**:
 
 ## Orchestration policy
 
-The routing we run in production with Claude Code as the orchestrator; adapt to taste.
+The routing we run in production; adapt to taste for Claude or Codex as the
+main orchestrator.
 
 | Work | Route |
 |---|---|
-| Bounded implementation with a clear spec; code review; browser/runtime checks | Codex worker via `meight` |
-| Exploration fan-out; fresh-context verification; anything needing the orchestrator's own tooling | Claude subagents |
+| Bounded implementation with a clear spec; code review; browser/runtime checks | Codex worker via `meight --mode delegate` |
+| Direction forks, architecture, diagnosis, alternatives | Codex worker via `meight --mode collab --sandbox ro` |
+| Exploration fan-out; fresh-context verification; anything needing the orchestrator's own tooling | Codex workers or local subagents |
 | High-stakes or irreversible paths | Either — but runtime evidence + explicit orchestrator sign-off regardless |
 
-- **Cross-model review is mandatory**: Codex implements → a fresh-context Claude agent verifies; Claude implements → Codex reviews (`--sandbox ro --effort high`, re-review via `follow` on the same worker). Same-model self-review is not accepted.
+- **Independent review is mandatory**: the implementer never reviews its own
+  work. A fresh-context Codex review worker is the default. A cross-model read
+  is optional extra coverage when a Claude agent is available and the work is
+  important.
+- **Direction-setting forks use blind consult by default**: the orchestrator
+  writes its own analysis first, keeps it out of the brief, and asks a read-only
+  worker for the best-supported design plus the strongest case against it.
+  Anchored consults are only for refining an already-set direction.
 - Workers may commit/push completed verified work; the orchestrator still owns integration and final sign-off.
 - Briefs must point at *existing patterns* relevant to the task — detail-oriented reviewers flag absent context as defects otherwise.
 - `follow` at most ~2 times per thread, then reset with a fresh brief (long Codex sessions degrade).
@@ -100,4 +132,5 @@ State-machine changes should re-run the fake-event scenarios (tool-wait→stream
 
 ## Deliberate non-features (v1)
 
-Custom approval handling; structured worker output via `output_schema` (SDK supports it — natural extension for machine-readable reports); automatic worktree creation; launchd KeepAlive supervision; active-turn recovery across daemon crashes.
+Custom approval handling; automatic worktree creation; launchd KeepAlive
+supervision; active-turn recovery across daemon crashes.

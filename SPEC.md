@@ -90,6 +90,8 @@ worker execution directory only; it does not change the status/result namespace.
       status.json    # digest; schema below
       events.log     # append-only meaningful event lines
       result.md      # final agent message at turn completion
+      decision.json   # structured decision report when --report decision is used
+      decision.md     # rendered decision surface when --report decision is used
 ```
 
 The repository `.gitignore` should ignore `.venv/`. Historical repo-local
@@ -110,6 +112,8 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   "daemon_pid": 12345,
   "cwd": "...",
   "sandbox": "workspace-write",
+  "mode": "delegate",
+  "report": "decision",
   "model": null,
   "effort": "medium",
   "thread_source": "subagent",
@@ -121,6 +125,8 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   "last_message_tail": "last 500 chars of the agent message",
   "needs_input_detail": null,
   "needs_input_source": null,
+  "needs_input_target": null,
+  "needs_input_kind": null,
   "runtime_lost_detail": null,
   "turns": 1
 }
@@ -134,6 +140,13 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   the worker is still attached to the live daemon and can accept `reply`;
   `"tool"` means an SDK tool or approval wait and is treated as active until
   stream-end cleanup.
+- `mode` is required on `start`/`dispatch`: `collab` or `delegate` after alias
+  normalization. `follow`/`reply` inherit it from status.
+- `report` is `text` or `decision`.
+- `needs_input_target` is `dispatcher|user|null`; missing `TARGET` in a parsed
+  question defaults to `dispatcher`.
+- `needs_input_kind` is
+  `scope|ux|priority|risk|irreversible|acceptance|missing-info|better-direction|technical|null`.
 - `events.log` line format:
   `2026-06-12T20:01:02+09:00 [item/completed] commandExecution: pnpm typecheck:be -> exit 0`.
 - Do not write delta events to `events.log`.
@@ -148,31 +161,46 @@ The command table must match the `python3 meight.py --help` subcommand list exac
 | `daemon [--idle-timeout-sec SEC]` | Run the foreground global daemon. The orchestrator starts it in the background. If a live daemon already exists, return exit `1`. `0` disables idle shutdown. |
 | `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid and runtime `idle_timeout_sec`. |
 | `launchd install [--load]` / `launchd status` / `launchd uninstall` | Manage an optional macOS LaunchAgent for the global daemon. The plist uses `RunAtLoad` and `KeepAlive=false`; CLI auto-start remains the on-demand path. |
-| `start <name> (--brief-file F\|- \| --brief TEXT) [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new hidden worker thread with `thread_start(ephemeral=True, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. Defaults: `sandbox=full`, `effort=medium`, `cwd=current directory`, `thread_source=subagent`, `thread_ephemeral=true`, `service_tier=default` so workers run non-Fast unless `--fast` is passed. `--main-thread` intentionally uses `thread_start(ephemeral=False, thread_source=ThreadSource.user)` for tools that require a visible/main thread. `--fast` maps the SDK turn's `service_tier` to `priority`; omitted or `--no-fast` maps it to `default`. Reject duplicate active worker names inside the same repo namespace. `--brief-file -` reads the brief from stdin. |
-| `dispatch <name> (--brief-file F\|- \| --brief TEXT) [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, `start`, `wait`, then print `result.md`. Default timeout is `1800` seconds. Exit code matches `wait`. `--shutdown-when-idle` asks the global daemon to stop after a terminal result if no workers are active. |
-| `follow <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble]` | Start a new turn on the same thread only for a worker waiting on a final `QUESTION:` while that worker remains attached to the current daemon. Terminal workers release their SDK runtime immediately after stream end, so follow-up work should start a new worker. Hidden ephemeral workers are not resumed from disk after daemon restart; in that case `follow` fails clearly and the orchestrator must start a new worker. Reset status, increment `turns`, and append to `result.md` and `events.log` with a separator. |
-| `reply <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot answer path for `QUESTION:` blockers: `follow`, `wait`, then print only the latest turn result. Default timeout is `1800` seconds. |
+| `start <name> --mode collab\|delegate (--brief-file F\|- \| --brief TEXT) [--report text\|decision] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new hidden worker thread with `thread_start(ephemeral=True, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--mode` is required; aliases `collaborative` and `delegated` normalize to `collab` and `delegate`. Defaults: `report=text`, `sandbox=full`, `effort=medium`, `cwd=current directory`, `thread_source=subagent`, `thread_ephemeral=true`, `service_tier=default` so workers run non-Fast unless `--fast` is passed. `--report decision` supplies the SDK `output_schema` and writes `decision.json` plus `decision.md`. `--main-thread` intentionally uses `thread_start(ephemeral=False, thread_source=ThreadSource.user)` for tools that require a visible/main thread. `--fast` maps the SDK turn's `service_tier` to `priority`; omitted or `--no-fast` maps it to `default`. Reject duplicate active worker names inside the same repo namespace. `--brief-file -` reads the brief from stdin. |
+| `dispatch <name> --mode collab\|delegate (--brief-file F\|- \| --brief TEXT) [--report text\|decision] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, `start`, `wait`, then print `decision.md` when present or `result.md` otherwise. `--mode` is required with the same aliases as `start`. Default timeout is `1800` seconds. Exit code matches `wait`. `--shutdown-when-idle` asks the global daemon to stop after a terminal result if no workers are active. |
+| `follow <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble]` | Start a new turn on the same thread only for a worker waiting on a final `QUESTION:` while that worker remains attached to the current daemon. It takes no mode flag; it inherits the worker's recorded `mode` and `report` and receives a one-line harness reminder instead of the full preamble. Terminal workers release their SDK runtime immediately after stream end, so follow-up work should start a new worker. Hidden ephemeral workers are not resumed from disk after daemon restart; in that case `follow` fails clearly and the orchestrator must start a new worker. Reset status, increment `turns`, and append to `result.md`, `decision.json`/`decision.md` when applicable, and `events.log` with a separator. |
+| `reply <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot answer path for `QUESTION:` blockers: `follow`, `wait`, then print the latest `decision.md` when present or latest raw result otherwise. It takes no mode flag and inherits `mode`/`report`. Default timeout is `1800` seconds. |
 | `steer <name> TEXT` | Inject mid-turn text into a running turn. Return an error unless the worker is currently running. |
 | `interrupt <name>` | Interrupt the active turn. |
-| `status [name] [--json] [--all-repos]` | Does not require the daemon. Read repo-scoped `status.json` directly. With no name, print a one-line table for workers in the invoking repo; `--all-repos` reads every repo namespace. With a name, print details. `--json` prints JSON. |
+| `status [name] [--json] [--all-repos]` | Does not require the daemon. Read repo-scoped `status.json` directly. With no name, print a one-line table for workers in the invoking repo, including a `MODE` column; `--all-repos` reads every repo namespace. With a name, print details. `--json` prints JSON. |
 | `list [--json] [--all-repos]` | Alias for `status` with no worker name. |
-| `result <name>` | Print `result.md`. |
+| `result <name> [--raw]` | Print `decision.md` when present. `--raw` prints `result.md`. |
 | `wait <name> [--timeout SEC]` | Poll `status.json` once per second. Terminal states return `completed=0`, `failed=2`, `interrupted=2`. Final `QUESTION:` returns `3` only while the worker is still attached to the live daemon and can accept `reply`. Daemon death returns `4`. Timeout returns `1`. Print one final status summary line to stdout. |
 | `shutdown [--force]` | Refuse shutdown while active workers exist. With `--force`, interrupt live turns, mark final `QUESTION:` waits interrupted, and then shut down. |
 
-## Harness Preamble and QUESTION Protocol
+## Harness Preamble, Mode, and QUESTION Protocol
 
 By default, `start`, `dispatch`, `follow`, and `reply` prepend the harness
 protocol preamble to the brief. `--no-preamble` disables this.
 
-The preamble allows workers to `git commit` and `git push` their completed,
-verified work while the orchestrator still owns integration and final sign-off.
-It also points workers at `skills/meight-worker/SKILL.md` as the worker-side
-contract and frames the worker as a teammate: rather than guessing or silently complying,
-a worker ends its final response with a paragraph
-starting with `QUESTION:` — either when blocked on information only the
-orchestrator can provide, or to raise a better approach, a wrong assumption, or a
-decision that could shift direction.
+`start` and `dispatch` build a mode-specific preamble at dispatch time:
+
+- `collab` / `collaborative`: collaborative consult/design/diagnosis posture.
+- `delegate` / `delegated`: delegated implementation/review/verification
+  posture.
+
+The preamble includes the normalized mode, allows workers to `git commit` and
+`git push` their completed, verified work while the orchestrator still owns
+integration and final sign-off, and points workers at
+`skills/meight-worker/SKILL.md` as the worker-side contract. That path resolves
+relative to the `meight.py` location, not the invoking cwd.
+
+`follow` and `reply` do not accept a mode flag. They inherit the existing
+worker's mode and use a one-line harness reminder instead of the full preamble.
+
+Structured final questions use this exact format:
+
+```text
+QUESTION:
+TARGET: dispatcher | user
+KIND: scope | ux | priority | risk | irreversible | acceptance | missing-info | better-direction | technical
+<question + options + recommendation>
+```
 
 When a completed turn's last paragraph starts with `QUESTION:`, the daemon
 promotes the worker to:
@@ -181,13 +209,56 @@ promotes the worker to:
 {
   "state": "needs_input",
   "needs_input_source": "question",
+  "needs_input_target": "dispatcher",
+  "needs_input_kind": "missing-info",
   "needs_input_detail": "QUESTION: ..."
 }
 ```
 
+Parsing is lenient: a missing `TARGET` defaults to `dispatcher`. Missing or
+unknown `KIND` leaves `needs_input_kind=null` while preserving the raw
+`needs_input_detail`.
+
 `wait` returns exit `3` for this state only while the worker is still attached
 to the live daemon. `follow` and `reply` are allowed to continue from this state
 on the same Codex thread before daemon restart or interruption.
+
+## Decision Report Schema
+
+`--report decision` asks the SDK to constrain the final worker message through
+`output_schema`. The daemon writes raw `result.md`, parsed `decision.json`, and
+rendered `decision.md`. `meight result`, `dispatch`, and `reply` prefer
+`decision.md`; `meight result --raw` prints `result.md`.
+
+Required fields:
+
+```json
+{
+  "outcome": "done|blocked|needs_decision|failed",
+  "verdict": "GO|NO-GO|PARTIAL|N/A",
+  "summary": "...",
+  "verification": [
+    {"check": "...", "status": "PASS|FAIL|NOT_RUN", "evidence": "..."}
+  ],
+  "remaining_p1": [],
+  "decisions": [
+    {
+      "target": "dispatcher|user",
+      "kind": "scope|ux|priority|risk|irreversible|acceptance|missing-info|better-direction|technical",
+      "question": "...",
+      "recommendation": "..."
+    }
+  ],
+  "changed_files": [],
+  "commits": [],
+  "evidence_artifacts": [],
+  "risks": []
+}
+```
+
+If `outcome=needs_decision`, `decisions[]` must contain at least one entry.
+The daemon routes the worker to `needs_input` / exit `3` using the first
+decision's `target` and `kind`.
 
 ## Daemon Internals
 
@@ -239,6 +310,8 @@ on the same Codex thread before daemon restart or interruption.
 - Agent-message deltas are accumulated in memory and finalized on
   `item/completed`.
 - `result.md` is written at `turn/completed` with the last agent message.
+  In decision report mode, `decision.json` and `decision.md` are written for
+  the same turn after schema validation/rendering.
 
 ## Beta SDK Defenses
 
@@ -257,11 +330,11 @@ Run these checks after implementation and attach the evidence.
 1. Start `daemon` in the background with a temporary `MEIGHT_HOME`, then confirm
    `ping` returns ok and the socket lives under that global home.
 2. Run:
-   `start t1 --brief "create /tmp/fleet-test/hello.txt with content 'hi', then reply DONE" --cwd /tmp/fleet-test --sandbox ws`
+   `start t1 --mode delegate --brief "create /tmp/fleet-test/hello.txt with content 'hi', then reply DONE" --cwd /tmp/fleet-test --sandbox ws`
    Then `wait t1` must exit `0`; the file must exist; repo-scoped `status.json`,
    `events.log`, and `result.md` must agree.
 3. Steering test:
-   `start t2 --brief "Count from 1 to 50 slowly, one number per line, pausing to think between each"`
+   `start t2 --mode delegate --brief "Count from 1 to 50 slowly, one number per line, pausing to think between each"`
    While running, send `steer t2 "Stop counting, just reply STEERED"` and
    confirm the result reflects the steer.
 4. Interrupt test: interrupt a long-running task and confirm
@@ -286,7 +359,6 @@ Run these checks after implementation and attach the evidence.
 ## Scope-Outs
 
 - Automatic responses to approval requests or SDK tool input requests.
-- `output_schema` support.
 - Automatic worktree creation. The orchestrator controls worktrees through
   `cwd`.
 - Active-turn recovery after daemon process death.
