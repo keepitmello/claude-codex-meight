@@ -1964,7 +1964,9 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--brief-file", help="read from stdin when '-'")
         sp.add_argument("--brief")
         sp.add_argument("--cwd")
-        sp.add_argument("--mode", choices=sorted(MODE_MAP.keys()))
+        # No argparse `choices`: require_mode() is the single CLI validation source for
+        # missing AND invalid values, so both cases print the same teaching error.
+        sp.add_argument("--mode", help="required: collab|collaborative|delegate|delegated")
         sp.add_argument("--report", choices=["text", "decision"], default="text")
         sp.add_argument("--sandbox", default="full", choices=sorted(SANDBOX_MAP.keys()))
         sp.add_argument("--model")
