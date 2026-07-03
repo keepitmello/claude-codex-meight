@@ -33,6 +33,8 @@
   읽기 전용 consult로 독립 의견을 먼저 받습니다.
 - **독립 리뷰.** 중요 작업은 만든 워커의 말만 믿고 받지 않습니다. 핵심은
   fresh context이고, 교차 모델 리뷰는 가능할 때 추가 커버리지입니다.
+- **학습 루프.** 방향 결정, 사용자 선호, 운영 교훈이 plain file로 쌓입니다.
+  그래서 이후 워커는 model memory에 기대지 않고도 축적된 판단을 이어받습니다.
 
 ```text
    디스패처 에이전트   <->   Codex 워커
@@ -54,6 +56,8 @@
 조향, 중단, 스트리밍, output schema, thread 제어를 API로 제공합니다.
 Meight는 활성 워커마다 SDK 런타임을 하나씩 사용하고, 워커가 끝나면 바로
 해제해서 MCP subprocess와 파일 디스크립터가 남지 않게 합니다.
+역할 분담도 시간이 갈수록 더 개인화됩니다. 판단이 model memory가 아니라
+파일로 남기 때문입니다.
 
 tmux/exec wrapper와 비교하면:
 
@@ -160,6 +164,21 @@ appetite, irreversible action, acceptance criteria 같은 user-owned 판단은
 사람에게 올립니다. 최대 두 라운드 뒤에는 되돌리기 쉽고 위험 낮은 쪽을
 택하거나 escalation합니다.
 
+## 학습 루프
+
+Meight는 에이전트가 이전 논쟁을 반복하기 전에 읽을 수 있는 세 가지
+plain-file ledger를 남기면서 더 나아집니다. 방향을 정하는 갈림길은 repo
+로컬 `decisions/` 기록에 두 독립 의견과 무엇이 결론을 냈는지를 남길 수
+있습니다. 사용자 답변은 `<daemon-home>/notes/preferences.md`에 쌓입니다.
+그래서 디스패처는 반복되는 `TARGET: user` 질문을 다시 올리지 않고 ledger를
+근거로 답할 수 있습니다. 단, `irreversible`과 `risk` 결정은 항상 다시
+확인합니다. 운영 교훈은 `<daemon-home>/notes/lessons.md`에 쌓이고, 반복되면
+brief template으로 승격할 수 있습니다.
+
+전체 doctrine은
+[`skills/meight/SKILL.md`](../skills/meight/SKILL.md#learning-loop-decision-records-preferences-lessons)에
+있습니다.
+
 ## Claude Code 또는 Codex에서 쓰기
 
 실제 작업에서는 `wait --timeout`을 background shell call로 실행합니다.
@@ -208,7 +227,7 @@ Claude 오케스트레이터용 drop-in prompt는 [`CLAUDE.md`](../CLAUDE.md)에
 | `meight result <name> [--raw]` | 있으면 `decision.md` 출력. `--raw`는 원본 `result.md` 출력 |
 | `meight status [name] [--json] [--all-repos]` | digest pull. 테이블에는 `MODE`, 상세에는 report와 needs-input target/kind 포함. 디스크 읽기 |
 | `meight steer <name> "text"` | 실행 중 턴에 지시 주입 |
-| `meight interrupt <name>` | 실행 중 턴 취소 |
+| `meight interrupt <name>` | 실행 중 턴 취소. 워커가 아직 시작 중이거나 live handle이 없는 follow/reply SDK phase 안에 있으면 interrupt를 기록하고 post-SDK commit에서 턴을 abort |
 | `meight list / daemon / ping / shutdown / launchd` | 저수준 보조 커맨드 |
 
 자주 쓰는 옵션:

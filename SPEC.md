@@ -166,7 +166,7 @@ The command table must match the `python3 meight.py --help` subcommand list exac
 | `follow <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble]` | Start a new turn on the same thread only for a worker waiting on a final `QUESTION:` while that worker remains attached to the current daemon. It takes no mode flag; it inherits the worker's recorded `mode` and `report` and receives a one-line harness reminder instead of the full preamble. Terminal workers release their SDK runtime immediately after stream end, so follow-up work should start a new worker. Hidden ephemeral workers are not resumed from disk after daemon restart; in that case `follow` fails clearly and the orchestrator must start a new worker. Reset status, increment `turns`, and append to `result.md`, `decision.json`/`decision.md` when applicable, and `events.log` with a separator. |
 | `reply <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot answer path for `QUESTION:` blockers: `follow`, `wait`, then print the latest `decision.md` when present or latest raw result otherwise. It takes no mode flag and inherits `mode`/`report`. Default timeout is `1800` seconds. |
 | `steer <name> TEXT` | Inject mid-turn text into a running turn. Return an error unless the worker is currently running. |
-| `interrupt <name>` | Interrupt the active turn. |
+| `interrupt <name>` | Interrupt the active turn. For `ACTIVE` workers without a live `TurnHandle` yet, including the initial starting/SDK phase and follow/reply SDK phase, set `interrupt_requested`, return ok with a note, and let the atomic post-SDK commit abort the turn. |
 | `status [name] [--json] [--all-repos]` | Does not require the daemon. Read repo-scoped `status.json` directly. With no name, print a one-line table for workers in the invoking repo, including a `MODE` column; `--all-repos` reads every repo namespace. With a name, print details. `--json` prints JSON. |
 | `list [--json] [--all-repos]` | Alias for `status` with no worker name. |
 | `result <name> [--raw]` | Print `decision.md` when present. `--raw` prints `result.md`. |
@@ -273,6 +273,9 @@ the worker's report mode.
 - One synchronous `Codex` client per active worker.
 - One Python `threading.Thread` per worker to consume the SDK stream and write
   digests.
+- Post-SDK commit is atomic under the per-worker `ctl_lock`: re-check guards,
+  generation, and consumer start happen as one success tail. SDK calls run
+  outside `reg_lock` with a name-reserving `starting` placeholder.
 - Socket protocol: one JSON request line and one JSON response line.
   Example: `{"cmd":"start",...}` -> `{"ok":true}` or
   `{"ok":false,"error":"..."}`.
@@ -362,7 +365,14 @@ Run these checks after implementation and attach the evidence.
    with `runtime_lost_detail` instead of polling forever or returning stale
    `QUESTION`.
 10. Force-shutdown test: create a final-`QUESTION` worker, run
-   `shutdown --force`, and confirm the worker state becomes `interrupted`.
+    `shutdown --force`, and confirm the worker state becomes `interrupted`.
+11. Shutdown/post-SDK race test: cover both orderings around the post-SDK
+    success tail. If shutdown wins before commit, the turn aborts before
+    consumer start; if commit wins first, shutdown interrupts the live handle and
+    joins cleanup.
+12. SDK-phase interrupt test: interrupt while the worker is still in the
+    starting/SDK phase, confirm the interrupt is recorded, and confirm the
+    atomic post-SDK commit aborts the turn.
 
 ## Scope-Outs
 
