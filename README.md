@@ -32,9 +32,10 @@ questions, and keep final reports small enough to make user-facing decisions.
 - **Independent review.** Nothing non-trivial is accepted only on the producing
   worker's word. Fresh context is the non-negotiable part; cross-model review is
   optional extra coverage when available.
-- **Learning loop.** Direction decisions, user preferences, and operational
-  lessons accumulate as plain files, so future workers inherit judgment without
-  relying on model memory.
+- **It gets better with use.** Direction decisions, user preferences, and
+  operational lessons persist as plain files the dispatcher reads before
+  acting. Repeat questions stop reaching the human; settled directions stay
+  settled.
 
 ```text
    dispatcher agent   <->   Codex worker(s)
@@ -56,8 +57,6 @@ The official `openai-codex` Python SDK talks to `codex app-server` directly and
 exposes steering, interrupting, streaming, output schemas, and thread control as
 APIs. Meight uses one SDK runtime per active worker, then releases it when the
 worker finishes so MCP subprocesses and file descriptors do not linger.
-The division of labor also gets more personalized over time because judgments
-persist as files, not model memory.
 
 Compared with tmux/exec wrappers:
 
@@ -69,6 +68,11 @@ Compared with tmux/exec wrappers:
 | Two-way conversation | no | no | structured `QUESTION:` -> exit 3 -> `reply` |
 | Result delivery | scrape | tool return | exit-code contract + result files |
 | Machine-readable reports | no | wrapper-specific | `--report decision` via `output_schema` |
+
+And because every judgment lands on disk — digests, decisions, preferences,
+lessons — the pairing gets more personal over time: the dispatcher learns
+which questions its human wants to see, and which ones it is trusted to
+answer itself.
 
 ## Quick Start
 
@@ -164,19 +168,26 @@ priority, risk appetite, irreversible action, acceptance criteria) go to the
 human. Stop after at most two rounds; choose the reversible/lower-risk path or
 escalate.
 
-## Learning Loop
+## The Harness Learns
 
-Meight improves with use by keeping three plain-file ledgers that agents can
-read before repeating old debates. Direction-setting forks can leave repo-local
-`decisions/` records with both independent reads and what settled them. User
-answers accumulate in `<daemon-home>/notes/preferences.md`, so the dispatcher
-can answer repeat `TARGET: user` questions from the ledger instead of
-re-escalating; `irreversible` and `risk` decisions are always re-confirmed.
-Operational lessons accumulate in `<daemon-home>/notes/lessons.md` and can be
-promoted into brief templates when they recur.
+Three plain-file ledgers make the dispatch loop improve with use:
 
-The full doctrine lives in
+- **Decision records** (`<repo>/decisions/`). Every direction-setting fork
+  resolved by two independent reads leaves a record: both positions, where
+  they split, and what settled it. Later sessions audit the *why*; settled
+  questions stay settled.
+- **Preference ledger** (`<daemon-home>/notes/preferences.md`). When the human
+  answers a `TARGET: user` question, the answer is recorded. The dispatcher
+  checks the ledger before escalating, so each class of question reaches the
+  human once — only irreversible and risk calls are always re-confirmed.
+- **Lessons** (`<daemon-home>/notes/lessons.md`). Recurring review findings
+  and operational mistakes become one-line lessons, promoted into brief
+  templates when they repeat.
+
+None of this is a new subsystem — just files plus doctrine, defined in
 [`skills/meight/SKILL.md`](./skills/meight/SKILL.md#learning-loop-decision-records-preferences-lessons).
+Judgments persist on disk rather than in model memory, so the personalization
+survives context compaction, fresh sessions, and even model swaps.
 
 ## Using It From Claude Code Or Codex
 
@@ -225,7 +236,7 @@ worker-facing skill is
 | `meight result <name> [--raw]` | Print `decision.md` when present; `--raw` prints raw `result.md`. |
 | `meight status [name] [--json] [--all-repos]` | Pull digest. Table includes `MODE`; detail includes report and needs-input target/kind. Reads disk. |
 | `meight steer <name> "text"` | Inject instruction into the running turn. |
-| `meight interrupt <name>` | Cancel the running turn. If the worker is still starting or inside a follow/reply SDK phase without a live handle, the interrupt is recorded and the post-SDK commit aborts the turn. |
+| `meight interrupt <name>` | Cancel the turn. An interrupt that arrives while a worker is still starting — or while a reply turn is being opened — is recorded, and aborts the turn the moment it would commit. |
 | `meight list / daemon / ping / shutdown / launchd` | Low-level support commands. |
 
 Common options:

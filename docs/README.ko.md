@@ -33,8 +33,9 @@
   읽기 전용 consult로 독립 의견을 먼저 받습니다.
 - **독립 리뷰.** 중요 작업은 만든 워커의 말만 믿고 받지 않습니다. 핵심은
   fresh context이고, 교차 모델 리뷰는 가능할 때 추가 커버리지입니다.
-- **학습 루프.** 방향 결정, 사용자 선호, 운영 교훈이 plain file로 쌓입니다.
-  그래서 이후 워커는 model memory에 기대지 않고도 축적된 판단을 이어받습니다.
+- **쓸수록 좋아집니다.** 방향 결정, 사용자 선호, 운영 교훈이 plain file로
+  남고, 디스패처는 행동하기 전에 그것부터 읽습니다. 같은 질문이 사람에게 두 번
+  가지 않고, 한번 정해진 방향은 정해진 채로 유지됩니다.
 
 ```text
    디스패처 에이전트   <->   Codex 워커
@@ -56,8 +57,6 @@
 조향, 중단, 스트리밍, output schema, thread 제어를 API로 제공합니다.
 Meight는 활성 워커마다 SDK 런타임을 하나씩 사용하고, 워커가 끝나면 바로
 해제해서 MCP subprocess와 파일 디스크립터가 남지 않게 합니다.
-역할 분담도 시간이 갈수록 더 개인화됩니다. 판단이 model memory가 아니라
-파일로 남기 때문입니다.
 
 tmux/exec wrapper와 비교하면:
 
@@ -69,6 +68,11 @@ tmux/exec wrapper와 비교하면:
 | 양방향 대화 | 없음 | 없음 | 구조화된 `QUESTION:` -> exit 3 -> `reply` |
 | 결과 전달 | 스크래핑 | 툴 반환값 | exit code 계약 + 결과 파일 |
 | 기계 판독 보고 | 없음 | wrapper마다 다름 | `--report decision` via `output_schema` |
+
+그리고 모든 판단이 디스크에 남기 때문에 — 요약, 결정, 선호, 교훈 —
+이 페어링은 시간이 갈수록 더 개인적이 됩니다. 디스패처는 자신의 사람이
+어떤 질문은 직접 보고 싶어하고, 어떤 질문은 자신에게 믿고 맡기는지를
+배워갑니다.
 
 ## 빠른 시작
 
@@ -164,20 +168,25 @@ appetite, irreversible action, acceptance criteria 같은 user-owned 판단은
 사람에게 올립니다. 최대 두 라운드 뒤에는 되돌리기 쉽고 위험 낮은 쪽을
 택하거나 escalation합니다.
 
-## 학습 루프
+## 하네스는 배웁니다
 
-Meight는 에이전트가 이전 논쟁을 반복하기 전에 읽을 수 있는 세 가지
-plain-file ledger를 남기면서 더 나아집니다. 방향을 정하는 갈림길은 repo
-로컬 `decisions/` 기록에 두 독립 의견과 무엇이 결론을 냈는지를 남길 수
-있습니다. 사용자 답변은 `<daemon-home>/notes/preferences.md`에 쌓입니다.
-그래서 디스패처는 반복되는 `TARGET: user` 질문을 다시 올리지 않고 ledger를
-근거로 답할 수 있습니다. 단, `irreversible`과 `risk` 결정은 항상 다시
-확인합니다. 운영 교훈은 `<daemon-home>/notes/lessons.md`에 쌓이고, 반복되면
-brief template으로 승격할 수 있습니다.
+세 가지 plain-file ledger가 디스패치 루프를 쓸수록 좋아지게 만듭니다:
 
-전체 doctrine은
+- **결정 기록** (`<repo>/decisions/`). 두 독립 분석으로 결론이 난 방향
+  갈림길마다 기록이 남습니다: 양쪽 입장, 갈린 지점, 무엇이 결론을 냈는지.
+  이후 세션은 *왜*를 감사할 수 있고, 한번 정리된 질문은 정리된 채로
+  유지됩니다.
+- **선호 원장** (`<daemon-home>/notes/preferences.md`). 사람이 `TARGET: user`
+  질문에 답할 때마다 그 답이 기록됩니다. 디스패처는 escalation 전에 원장을
+  먼저 확인하므로, 같은 부류의 질문은 사람에게 한 번만 도달합니다 — 단,
+  irreversible과 risk 결정만은 항상 다시 확인합니다.
+- **교훈** (`<daemon-home>/notes/lessons.md`). 반복되는 리뷰 발견과 운영
+  실수는 한 줄 교훈이 되고, 재발하면 brief template으로 승격됩니다.
+
+이 중 무엇도 새 서브시스템이 아닙니다 — 파일과 doctrine뿐이며, 정의는
 [`skills/meight/SKILL.md`](../skills/meight/SKILL.md#learning-loop-decision-records-preferences-lessons)에
-있습니다.
+있습니다. 판단이 model memory가 아니라 디스크에 남기 때문에, 이 개인화는
+컨텍스트 압축과 새 세션, 심지어 모델 교체까지 살아남습니다.
 
 ## Claude Code 또는 Codex에서 쓰기
 
@@ -227,7 +236,7 @@ Claude 오케스트레이터용 drop-in prompt는 [`CLAUDE.md`](../CLAUDE.md)에
 | `meight result <name> [--raw]` | 있으면 `decision.md` 출력. `--raw`는 원본 `result.md` 출력 |
 | `meight status [name] [--json] [--all-repos]` | digest pull. 테이블에는 `MODE`, 상세에는 report와 needs-input target/kind 포함. 디스크 읽기 |
 | `meight steer <name> "text"` | 실행 중 턴에 지시 주입 |
-| `meight interrupt <name>` | 실행 중 턴 취소. 워커가 아직 시작 중이거나 live handle이 없는 follow/reply SDK phase 안에 있으면 interrupt를 기록하고 post-SDK commit에서 턴을 abort |
+| `meight interrupt <name>` | 턴 취소. 워커가 아직 시작 중이거나 답변 턴을 여는 중에 도착한 interrupt는 기록되었다가, 시작이 완료되는 순간 턴을 중단시킵니다 |
 | `meight list / daemon / ping / shutdown / launchd` | 저수준 보조 커맨드 |
 
 자주 쓰는 옵션:
