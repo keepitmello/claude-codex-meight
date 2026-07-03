@@ -175,7 +175,9 @@ The daemon parses leniently. Missing `TARGET` defaults to `dispatcher`. Parsed
 values are recorded as `needs_input_target` and `needs_input_kind` in
 `status.json`. Exit codes do not change: final structured questions still exit
 `3`. The middle layer triages: `TARGET: user` or user-owned kinds are escalated
-to the human verbatim; other questions are answered with `meight reply`.
+to the human verbatim; other questions are answered with `meight reply`. Before
+escalating, check the preference ledger (see Learning Loop below) — an already
+answered class of question is answered from the ledger, not re-asked.
 
 ```bash
 meight reply <name> --brief "Use config-a.json and keep the legacy field."
@@ -233,6 +235,49 @@ meight start consult-refine --mode collab --sandbox ro --effort high --cwd <repo
 
 Do not run worker-vs-worker debate loops. Do not feed one read into the other
 before both exist.
+
+## Learning Loop: Decision Records, Preferences, Lessons
+
+The harness gets better with use only if decisions and answers accumulate
+somewhere agents actually read. Three ledgers, all plain files:
+
+### Decision Records (`<repo>/decisions/`)
+
+After any direction-setting fork resolved by two reads, write
+`decisions/YYYY-MM-DD-<slug>.md` in the working repo:
+
+```md
+# <the question>
+DATE: <date> · MODE: consensus|delegation
+READ A (dispatcher): <one-paragraph position>
+READ B (worker, blind|anchored): <one-paragraph position>
+DISAGREEMENT: <where they split, or "none">
+RESOLUTION: evidence|value-judgment — <what settled it>
+DECISION: <what was chosen>
+STATUS: adopted
+```
+
+This is the durable output of consensus mode: it survives context compaction,
+lets any later session audit *why*, and accumulates the judgment patterns that
+settle future forks faster. Supersede with `STATUS: superseded by <file>`
+rather than deleting.
+
+### Preference Ledger (`<daemon-home>/notes/preferences.md`)
+
+Before escalating a `TARGET: user` question, check the ledger. If the user has
+already answered the same class of question, answer via `reply` citing the
+recorded preference instead of re-asking. After the user decides something new,
+append one line: preference, one-clause rationale, date.
+
+Exception: `KIND: irreversible` and `KIND: risk` questions are re-confirmed
+with the user even when a recorded preference matches.
+
+### Lessons (`<daemon-home>/notes/lessons.md`)
+
+Operational lessons about running workers — recurring review-finding classes,
+brief-writing gaps, harness interference patterns — get one line each. When a
+lesson recurs, promote it into the brief template's Constraints or into this
+skill. Repo-specific code patterns belong in that repo's own docs, not here.
 
 ## Review Worker Pattern
 
