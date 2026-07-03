@@ -1,6 +1,6 @@
 ---
 name: meight
-description: "Codex worker dispatch harness (global CLI: meight, repo: claude-codex-meight). Delegate implementation/review/runtime, browser QA, visual QA, computer-use, and image generation/editing work to N parallel Codex workers — supervised dispatch by default (start + sparse wait checkpoints + status/steer), one-shot dispatch for trivial safe tasks, bidirectional QUESTION protocol. Use whenever 루/the dispatcher delegates work to Codex. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임"
+description: "Codex worker dispatch harness (global CLI: meight, repo: claude-codex-meight). Delegate implementation/review/runtime, browser QA, visual QA, computer-use, and image generation/editing work to N parallel Codex workers — supervised dispatch by default (start + sparse wait checkpoints + status/steer), one-shot dispatch for trivial safe tasks, bidirectional QUESTION protocol. Use whenever a dispatcher delegates work to Codex. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임"
 ---
 
 # meight (claude-codex-meight)
@@ -10,7 +10,7 @@ Harness for driving Codex workers in parallel from a Claude-side dispatcher — 
 Codex worker-facing details live in [`skills/meight-worker/SKILL.md`](../meight-worker/SKILL.md); the harness preamble points workers there before work starts, while this skill remains the dispatcher-facing guide for supervising workers.
 
 **Operating model (self-contained — works without any other prompt file):**
-- **The dispatcher is 루 / the companion**: task decomposition, final integration/sign-off, user communication, and git coordination stay with 루. **Codex workers are tech leads, not just executors**: strong on details (races, type drift, edge cases, contract violations) and responsible for *how* the work is done. 루 owns what to build, why it matters, priority, UX, user-visible behavior, risk appetite, and final approval. Codex owns technical judgment, design, implementation, verification, and review loops. Run it two-way: pull a worker in to sounding-board a hard call, and expect workers to push back when they spot a better path or a wrong assumption.
+- **The dispatcher owns orchestration**: task decomposition, final integration/sign-off, user communication, and git coordination stay with the dispatcher. **Codex workers are tech leads, not just executors**: strong on details (races, type drift, edge cases, contract violations) and responsible for *how* the work is done. The dispatcher owns what to build, why it matters, priority, UX, user-visible behavior, risk appetite, and final approval. Codex owns technical judgment, design, implementation, verification, and review loops. Run it two-way: pull a worker in to sounding-board a hard call, and expect workers to push back when they spot a better path or a wrong assumption.
 - **Routing**: bounded implementation with a clear spec / code review / browser, visual, desktop, and runtime QA work → Codex workers. Exploration fan-out / fresh-context verification / harness-tool work → Claude subagents.
 - **Independent review before accepting is mandatory — default to a Codex review worker**: every worker output gets an independent read, and the one non-negotiable is that the implementer never reviews its own work. There's no evidence cross-model reviews *better* than a fresh same-model read — independent context is what does the work — so:
   - **Default (single review) — fresh Codex review worker**: a *separate* worker from the implementer, adversarial `--sandbox ro`. This is the standard independent review for most work, including verifying Codex implementations. Cheaper and faster than spinning up a Claude agent.
@@ -18,7 +18,7 @@ Codex worker-facing details live in [`skills/meight-worker/SKILL.md`](../meight-
   The trap this still closes: accepting a worker's "done" with no independent read at all.
 - **Direction is set by two reads, never one**: when the work reaches a direction-setting branch — which approach, a design tradeoff, an architecture or diagnosis call, scope/sequencing, anything genuinely ambiguous — it gets **two independent analyses before you commit**: yours first (you analyze it directly — analysis is never outsourced), then a mandatory read-only Codex analysis of the *same* question, and you set direction by comparing the two reads. This is the sibling of cross-model review — review checks a finished artifact, this shapes the direction before the build — and like review, one side alone doesn't count: your reasoning alone is a claim, the cross-read makes it a decision. The trap it closes: deciding a direction-setting branch solo, without ever calling a worker. Run the Codex half via the **Consult** pattern below. (Trivial, unambiguous, or already-agreed calls don't need this.)
 - **Verification still owns the outcome (owns what/why, not how)** — a worker's "done" is a claim, your verification makes it a fact. Workers may now run `git commit`/`git push` for their completed, verified work and report what they committed; you still own integration and final sign-off.
-- **Two modes — pick one up front, ask the user if unsure**: **Collaborative** — use it for design, diagnosis, architecture, alternatives, and direction discussion. 루 and Codex think together, so exposing technical options is useful. **Delegated** — use it for bounded implementation, fixes, verification, and review. Codex owns the technical loop and reports only what 루 needs to decide or sign off. Mixing them is the failure mode: asking 루 to choose local technical details, or hiding a scope/UX/risk decision inside implementation. If the mode is not obvious, ask before dispatching.
+- **Two modes — pick one up front, ask the user if unsure**: **Collaborative** — use it for design, diagnosis, architecture, alternatives, and direction discussion. The dispatcher and Codex think together, so exposing technical options is useful. **Delegated** — use it for bounded implementation, fixes, verification, and review. Codex owns the technical loop and reports only what the dispatcher needs to decide or sign off. Mixing them is the failure mode: asking the dispatcher to choose local technical details, or hiding a scope/UX/risk decision inside implementation. If the mode is not obvious, ask before dispatching.
 
 ## Default: supervised dispatch
 
@@ -88,7 +88,7 @@ EOF
 - Model: gpt-5.5 with non-Fast service tier by default. Pass `--fast` on `start`/`dispatch` only when that specific worker should use the priority tier; omitted or `--no-fast` stays on the cheaper non-priority tier. **Pick effort by complexity**: medium (default, routine implementation) / high (tricky implementation, code review, debugging) / xhigh (precision verification — concurrency, irreversible or hard-to-verify changes — and hard design)
 - Thread visibility: workers start with `ephemeral=True` and `thread_source=subagent` by default so they stay out of Codex Desktop's main user-thread list. Use `--main-thread` only for tools that require a visible/main thread.
 - N parallel workers OK. Overlapping file scopes → separate git worktrees via `--cwd`
-- A harness preamble is auto-prepended to every brief: **workers may commit/push their verified work** + end with a `QUESTION:` paragraph only for decisions 루/the dispatcher must make or true blocks
+- A harness preamble is auto-prepended to every brief: **workers may commit/push their verified work** + end with a `QUESTION:` paragraph only for decisions the dispatcher must make or true blocks
 
 ## Consult a worker (sounding board, not just delegation)
 
@@ -107,7 +107,7 @@ This is the sibling of cross-model review: review checks a finished artifact, co
 
 ## When a worker asks a question (exit 3)
 
-A worker's `QUESTION:` isn't only "I'm blocked" — under the teammate preamble it's also how a worker flags a better approach, a shaky assumption, or a tradeoff that needs your call. Keep that channel narrow: `QUESTION:` is for decisions 루/the dispatcher must make, such as scope, UX, user-visible behavior, priority, risk appetite, irreversible action, or acceptance-criteria conflict. Technical uncertainty should be resolved with evidence first; local implementation choices should be decided by the worker and recorded as judgment calls, not escalated as questions. In supervised mode, read it with `meight status <name>` (`needs_input_detail`) or `meight result <name>`; in one-shot `dispatch`/`reply` it's in the printed result. Answer — or discuss back — in one shot:
+A worker's `QUESTION:` isn't only "I'm blocked" — under the teammate preamble it's also how a worker flags a better approach, a shaky assumption, or a tradeoff that needs your call. Keep that channel narrow: `QUESTION:` is for decisions the dispatcher must make, such as scope, UX, user-visible behavior, priority, risk appetite, irreversible action, or acceptance-criteria conflict. Technical uncertainty should be resolved with evidence first; local implementation choices should be decided by the worker and recorded as judgment calls, not escalated as questions. In supervised mode, read it with `meight status <name>` (`needs_input_detail`) or `meight result <name>`; in one-shot `dispatch`/`reply` it's in the printed result. Answer — or discuss back — in one shot:
 
 ```bash
 # via run_in_background → completion notification carries the last-turn result (same exit-code contract as dispatch)
@@ -162,9 +162,9 @@ meight wait review-X --timeout 300
 # After fixes, re-review on the same worker via follow/reply (context preserved)
 ```
 
-## Self-reviewing implementation worker (keeps 루 out of the technical ping-pong)
+## Self-reviewing implementation worker (keeps the dispatcher out of the technical ping-pong)
 
-The pattern above has *you* dispatch the reviewer and relay findings back to the implementer — useful, but it drags 루 through every implement↔review↔fix round and pollutes the dispatcher context with technical detail. For bounded implementation work, push that whole loop *inside* the implementing worker: it spawns its own independent reviewer, fixes the real defects, and hands back only what 루 needs to decide or sign off. 루 stays out of the technical execution and ping-pong, then does final sign-off (+ commit) only.
+The pattern above has *you* dispatch the reviewer and relay findings back to the implementer — useful, but it drags the dispatcher through every implement↔review↔fix round and pollutes the dispatcher context with technical detail. For bounded implementation work, push that whole loop *inside* the implementing worker: it spawns its own independent reviewer, fixes the real defects, and hands back only what the dispatcher needs to decide or sign off. The dispatcher stays out of the technical execution and ping-pong, then does final sign-off (+ commit) only.
 
 The implementer spawns a **genuinely independent** reviewer (verified: separate context, not self-review) via Codex's own sub-agent tool — `multi_agent_v1.spawn_agent(agent_type="reviewer", fork_context=false)` then `wait_agent`. `fork_context=false` is what makes it independent: the reviewer starts from its prompt only, not the implementer's working context.
 
@@ -187,16 +187,16 @@ Brief block to paste:
    a follow-up worker with handoff, file/line evidence, verification commands, and open decisions.
    Never put technical logs in the report body; only the concise VERIFICATION summary belongs there.
    Do not use fixed generic cwd artifact names like result.md.
-4. Report to 루 in whatever concise shape fits the task, but include these signals:
+4. Report to the dispatcher in whatever concise shape fits the task, but include these signals:
    - result: GO / NO-GO, or the plain-language equivalent
    - verification: PASS / FAIL / NOT RUN for the checks that matter, with one short evidence note
    - P1 blockers fixed or still open
-   - decisions 루 must make: scope, UX, user-visible behavior, priority, risk appetite, irreversible action, or acceptance conflict; write "none" if none
+   - decisions the dispatcher must make: scope, UX, user-visible behavior, priority, risk appetite, irreversible action, or acceptance conflict; write "none" if none
    - files changed and commit/push status when relevant
    - where the detailed evidence artifact is
 ```
 
-When to use which: **self-reviewing worker** = bounded implementation where Codex should own technical execution and keep 루 out of technical detail. **Separate review worker / cross-model A/B** (above) = high-stakes or architecture work where 루 should intentionally read the findings and weigh them.
+When to use which: **self-reviewing worker** = bounded implementation where Codex should own technical execution and keep the dispatcher out of technical detail. **Separate review worker / cross-model A/B** (above) = high-stakes or architecture work where the dispatcher should intentionally read the findings and weigh them.
 
 ## Writing briefs (template in README.md)
 

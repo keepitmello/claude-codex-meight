@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 .meight/
+.codex/checkpoints/
 *-evidence.md
 result.md
 *-read.md
