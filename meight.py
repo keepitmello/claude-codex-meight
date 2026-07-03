@@ -1276,24 +1276,29 @@ class Daemon:
             self.log(f"start worker={name} repo={repo_key} failed: {e!r}")
             return {"ok": False, "error": f"start failed: {type(e).__name__}: {e}"}
 
-        # Shutdown can race the SDK phase now that reg_lock no longer covers it: _shutdown_now
-        # may have marked the placeholder interrupted while thread_start was in flight.
-        if self.shutting_down.is_set() or w.interrupt_requested:
-            with w.ctl_lock:
+        # Post-SDK commit is atomic under ctl_lock: _shutdown_now and cmd_interrupt also
+        # take ctl_lock per worker, so either they run first (flag set → we abort) or the
+        # commit runs first (their snapshot sees the live consumer/handle and covers it).
+        # This closes the TOCTOU between the guard check and consumer.start().
+        aborted = False
+        with w.ctl_lock:
+            if self.shutting_down.is_set() or w.interrupt_requested:
+                aborted = True
                 try:
                     w.handle.interrupt()
                 except Exception:
                     pass
-            w.mark_interrupted("start aborted: daemon shutting down")
+            else:
+                w.generation = 1
+                w.consumer = threading.Thread(
+                    target=w.consume_stream, args=(self, w.generation, w.handle), daemon=True,
+                    name=f"worker-{name}",
+                )
+                w.consumer.start()
+        if aborted:
+            w.mark_interrupted("start aborted: daemon shutting down or interrupted")
             w.detach_runtime_refs_if_idle(self, w.generation, "start aborted", keep_thread=False)
-            return {"ok": False, "error": "start aborted: daemon shutting down"}
-
-        w.generation = 1
-        w.consumer = threading.Thread(
-            target=w.consume_stream, args=(self, w.generation, w.handle), daemon=True,
-            name=f"worker-{name}",
-        )
-        w.consumer.start()
+            return {"ok": False, "error": "start aborted: daemon shutting down or interrupted"}
 
         self.touch_activity()
         self.log(
@@ -1352,25 +1357,29 @@ class Daemon:
             self.log(f"follow worker={name} failed: {e!r}")
             return {"ok": False, "error": f"follow failed: {type(e).__name__}: {e}"}
 
-        if self.shutting_down.is_set() or w.interrupt_requested:
-            with w.ctl_lock:
+        # Same atomic post-SDK commit as cmd_start (see the TOCTOU note there).
+        aborted = False
+        with w.ctl_lock:
+            if self.shutting_down.is_set() or w.interrupt_requested:
+                aborted = True
                 try:
                     w.handle.interrupt()
                 except Exception:
                     pass
-            w.mark_interrupted("follow aborted: daemon shutting down")
+            else:
+                with w.lock:
+                    gen = w.generation
+                    turns = w.status["turns"]
+                    thread_id = w.status["thread_id"]
+                w.consumer = threading.Thread(
+                    target=w.consume_stream, args=(self, gen, w.handle), daemon=True,
+                    name=f"worker-{name}-t{turns}",
+                )
+                w.consumer.start()
+        if aborted:
+            w.mark_interrupted("follow aborted: daemon shutting down or interrupted")
             w.detach_runtime_refs_if_idle(self, w.generation, "follow aborted", keep_thread=False)
-            return {"ok": False, "error": "follow aborted: daemon shutting down"}
-
-        with w.lock:
-            gen = w.generation
-            turns = w.status["turns"]
-            thread_id = w.status["thread_id"]
-        w.consumer = threading.Thread(
-            target=w.consume_stream, args=(self, gen, w.handle), daemon=True,
-            name=f"worker-{name}-t{turns}",
-        )
-        w.consumer.start()
+            return {"ok": False, "error": "follow aborted: daemon shutting down or interrupted"}
 
         self.touch_activity()
         self.log(f"follow worker={name} repo={repo_key} thread={thread_id} turn#{turns}")
@@ -1434,7 +1443,13 @@ class Daemon:
                     with w.lock:
                         if w.status.get("state") == "interrupted":
                             return {"ok": True, "note": "cleared QUESTION wait"}
-                return {"ok": False, "error": f"worker '{name}' has no live turn handle"}
+                # ACTIVE with no live handle = the SDK phase of start/follow (or a tool
+                # wait without a handle). Record the interrupt instead of dropping it;
+                # the atomic post-SDK commit honors the flag and aborts the turn.
+                w.interrupt_requested = True
+                w.log_event("interrupt", "recorded during SDK phase — starting turn will be aborted")
+                self.touch_activity()
+                return {"ok": True, "note": "interrupt recorded — starting turn will be aborted"}
             w.interrupt_requested = True
             try:
                 w.handle.interrupt()
@@ -1672,8 +1687,9 @@ def cmd_steer(args, home: Path) -> int:
 def cmd_interrupt(args, home: Path) -> int:
     req = {"cmd": "interrupt", "name": args.name}
     req.update(request_repo_context(home))
-    expect_ok(send_request(home, req))
-    print(f"interrupt requested for '{args.name}'")
+    resp = expect_ok(send_request(home, req))
+    note = resp.get("note")
+    print(f"interrupt requested for '{args.name}'" + (f" — {note}" if note else ""))
     return 0
 
 
