@@ -14,6 +14,7 @@ import json
 import os
 import plistlib
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -273,6 +274,20 @@ def managed_daemon_env(home: Path) -> dict[str, str]:
     env["MEIGHT_HOME"] = str(home)
     env["MEIGHT_IDLE_TIMEOUT_SEC"] = MANAGED_DAEMON_IDLE_TIMEOUT_SEC
     return env
+
+
+def system_codex_bin() -> str:
+    """Return the current system Codex CLI instead of the SDK's stale bundled runtime."""
+    configured = os.environ.get("MEIGHT_CODEX_BIN")
+    candidate = configured or shutil.which("codex")
+    if not candidate:
+        raise FileNotFoundError(
+            "codex CLI not found; install it or set MEIGHT_CODEX_BIN to its executable path"
+        )
+    path = Path(candidate).expanduser()
+    if not path.is_file() or not os.access(path, os.X_OK):
+        raise FileNotFoundError(f"Codex executable is not runnable: {path}")
+    return str(path)
 
 
 def state_home() -> Path:
@@ -1169,7 +1184,7 @@ class Daemon:
         }
 
     def cmd_start(self, req: dict) -> dict:
-        from openai_codex import Codex, Sandbox
+        from openai_codex import Codex, CodexConfig, Sandbox
         try:
             from openai_codex.types import ThreadSource
         except ImportError:
@@ -1250,7 +1265,7 @@ class Daemon:
         # accept loop via _maintenance and made concurrent waits misread the daemon as
         # dead (false exit 4). Control plane never waits on the data plane.
         try:
-            w.codex = Codex()
+            w.codex = Codex(config=CodexConfig(codex_bin=system_codex_bin()))
             thread = w.codex.thread_start(
                 cwd=cwd,
                 # Hidden workers must be ephemeral subagent threads. Persistent user
@@ -1946,6 +1961,8 @@ def launchd_payload(home: Path) -> dict:
         "KeepAlive": False,
         "EnvironmentVariables": {
             **({"PATH": os.environ["PATH"]} if os.environ.get("PATH") else {}),
+            **({"MEIGHT_CODEX_BIN": os.environ["MEIGHT_CODEX_BIN"]}
+               if os.environ.get("MEIGHT_CODEX_BIN") else {}),
             "MEIGHT_HOME": str(home),
             "MEIGHT_IDLE_TIMEOUT_SEC": MANAGED_DAEMON_IDLE_TIMEOUT_SEC,
         },

@@ -152,7 +152,7 @@ State-machine changes should re-run the fake-event scenarios (tool-wait→stream
 
 - **Editing `meight.py` does not affect a running daemon** — restart it (`meight shutdown`, next dispatch auto-starts). Easy to forget.
 - Optional LaunchAgent support lives behind `meight launchd install --load`; `KeepAlive` stays off, and the LaunchAgent sets both `MEIGHT_IDLE_TIMEOUT_SEC=0` and `daemon --idle-timeout-sec 0` so live control channels stay attached until explicit shutdown. Verify the loaded job with `launchctl print`, not only the plist file.
-- Beta SDK (`openai-codex==0.1.0b3`, pinned): before bumping, re-introspect the API surface (`inspect.signature`), dump real event payloads (`MEIGHT_DEBUG=1` → per-worker `debug-events.log`), and re-run the verification suite.
+- Beta SDK (`openai-codex==0.1.0b3`, pinned): meight deliberately supplies the current system `codex` executable instead of the SDK's older bundled runtime. `MEIGHT_CODEX_BIN` is the explicit override. Before bumping the SDK or Codex CLI, re-introspect the API surface (`inspect.signature`), dump real event payloads (`MEIGHT_DEBUG=1` → per-worker `debug-events.log`), and re-run the verification suite.
 - Approval requests arrive as SDK server-requests (auto-accepted by the SDK's default handler), not stream notifications — the `needs_input` tool path is defensive.
 - Per-turn `cwd`/`sandbox`/`model`/`effort` come from the SDK's `Thread.turn()` — worktree isolation is just `--cwd`.
 

@@ -266,13 +266,15 @@ artifact를 남기지만 SDK runtime은 즉시 해제합니다. 마지막 struct
 
 - Meight는 model, MCP server, auth를 `~/.codex/config.toml`에서 상속합니다.
   터미널에서 `codex`가 되면 `meight`도 됩니다.
+- Meight는 SDK에 포함된 runtime 대신 현재 시스템의 `codex` 실행 파일을
+  사용합니다. 특정 실행 파일을 강제로 쓸 때만 `MEIGHT_CODEX_BIN`을 설정하세요.
 - 워커는 기본적으로 hidden ephemeral Codex subagent thread로 시작합니다:
   `thread_source=subagent`, `thread_ephemeral=true`.
 - Foreground `meight daemon`은 기본적으로 활성 워커가 없으면
   `MEIGHT_IDLE_TIMEOUT_SEC` 뒤 종료됩니다. Managed `dispatch` auto-start와
   LaunchAgent 시작은 idle shutdown을 끕니다. 실제 값은 `meight ping`으로
   확인하세요.
-- `openai-codex`는 베타라 버전을 고정했습니다(`0.1.0b3`). 올릴 때는
+- `openai-codex`는 베타라 버전을 고정했습니다(`0.1.0b3`). SDK나 Codex CLI를 올릴 때는
   [`SPEC.md`](../SPEC.md)의 검증 스위트를 재실행하세요.
 - 설계 상세, state machine, hardening history, lifecycle caveat는
   [`ARCHITECTURE.md`](../ARCHITECTURE.md)에 있습니다. 전체 dispatcher

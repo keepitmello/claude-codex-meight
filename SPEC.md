@@ -16,10 +16,11 @@ This document is the implementation contract and verification record for
 ## Stack
 
 - Python 3.13 with a repository-local `.venv/`.
-- `openai-codex==0.1.0b3` beta SDK. Keep the version pinned.
-- SDK internals: the client spawns `codex app-server --listen stdio://` and
-  talks JSON-RPC over stdio. One process multiplexes multiple threads through
-  `MessageRouter`.
+- `openai-codex==0.1.0b3` beta SDK. Keep the SDK version pinned.
+- SDK internals: the client spawns the current system
+  `codex app-server --listen stdio://` selected by `system_codex_bin()` and
+  talks JSON-RPC over stdio. `MEIGHT_CODEX_BIN` can explicitly select another
+  executable. One process multiplexes multiple threads through `MessageRouter`.
 - The SDK inherits the user's Codex config, including model, MCP servers, and
   authentication.
 

@@ -267,12 +267,15 @@ artifacts remain but same-thread reply is expired; start a fresh worker.
 
 - Meight inherits your `~/.codex/config.toml` for model, MCP servers, and auth.
   If `codex` works in your terminal, `meight` works.
+- Meight uses the current system `codex` executable rather than the SDK's
+  bundled runtime. Set `MEIGHT_CODEX_BIN` only when an explicit executable
+  override is needed.
 - Workers start as hidden ephemeral Codex subagent threads by default:
   `thread_source=subagent`, `thread_ephemeral=true`.
 - Foreground `meight daemon` exits after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with
   no active workers by default. Managed `dispatch` auto-start and LaunchAgent
   starts disable idle shutdown; verify the live value with `meight ping`.
-- `openai-codex` is pinned (`0.1.0b3`, beta). When bumping, re-run the
+- `openai-codex` is pinned (`0.1.0b3`, beta). When bumping the SDK or Codex CLI, re-run the
   verification suite in [`SPEC.md`](./SPEC.md).
 - Design details, state machine, hardening history, and lifecycle caveats live
   in [`ARCHITECTURE.md`](./ARCHITECTURE.md). Full dispatcher protocol lives in
