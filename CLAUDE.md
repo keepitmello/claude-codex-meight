@@ -39,11 +39,11 @@ meight start <name> --mode delegate --report decision --brief-file - --cwd <dir>
 ## Report
 EOF
 
-meight wait <name> --timeout 300
 meight status <name>
 meight steer <name> "correction"
 meight result <name>          # prefers decision.md when present
 meight result <name> --raw    # prints raw result.md
+meight reply <name> --brief "answer the worker question"
 ```
 
 - `start` and `dispatch` require `--mode collab|delegate`
@@ -57,7 +57,9 @@ meight result <name> --raw    # prints raw result.md
 - Use `--mode collab` for consult/design/diagnosis. The worker should expose
   options, reasoning, recommendation, evidence, and asks.
 - One-shot `dispatch` is for trivial, short, low-risk work only. Substantial
-  work should use `start` + `wait` so `status`/`steer` remain available.
+  work should use `start`, then `status`/`steer`/`result`/`reply` when the
+  session is revisited or Claude Code surfaces the background work. Do not keep
+  a long-running background checkpoint shell as the normal supervision loop.
 
 ## Question Routing
 

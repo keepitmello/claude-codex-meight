@@ -1,6 +1,6 @@
 ---
 name: meight
-description: "Codex worker dispatch harness (global CLI: meight, repo: claude-codex-meight). Delegate implementation/review/runtime, browser QA, visual QA, computer-use, and image generation/editing work to N parallel Codex workers with explicit --mode collab|delegate, supervised dispatch by default, one-shot dispatch for trivial safe tasks, structured QUESTION routing, and decision-surface reports. Use whenever a dispatcher delegates work to Codex. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임"
+description: "Codex worker dispatch harness (global CLI: meight, repo: claude-codex-meight). Delegate implementation/review/runtime, browser QA, visual QA, computer-use, and image generation/editing work to N parallel Codex workers with explicit --mode collab|delegate, start/status/result supervision by default, one-shot dispatch for trivial safe tasks, structured QUESTION routing, and decision-surface reports. Use whenever a dispatcher delegates work to Codex. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임"
 ---
 
 # meight (claude-codex-meight)
@@ -50,11 +50,13 @@ policy cannot be forgotten or left to memory.
 Mode is recorded in `status.json` as `mode` and shown in status tables as the
 `MODE` column.
 
-## Default: Supervised Dispatch
+## Default: Start, Then Check Status
 
-For anything beyond trivial, short, low-risk work, use `start` + `wait` instead
-of one blocking `dispatch`. The split keeps `status` and `steer` available while
-the worker runs. How often to look is judgment, not a fixed cadence.
+For anything beyond trivial, short, low-risk work, use `start` instead of one
+blocking `dispatch`. After starting, keep working and use `status`, `steer`,
+`result`, and `reply` when the session is revisited or the host surfaces the
+background work. Do not keep a long-running background checkpoint shell as the
+normal Claude Code supervision loop.
 
 ```bash
 meight start <name> --mode delegate --report decision --brief-file - --cwd <dir> \
@@ -66,19 +68,13 @@ meight start <name> --mode delegate --report decision --brief-file - --cwd <dir>
 ## Verification <commands to run + expected outcome>
 ## Report     <decision surface; details in a worker-unique evidence artifact>
 EOF
-
-meight wait <name> --timeout 300
-# exit: 0=completed, 2=failed/interrupted/runtime-lost,
-#       3=needs_input (replyable structured QUESTION),
-#       4=daemon dead, 1=checkpoint timeout while worker continues
 ```
 
-On exit `1`, inspect once and decide:
+When you revisit the worker, inspect once and decide:
 
 ```bash
 meight status <name>
 meight steer <name> "correction"
-meight wait <name> --timeout 300
 ```
 
 When the worker reaches a terminal or question state:
@@ -86,11 +82,12 @@ When the worker reaches a terminal or question state:
 ```bash
 meight result <name>        # prefers decision.md when present
 meight result <name> --raw  # raw result.md audit record
+meight reply <name> --brief "Use config-a.json and keep the legacy field."
 ```
 
-`wait` auto-heartbeats progress every 300s by default (`--progress N`, or `0`
-to disable). Set `--timeout` near expected duration: finish in time means a
-completion push; overrun means one checkpoint wake-up. Never busy-poll.
+Long-running checkpoint shells are not the default Claude Code orchestration
+path. Treat a stopped background shell as a shell lifecycle event, not a worker
+failure.
 
 ## One-Shot Dispatch
 
@@ -184,7 +181,7 @@ meight reply <name> --brief "Use config-a.json and keep the legacy field."
 ```
 
 At most two `follow`/`reply` turns per thread is a good default. If daemon
-restart or GC expired the same-thread session, `wait` returns `2` with
+restart or GC expired the same-thread session, `status` shows
 `runtime_lost_detail`; start a fresh worker instead of replying.
 
 ## Consult Doctrine
@@ -378,8 +375,8 @@ Hidden-session invariant:
 
 - Worker artifacts:
   `<daemon-home>/repos/<repo-key>/workers/<name>/{brief.md,status.json,events.log,result.md,decision.json,decision.md}`
-- Low-level commands: daemon / start / wait / result / list / shutdown
-  `[--force]` / launchd.
+- Low-level commands: daemon / start / result / list / shutdown `[--force]` /
+  launchd.
 - Lifecycle: foreground `MEIGHT_IDLE_TIMEOUT_SEC` default is 1800s, while
   `daemon --idle-timeout-sec 0` disables it. Managed `dispatch`/LaunchAgent
   starts pass idle disable through both env and daemon args. LaunchAgent jobs
