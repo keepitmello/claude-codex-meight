@@ -116,6 +116,34 @@ def build_follow_reminder(mode: str, report: str = "text") -> str:
     )
 
 
+def install_computer_use_approval_bridge(codex, worker_name: str) -> None:
+    """Approve only this worker's explicit Computer Use app-access requests.
+
+    The pinned SDK exposes server-request handling only through its internal
+    client. Keep that compatibility boundary here, and leave every other MCP
+    elicitation with the SDK's existing handler.
+    """
+    client = getattr(codex, "_client", None)
+    fallback = getattr(client, "_approval_handler", None)
+    if not callable(fallback):
+        raise RuntimeError("openai-codex SDK does not expose an approval handler")
+
+    def approval_handler(method: str, params: dict | None) -> dict:
+        if not isinstance(params, dict):
+            return fallback(method, params)
+        meta = params.get("_meta")
+        if not isinstance(meta, dict) or meta.get("connector_id") != "computer-use":
+            return fallback(method, params)
+        tool_params = meta.get("tool_params")
+        if method == "mcpServer/elicitation/request" and isinstance(tool_params, dict):
+            app = tool_params.get("app") or "unknown"
+            print(f"computer-use approval accepted worker={worker_name} app={app}", flush=True)
+            return {"action": "accept", "_meta": {"persist": "session"}}
+        return fallback(method, params)
+
+    client._approval_handler = approval_handler
+
+
 # Structured decision-surface report (--report decision): the SDK forces the final agent message
 # to match this schema; the daemon renders decision.md and routes outcome=needs_decision to
 # needs_input so the dispatcher reads a decision surface instead of a technical log.
@@ -1266,6 +1294,7 @@ class Daemon:
         # dead (false exit 4). Control plane never waits on the data plane.
         try:
             w.codex = Codex(config=CodexConfig(codex_bin=system_codex_bin()))
+            install_computer_use_approval_bridge(w.codex, w.name)
             thread = w.codex.thread_start(
                 cwd=cwd,
                 # Hidden workers must be ephemeral subagent threads. Persistent user

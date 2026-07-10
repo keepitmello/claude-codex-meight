@@ -131,6 +131,14 @@ meight dispatch tiny-1 --mode delegate --report decision --sandbox ro \
   --brief "Check whether README mentions LICENSE."
 ```
 
+Computer Use app-access is enabled by default for each meight worker session.
+Other MCP approvals remain unchanged.
+
+```bash
+meight dispatch desktop-qa --mode delegate --sandbox ro \
+  --brief "Use Computer Use to inspect Calculator. Do not change its state."
+```
+
 ## Consults
 
 Direction-setting forks use blind consult by default: write your own analysis

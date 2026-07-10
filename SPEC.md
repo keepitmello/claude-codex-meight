@@ -314,7 +314,8 @@ the worker's report mode.
     payload in `needs_input_detail` with `needs_input_source="tool"`.
   - A final `QUESTION:` paragraph records the question in `needs_input_detail`
     with `needs_input_source="question"`.
-  - Automatic approval or tool-response handling is out of scope.
+  - Automatic approval or tool-response handling is out of scope, except the
+    default Computer Use app-access bridge described below.
 - `error` notifications or stream exceptions set the worker state to `failed`
   and write the reason to `events.log`.
 - `SIGTERM` and `SIGINT` attempt to interrupt all handles, close the Codex
@@ -374,10 +375,17 @@ Run these checks after implementation and attach the evidence.
 12. SDK-phase interrupt test: interrupt while the worker is still in the
     starting/SDK phase, confirm the interrupt is recorded, and confirm the
     atomic post-SDK commit aborts the turn.
+13. Computer Use approval bridge test: with a fake SDK client, confirm a valid
+    `mcpServer/elicitation/request` for `connector_id="computer-use"` accepts,
+    while a different connector, method, or malformed metadata reaches the
+    original handler.
 
 ## Scope-Outs
 
-- Automatic responses to approval requests or SDK tool input requests.
+- Automatic responses to approval requests or SDK tool input requests, except
+  per-worker Computer Use app-access elicitations. They are enabled by default,
+  accept only `connector_id="computer-use"` requests, and apply only to the
+  worker session.
 - Automatic worktree creation. The orchestrator controls worktrees through
   `cwd`.
 - Active-turn recovery after daemon process death.

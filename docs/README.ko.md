@@ -131,6 +131,14 @@ meight dispatch tiny-1 --mode delegate --report decision --sandbox ro \
   --brief "README에 LICENSE 언급이 있는지만 확인해."
 ```
 
+meight 워커의 Computer Use 앱 접근은 기본으로 켜져 있습니다. 다른 MCP 승인
+동작은 바꾸지 않습니다.
+
+```bash
+meight dispatch desktop-qa --mode delegate --sandbox ro \
+  --brief "Computer Use로 Calculator를 확인해. UI 상태는 바꾸지 마."
+```
+
 ## Consult
 
 방향을 정하는 갈림길에서는 blind consult가 기본입니다. 먼저 자신의 분석을
