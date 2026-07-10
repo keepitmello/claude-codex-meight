@@ -29,9 +29,10 @@ questions, and keep final reports small enough to make user-facing decisions.
 - **Blind consults for forks.** Direction-setting decisions use an independent
   read-only consult with problem and constraints only, before debate or
   implementation.
-- **Independent review.** Nothing non-trivial is accepted only on the producing
-  worker's word. Fresh context is the non-negotiable part; cross-model review is
-  optional extra coverage when available.
+- **Risk-based independent review.** Security-sensitive, irreversible, broad,
+  genuinely uncertain, or high-impact work gets a fresh-context read; routine
+  bounded and reversible work can rely on relevant verification plus
+  orchestrator sign-off. Cross-model review is optional extra coverage.
 - **It gets better with use.** Direction decisions, user preferences, and
   operational lessons persist as plain files the dispatcher reads before
   acting. Repeat questions stop reaching the human; settled directions stay

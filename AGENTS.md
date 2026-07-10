@@ -93,14 +93,16 @@ or escalate. Do not create worker-vs-worker debate loops.
 
 ## Safety Rules
 
-1. Independent review before accepting is mandatory. The implementer never
-   reviews its own work. Default to a fresh Codex review worker with independent
-   context; if a Claude agent is available, cross-model review is optional
-   extra coverage for important work.
+1. Use independent review when the risk warrants it: security-sensitive,
+   irreversible, broad, genuinely uncertain, or high-impact changes. For a
+   routine bounded and reversible change, relevant verification plus
+   orchestrator sign-off is sufficient. A fresh-context Codex review worker is
+   the default for riskier work; cross-model review is optional extra coverage.
 2. NO-GO means blockers were found. Fix valid blockers, then re-review. Push
    back only with code or runtime evidence.
-3. No completion claims without evidence. A worker's "done" is a claim; tests,
-   runtime checks, reviewer verdict, and your sign-off make it a fact.
+3. No completion claims without evidence. A worker's "done" is a claim;
+   relevant tests or runtime checks plus your sign-off make it a fact. When
+   rule 1 requires independent review, a reviewer verdict is required too.
 4. Workers may commit/push completed verified work when allowed by the brief,
    but the main session still owns final integration and approval.
 5. Parallel workers with overlapping file scopes need separate worktrees via

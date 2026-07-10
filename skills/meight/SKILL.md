@@ -26,8 +26,9 @@ SSOT for how to supervise workers.
 - Workers are teammates, not silent executors. They can push back with a
   structured `QUESTION:` when they see a better direction, a wrong assumption,
   or a decision outside their ownership.
-- Verification owns the outcome. A worker's "done" is a claim; tests, runtime
-  checks, reviewer verdicts, and dispatcher sign-off make it a fact.
+- Verification owns the outcome. A worker's "done" is a claim; relevant tests
+  or runtime checks plus dispatcher sign-off make it a fact. When risk warrants
+  independent review, a reviewer verdict is required too.
 - Workers may commit/push completed verified work when the brief allows it, but
   the dispatcher still owns final integration and approval.
 
@@ -297,8 +298,11 @@ skill. Repo-specific code patterns belong in that repo's own docs, not here.
 
 ## Review Worker Pattern
 
-Every non-trivial worker output gets an independent read before acceptance. The
-implementer never reviews its own work.
+Use an independent read when risk warrants it: security-sensitive,
+irreversible, broad, genuinely uncertain, or high-impact work. For a routine
+bounded and reversible change, relevant verification plus dispatcher sign-off
+is sufficient; do not spend a second worker merely as proof that ordinary work
+is complete.
 
 ```bash
 meight start review-X --mode delegate --report decision --sandbox ro --effort high --cwd <repo root> --brief-file - <<'EOF'
@@ -309,10 +313,10 @@ file:line, why, fix direction. End with GO or NO-GO.
 EOF
 ```
 
-Default to a fresh Codex review worker. For important architecture,
-high-stakes, or irreversible work, add another independent read when available
-(for example a Claude agent) because critical work deserves more than one
-perspective. Independent context is the non-negotiable part.
+Default to a fresh Codex review worker for riskier work. For important
+architecture, high-stakes, or irreversible work, add another independent read
+when available (for example a Claude agent) because critical work deserves more
+than one perspective. Independent context matters when review is warranted.
 
 For bounded implementation, you can push the implement/review/fix loop inside
 the worker by requiring it to spawn an independent reviewer and report only the

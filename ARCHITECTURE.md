@@ -117,10 +117,11 @@ main orchestrator.
 | Exploration fan-out; fresh-context verification; anything needing the orchestrator's own tooling | Codex workers or local subagents |
 | High-stakes or irreversible paths | Either — but runtime evidence + explicit orchestrator sign-off regardless |
 
-- **Independent review is mandatory**: the implementer never reviews its own
-  work. A fresh-context Codex review worker is the default. A cross-model read
-  is optional extra coverage when a Claude agent is available and the work is
-  important.
+- **Independent review is risk-based**: use a fresh-context Codex reviewer for
+  security-sensitive, irreversible, broad, genuinely uncertain, or
+  high-impact work. Routine bounded and reversible changes can rely on relevant
+  verification plus orchestrator sign-off. A cross-model read remains optional
+  extra coverage for important work.
 - **Direction-setting forks use blind consult by default**: the orchestrator
   writes its own analysis first, keeps it out of the brief, and asks a read-only
   worker for the best-supported design plus the strongest case against it.
