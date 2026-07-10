@@ -70,6 +70,25 @@ meight start <name> --mode delegate --report decision --brief-file - --cwd <dir>
 EOF
 ```
 
+## Model Selection (GPT-5.6: sol / terra / luna)
+
+Pass `--model` explicitly; the flag already exists on `start` and `dispatch`.
+Routing principle: **failure cost picks the model.** Code work that misses
+forces an extra review/fix round, so a slower-but-smarter model wins on total
+time. Step-heavy automation is latency-dominated with simple per-step
+decisions, so a faster model wins.
+
+| Model | Use for | Typical effort |
+|-------|---------|----------------|
+| `sol` | Implementation, fixes, verification (default for code work) | medium |
+| `sol` | Design, consult, architecture, adversarial review | high |
+| `terra` | Computer use, browser QA, runtime automation, step-heavy flows | medium |
+| `luna` | One-shot trivial checks (`dispatch tiny-*`), lookups, screenshot reads | low–medium |
+
+Benchmark rumor "sol medium ≈ terra high" is unverified for our workloads —
+when in doubt on code quality, prefer `sol`. Revisit this table after A/B
+comparisons on real briefs (record findings in `notes/lessons.md`).
+
 When you revisit the worker, inspect once and decide:
 
 ```bash
