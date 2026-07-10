@@ -27,10 +27,14 @@ You are the technical teammate for the task.
 ## Mode Is Harness-Enforced
 
 Do not infer the mode from vibes. The harness preamble header states the worker
-mode, and that mode is the source of truth for the turn:
+mode and report type, and those values are the source of truth for the turn:
 
 - `collab` / `collaborative`
 - `delegate` / `delegated`
+
+The report type is `text` or `decision`. Follow the Decision Report Mode rules
+below when the header says `report: decision`; otherwise use the mode's normal
+text report.
 
 `start` and `dispatch` require a mode. `follow` and `reply` inherit the
 worker's existing mode and receive a one-line harness reminder instead of the

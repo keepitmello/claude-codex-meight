@@ -54,66 +54,23 @@ MODE_TEACHING_ERROR = """error: --mode is required. Pick one:
   --mode collab    think together: consult, design, diagnosis, alternatives — worker exposes options and reasoning
   --mode delegate  own the technical loop: bounded implementation, fix, review — worker reports a decision surface"""
 
-_MODE_BLOCKS = {
-    "collaborative": (
-        "- Mode: COLLABORATIVE — think with the dispatcher. Expose options, tradeoffs, risks, and your "
-        "reasoning; challenge assumptions; give a clear recommendation. A useful report shape: "
-        "CONCLUSION / OPTIONS / RECOMMENDATION / EVIDENCE / ASK."
-    ),
-    "delegated": (
-        "- Mode: DELEGATED — own the technical loop end-to-end. Keep implementation ping-pong, logs, and "
-        "low-level detail out of the report; put them in a worker-unique evidence artifact and report a "
-        "decision surface: verdict, verification PASS/FAIL/NOT RUN with one-line evidence, decisions "
-        "needed (or none), changed files, commit status, evidence artifact path."
-    ),
-}
-
-# Bidirectional workers: automatically prepend this before start briefs (disable with --no-preamble)
-_PREAMBLE_TEMPLATE = """[Harness protocol — mode: {mode} — applies on top of the task below]
-- First read and follow the meight-worker skill at `{skill_path}`. That skill is the worker-side SSOT for role split, modes, reporting, evidence, review, and QUESTION boundaries.
-- If the skill is inaccessible, continue from this compact fallback and record `SKILL NOT READ: <reason>` in your report or evidence artifact.
-- You are a Codex technical teammate. The dispatcher owns WHAT/WHY, priority, scope, UX, user-visible behavior, risk appetite, acceptance criteria, and final approval. You own HOW, technical judgment, technical design, implementation, verification, and review-loop handling.
-{mode_block}
-- Work evidence-first, root-cause-first, and scope-aware. Challenge wrong assumptions or materially better directions early; decide local technical details yourself.
-- You may run `git commit` and `git push` to commit and push your completed, verified work.
-- If you leave non-code artifact documents such as reports, analyses, evidence, or handoffs in the working directory (cwd), do not use fixed generic names like `result.md`; parallel workers in the same cwd can overwrite each other and pollute the repo. Use a worker-unique name such as `<worker-name>-evidence.md` or `<worker-name>-<short-topic>.md`, and keep that worker-name prefix for every cwd artifact document you create. The isolated worker report at `~/.meight/repos/.../workers/<name>/result.md` is the final message record, not a separate hidden detail channel. Code changes should be made directly in their source paths and are not part of this artifact-document naming rule.
-{question_block}
+# Initial turns receive only the runtime mode/report values and the worker-side SSOT location.
+# All operating rules live in the skill so the harness cannot drift into a second contract.
+_PREAMBLE_TEMPLATE = """[Harness protocol — mode: {mode}; report: {report} — applies on top of the task below]
+Read and follow the meight-worker skill at `{skill_path}`. It is the worker-side SSOT.
 """
-
-# Escalation channel depends on the report mode: text workers end with a QUESTION: paragraph;
-# decision workers cannot (their final message is schema-forced JSON), so they escalate via
-# outcome=needs_decision + decisions[]. The preamble must teach the channel that actually works.
-_QUESTION_BLOCKS = {
-    "text": """- Use `QUESTION:` only as the final paragraph when you are truly blocked or when a decision outside your ownership could change scope, UX, user-visible behavior, priority, risk appetite, irreversible action, or acceptance criteria. Resolve technical uncertainty with evidence first; if it does not change dispatcher-owned direction, decide locally and report the judgment call. Structure the paragraph so it can be routed without parsing prose:
-  QUESTION:
-  TARGET: dispatcher | user   (dispatcher = the orchestrating agent; user = the human it reports to — scope, UX, priority, risk appetite, and irreversible actions usually belong to the user)
-  KIND: scope | ux | priority | risk | irreversible | acceptance | missing-info | better-direction | technical
-  <the question itself, with options and your recommendation>""",
-    "decision": """- Your final message MUST be JSON matching the decision-report schema the harness supplies (strict mode: every field is required — use empty arrays or "N/A" where inapplicable; keep detail in evidence artifacts, not the report). Do not end with a text `QUESTION:` paragraph — it cannot be emitted under the schema. To escalate a decision outside your ownership (scope, UX, user-visible behavior, priority, risk appetite, irreversible action, acceptance criteria) or a true block, set `outcome: "needs_decision"` and add a `decisions[]` entry with `target` ("dispatcher" = the orchestrating agent, "user" = the human it reports to), `kind`, `question`, and `recommendation`. Resolve technical uncertainty with evidence first; if it does not change dispatcher-owned direction, decide locally and record the judgment call.""",
-}
 
 
 def build_preamble(mode: str, report: str = "text") -> str:
-    question_block = _QUESTION_BLOCKS["decision" if report == "decision" else "text"]
     return _PREAMBLE_TEMPLATE.format(
-        mode=mode, skill_path=WORKER_SKILL_PATH, mode_block=_MODE_BLOCKS[mode],
-        question_block=question_block,
+        mode=mode, report=report, skill_path=WORKER_SKILL_PATH,
     )
 
 
 def build_follow_reminder(mode: str, report: str = "text") -> str:
     """Follow/reply turns get a one-line reminder instead of re-injecting the full preamble."""
-    if report == "decision":
-        tail = ('final message is schema-forced JSON (all fields required); escalate via '
-                'outcome: "needs_decision" + decisions[] (target/kind), only for '
-                "dispatcher/user-owned decisions or true blocks.]\n")
-    else:
-        tail = ("QUESTION: as the final paragraph with TARGET:/KIND: lines, only for "
-                "dispatcher/user-owned decisions or true blocks.]\n")
-    return (
-        f"[Harness reminder — mode: {mode} — same protocol as the initial brief: evidence-first; "
-        f"commit/push allowed for verified work; {tail}"
-    )
+    return (f"[Harness reminder — mode: {mode}; report: {report} — continue following "
+            f"the meight-worker skill at `{WORKER_SKILL_PATH}`.]\n")
 
 
 def install_computer_use_approval_bridge(codex, worker_name: str) -> None:
