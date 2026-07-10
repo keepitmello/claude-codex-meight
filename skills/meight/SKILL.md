@@ -26,8 +26,9 @@ SSOT for how to supervise workers.
 - Workers are teammates, not silent executors. They can push back with a
   structured `QUESTION:` when they see a better direction, a wrong assumption,
   or a decision outside their ownership.
-- Verification owns the outcome. A worker's "done" is a claim; tests, runtime
-  checks, reviewer verdicts, and dispatcher sign-off make it a fact.
+- Verification owns the outcome. A worker's "done" is a claim; relevant tests
+  or runtime checks plus dispatcher sign-off make it a fact. When risk warrants
+  independent review, a reviewer verdict is required too.
 - Workers may commit/push completed verified work when the brief allows it, but
   the dispatcher still owns final integration and approval.
 

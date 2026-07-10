@@ -253,8 +253,11 @@ Explicit review work:
 
 Implementation quality gate:
 
-- Do not treat self-review as the only review evidence for non-trivial changes.
-- When the brief requires it, spawn an independent reviewer with
+- Use independent review for security-sensitive, irreversible, broad,
+  genuinely uncertain, or high-impact changes. Relevant verification plus
+  dispatcher sign-off is sufficient for routine bounded and reversible work.
+- When the brief requires independent review or those risk conditions apply,
+  spawn an independent reviewer with
   `multi_agent_v1.spawn_agent(agent_type="reviewer", fork_context=false)` and
   wait with `wait_agent`.
 - Keep the reviewer read-only unless the brief explicitly says otherwise.
