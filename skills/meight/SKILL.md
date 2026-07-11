@@ -74,6 +74,9 @@ EOF
 ## Model Selection (GPT-5.6: sol / terra / luna)
 
 Pass `--model` explicitly; the flag already exists on `start` and `dispatch`.
+The short names are real aliases: `sol`, `terra`, and `luna` resolve to the
+current ChatGPT-account slugs `gpt-5.6-sol`, `gpt-5.6-terra`, and
+`gpt-5.6-luna`. Full or custom model strings pass through unchanged.
 Routing principle: **failure cost picks the model.** Code work that misses
 forces an extra review/fix round, so a slower-but-smarter model wins on total
 time. Step-heavy automation is latency-dominated with simple per-step

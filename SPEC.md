@@ -129,6 +129,7 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   "needs_input_target": null,
   "needs_input_kind": null,
   "runtime_lost_detail": null,
+  "error_detail": null,
   "turns": 1
 }
 ```
@@ -162,7 +163,7 @@ The command table must match the `python3 meight.py --help` subcommand list exac
 | `daemon [--idle-timeout-sec SEC]` | Run the foreground global daemon. The orchestrator starts it in the background. If a live daemon already exists, return exit `1`. `0` disables idle shutdown. |
 | `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid and runtime `idle_timeout_sec`. |
 | `launchd install [--load]` / `launchd status` / `launchd uninstall` | Manage an optional macOS LaunchAgent for the global daemon. The plist uses `RunAtLoad` and `KeepAlive=false`; CLI auto-start remains the on-demand path. |
-| `start <name> --mode collab\|delegate (--brief-file F\|- \| --brief TEXT) [--report text\|decision] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new hidden worker thread with `thread_start(ephemeral=True, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--mode` is required; aliases `collaborative` and `delegated` normalize to `collab` and `delegate`. Defaults: `report=text`, `sandbox=full`, `effort=medium`, `cwd=current directory`, `thread_source=subagent`, `thread_ephemeral=true`, `service_tier=default` so workers run non-Fast unless `--fast` is passed. `--report decision` supplies the SDK `output_schema` and writes `decision.json` plus `decision.md`. `--main-thread` intentionally uses `thread_start(ephemeral=False, thread_source=ThreadSource.user)` for tools that require a visible/main thread. `--fast` maps the SDK turn's `service_tier` to `priority`; omitted or `--no-fast` maps it to `default`. Reject duplicate active worker names inside the same repo namespace. `--brief-file -` reads the brief from stdin. |
+| `start <name> --mode collab\|delegate (--brief-file F\|- \| --brief TEXT) [--report text\|decision] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new hidden worker thread with `thread_start(ephemeral=True, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--mode` is required; aliases `collaborative` and `delegated` normalize to `collab` and `delegate`. Model aliases `sol`, `terra`, and `luna` normalize to `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`; other model strings pass through unchanged. Defaults: `report=text`, `sandbox=full`, `effort=medium`, `cwd=current directory`, `thread_source=subagent`, `thread_ephemeral=true`, `service_tier=default` so workers run non-Fast unless `--fast` is passed. `--report decision` supplies the SDK `output_schema` and writes `decision.json` plus `decision.md`. `--main-thread` intentionally uses `thread_start(ephemeral=False, thread_source=ThreadSource.user)` for tools that require a visible/main thread. `--fast` maps the SDK turn's `service_tier` to `priority`; omitted or `--no-fast` maps it to `default`. Reject duplicate active worker names inside the same repo namespace. `--brief-file -` reads the brief from stdin. |
 | `dispatch <name> --mode collab\|delegate (--brief-file F\|- \| --brief TEXT) [--report text\|decision] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, `start`, `wait`, then print `decision.md` when present or `result.md` otherwise. `--mode` is required with the same aliases as `start`. Default timeout is `1800` seconds. Exit code matches `wait`. `--shutdown-when-idle` asks the global daemon to stop after a terminal result if no workers are active. |
 | `follow <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble]` | Start a new turn on the same thread only for a worker waiting on a final `QUESTION:` while that worker remains attached to the current daemon. It takes no mode flag; it inherits the worker's recorded `mode` and `report` and receives a one-line harness reminder instead of the full preamble. Terminal workers release their SDK runtime immediately after stream end, so follow-up work should start a new worker. Hidden ephemeral workers are not resumed from disk after daemon restart; in that case `follow` fails clearly and the orchestrator must start a new worker. Reset status, increment `turns`, and append to `result.md`, `decision.json`/`decision.md` when applicable, and `events.log` with a separator. |
 | `reply <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot answer path for `QUESTION:` blockers: `follow`, `wait`, then print the latest `decision.md` when present or latest raw result otherwise. It takes no mode flag and inherits `mode`/`report`. Default timeout is `1800` seconds. |
@@ -316,13 +317,16 @@ the worker's report mode.
     with `needs_input_source="question"`.
   - Automatic approval or tool-response handling is out of scope, except the
     default Computer Use app-access bridge described below.
-- `error` notifications or stream exceptions set the worker state to `failed`
-  and write the reason to `events.log`.
+- Non-retry `error` notifications set the worker state to `failed`, preserve the
+  allow-listed provider `message`, HTTP `status`, and error `type` in
+  `error_detail`, and write the failure to both `events.log` and `result.md`.
+  A later `turn/completed` does not duplicate or overwrite that result.
 - `SIGTERM` and `SIGINT` attempt to interrupt all handles, close the Codex
   client, and clean up pid/socket files.
 - Agent-message deltas are accumulated in memory and finalized on
   `item/completed`.
-- `result.md` is written at `turn/completed` with the last agent message.
+- `result.md` is written once per turn with the last agent message, or with a
+  structured terminal error when no agent message exists.
   In decision report mode, `decision.json` and `decision.md` are written for
   the same turn after schema validation/rendering.
 

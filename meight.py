@@ -49,6 +49,18 @@ MODE_MAP = {
     "delegated": "delegated",
 }
 
+# Friendly names are a CLI contract, while the SDK requires ChatGPT-account model slugs.
+# Keep matching exact so arbitrary full/custom model strings pass through unchanged.
+MODEL_ALIASES = {
+    "sol": "gpt-5.6-sol",
+    "terra": "gpt-5.6-terra",
+    "luna": "gpt-5.6-luna",
+}
+
+
+def normalize_model(model: str | None) -> str | None:
+    return MODEL_ALIASES.get(model, model)
+
 # Single source of the teaching error shown wherever --mode is missing (validated before any side effect).
 MODE_TEACHING_ERROR = """error: --mode is required. Pick one:
   --mode collab    think together: consult, design, diagnosis, alternatives — worker exposes options and reasoning
@@ -383,6 +395,52 @@ def dig(d: object, *keys: str, default=None):
     return default if cur is None else cur
 
 
+def failure_detail(payload: dict) -> dict:
+    """Extract only user-relevant SDK error fields; never persist the full payload."""
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        error = {"message": error} if error else {}
+    raw_message = error.get("message") or payload.get("message")
+    provider = None
+    if isinstance(raw_message, str):
+        try:
+            decoded = json.loads(raw_message)
+            provider = decoded if isinstance(decoded, dict) else None
+        except json.JSONDecodeError:
+            pass
+    provider_error = provider.get("error") if provider else None
+    if not isinstance(provider_error, dict):
+        provider_error = {}
+    message = provider_error.get("message") or (
+        provider.get("message") if provider else None
+    ) or raw_message or "unknown error"
+    status = next((value for value in (
+        provider.get("status") if provider else None,
+        error.get("status"), error.get("status_code"), error.get("http_status"),
+        payload.get("status"), payload.get("status_code"),
+    ) if value is not None), None)
+    error_type = (
+        provider_error.get("type") or provider_error.get("code")
+        or error.get("type") or error.get("code") or payload.get("type")
+    )
+    return {
+        "message": str(message),
+        "status": status if isinstance(status, (int, str)) else str(status),
+        "type": str(error_type) if error_type is not None else None,
+    }
+
+
+def format_failure_detail(detail: dict) -> str:
+    labels = []
+    status = detail.get("status")
+    if status is not None:
+        labels.append(f"HTTP {status}" if str(status).isdigit() else f"status={status}")
+    if detail.get("type"):
+        labels.append(str(detail["type"]))
+    prefix = " ".join(labels)
+    return f"{prefix}: {detail['message']}" if prefix else str(detail["message"])
+
+
 # ── Worker (Inside Daemon) ─────────────────────────────────────────────────
 
 def describe_item(item: dict) -> str:
@@ -452,6 +510,7 @@ class Worker:
         self._last_status_write = 0.0
         self._agent_msg_buf = ""       # accumulated in-flight agentMessage deltas
         self._last_agent_msg = ""      # last finalized agentMessage
+        self._result_written = False    # one result block per turn, including terminal SDK errors
         self._current_item_label: str | None = None
         self._current_item_since: float | None = None
         # The public status.json field needs_input_source is the SSOT for needs_input:
@@ -495,6 +554,7 @@ class Worker:
             "needs_input_target": None,
             "needs_input_kind": None,
             "runtime_lost_detail": None,
+            "error_detail": None,
             "turns": turns,
         }
         self.write_status(force=True)
@@ -626,12 +686,15 @@ class Worker:
             self._on_turn_completed(p.get("turn") or {})
 
         elif method == "error":
-            msg = dig(p, "error", "message", default="unknown error")
+            detail = failure_detail(p)
+            msg = detail["message"]
             will_retry = bool(p.get("will_retry"))
             self.log_event(method, f"{msg} (will_retry={will_retry})")
             if not will_retry:
                 self.status["state"] = "failed"
+                self.status["error_detail"] = detail
                 self._clear_needs_input_locked()
+                self.write_result()
                 self.write_status(force=True)
 
         elif method == "tool/requestUserInput" or method.endswith("/requestApproval"):
@@ -763,9 +826,9 @@ class Worker:
                     self.status["state"] = "completed"
         elif turn_status == "failed":
             self.status["state"] = "failed"
-            err = dig(turn, "error", "message")
-            if err:
-                self.log_event("turn/completed", f"failed: {truncate(err, 200)}")
+            detail = failure_detail({"error": turn.get("error") or {}})
+            self.status["error_detail"] = detail
+            self.log_event("turn/completed", f"failed: {truncate(detail['message'], 200)}")
         else:
             # Mapping unknown/missing statuses to completed would violate the wait contract.
             self.status["state"] = "interrupted" if self.interrupt_requested else "failed"
@@ -803,12 +866,21 @@ class Worker:
                 self.write_status(force=True)
 
     def write_result(self) -> None:
-        msg = self._last_agent_msg or self._agent_msg_buf or "(no agent message)"
+        if self._result_written:
+            return
+        msg = self._last_agent_msg or self._agent_msg_buf
+        detail = self.status.get("error_detail")
+        if detail:
+            error_text = format_failure_detail(detail)
+            msg = f"{msg}\n\n## Error\n\n{error_text}" if msg else f"## Error\n\n{error_text}"
+        elif not msg:
+            msg = "(no agent message)"
         header = ""
         if self.status.get("turns", 1) > 1:
             header = f"\n\n---\n## Turn {self.status['turns']} ({now_iso()})\n\n"
         with open(self.dir / "result.md", "a", encoding="utf-8") as f:
             f.write(header + msg + "\n")
+        self._result_written = True
 
     # ── Reset For Follow ──
 
@@ -818,6 +890,7 @@ class Worker:
             self.interrupt_requested = False
             self._agent_msg_buf = ""
             self._last_agent_msg = ""
+            self._result_written = False
             self._current_item_label = None
             self._current_item_since = None
             self.terminal_since = None
@@ -841,6 +914,7 @@ class Worker:
                 "needs_input_target": None,
                 "needs_input_kind": None,
                 "runtime_lost_detail": None,
+                "error_detail": None,
                 "turns": turns,
             })
             for fname in ("decision.json", "decision.md"):
@@ -1196,7 +1270,8 @@ class Daemon:
         sandbox_key = SANDBOX_MAP.get(req.get("sandbox") or "full")
         if sandbox_key is None:
             return {"ok": False, "error": f"invalid sandbox: {req.get('sandbox')}"}
-        model = req.get("model")
+        # Daemon-authoritative normalization covers stale CLIs and direct socket clients.
+        model = normalize_model(req.get("model"))
         effort = req.get("effort") or "medium"
         service_tier = req.get("service_tier")
         main_thread = bool(req.get("main_thread"))
@@ -1649,7 +1724,7 @@ def start_request(args, home: Path) -> dict:
     req = {
         "cmd": "start", "name": args.name, "brief": read_brief(args),
         "cwd": str(Path(args.cwd).resolve()) if args.cwd else os.getcwd(),
-        "sandbox": args.sandbox, "model": args.model, "effort": args.effort,
+        "sandbox": args.sandbox, "model": normalize_model(args.model), "effort": args.effort,
         "service_tier": service_tier,
         "no_preamble": args.no_preamble,
         "main_thread": getattr(args, "main_thread", False),
@@ -1712,7 +1787,7 @@ def cmd_status(args, home: Path) -> int:
                         "thread_ephemeral", "daemon_pid", "started_at", "updated_at",
                         "turns", "mode", "report", "needs_input_source",
                         "needs_input_target", "needs_input_kind", "needs_input_detail",
-                        "runtime_lost_detail"):
+                        "runtime_lost_detail", "error_detail"):
                 print(f"  {key}: {st.get(key)}")
             if st.get("plan"):
                 print("  plan:")
