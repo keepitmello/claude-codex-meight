@@ -61,7 +61,7 @@ normal Claude Code supervision loop.
 
 ```bash
 meight start <name> --mode delegate --report decision --brief-file - --cwd <dir> \
-  [--sandbox ws|ro|full, default full] [--effort low|medium|high|xhigh, default medium] <<'EOF'
+  [--sandbox ws|ro|full, default full] [--effort low|medium|high|xhigh|ultra|max, default medium] <<'EOF'
 ## Goal       <what this enables + success criteria>
 ## Scope      <file/dir boundary; do not exceed>
 ## Existing patterns  <file:line pointers; required for good review>

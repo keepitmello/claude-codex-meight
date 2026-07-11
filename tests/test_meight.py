@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import meight
 
@@ -13,6 +14,27 @@ class ModelAliasTests(unittest.TestCase):
         self.assertEqual(meight.normalize_model("luna"), "gpt-5.6-luna")
         self.assertEqual(meight.normalize_model("vendor/custom-model"), "vendor/custom-model")
         self.assertIsNone(meight.normalize_model(None))
+
+
+class EffortTests(unittest.TestCase):
+    def test_ultra_and_max_parse_and_reach_start_request(self):
+        parser = meight.build_parser()
+        for effort in ("ultra", "max"):
+            args = parser.parse_args([
+                "start", f"effort-{effort}", "--mode", "delegate",
+                "--brief", "Say OK", "--effort", effort,
+            ])
+            with patch.object(meight, "send_request", return_value={"ok": True}) as send:
+                meight.start_request(args, Path("/tmp/meight-test"))
+            self.assertEqual(send.call_args.args[1]["effort"], effort)
+
+    def test_dynamic_efforts_are_accepted_by_installed_sdk_params(self):
+        from openai_codex.generated.v2_all import TurnStartParams
+
+        for effort in ("ultra", "max"):
+            meight.allow_dynamic_sdk_effort(effort)
+            params = TurnStartParams(thread_id="thread", input=[], effort=effort)
+            self.assertEqual(params.model_dump(mode="json")["effort"], effort)
 
 
 class TerminalErrorTests(unittest.TestCase):

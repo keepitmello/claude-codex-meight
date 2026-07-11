@@ -57,6 +57,26 @@ MODEL_ALIASES = {
     "luna": "gpt-5.6-luna",
 }
 
+EFFORT_CHOICES = ["low", "medium", "high", "xhigh", "ultra", "max"]
+
+
+def allow_dynamic_sdk_effort(effort: str) -> None:
+    """Bridge older SDK bindings to the app-server's extensible effort string."""
+    if effort not in {"ultra", "max"}:
+        return
+
+    # Codex app-server advertises ReasoningEffort as a non-empty string. SDK
+    # 0.1.0b3 generated a closed enum ending at xhigh, so update that stale
+    # local pydantic field before Thread.turn constructs TurnStartParams.
+    from openai_codex.generated.v2_all import TurnStartParams
+
+    field = TurnStartParams.model_fields["effort"]
+    try:
+        TurnStartParams(thread_id="probe", input=[], effort=effort)
+    except ValueError:
+        field.annotation = str | None
+        TurnStartParams.model_rebuild(force=True)
+
 
 def normalize_model(model: str | None) -> str | None:
     return MODEL_ALIASES.get(model, model)
@@ -1339,6 +1359,7 @@ class Daemon:
             with w.lock:
                 w.status["thread_id"] = thread.id
             extra = {"output_schema": REPORT_SCHEMA} if report == "decision" else {}
+            allow_dynamic_sdk_effort(effort)
             w.handle = thread.turn(
                 turn_input,
                 model=model, effort=effort, service_tier=service_tier,
@@ -2106,7 +2127,7 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--report", choices=["text", "decision"], default="text")
         sp.add_argument("--sandbox", default="full", choices=sorted(SANDBOX_MAP.keys()))
         sp.add_argument("--model")
-        sp.add_argument("--effort", default="medium", choices=["low", "medium", "high", "xhigh"])
+        sp.add_argument("--effort", default="medium", choices=EFFORT_CHOICES)
         sp.add_argument("--fast", action=argparse.BooleanOptionalAction, default=False,
                         help="use the priority service tier (codex 'Fast'); omitted or --no-fast uses the non-priority default tier")
         sp.add_argument("--no-preamble", action="store_true", help="disable prepending the harness protocol preamble")
