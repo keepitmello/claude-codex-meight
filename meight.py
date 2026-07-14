@@ -38,8 +38,14 @@ DEFAULT_WORKER_GC_TTL_SEC = 60 * 60
 LAUNCHD_LABEL = "com.keepitmello.meight"
 MANAGED_DAEMON_IDLE_TIMEOUT_SEC = "0"
 
-# Worker-side skill path resolves relative to this file so any clone location works.
-WORKER_SKILL_PATH = Path(__file__).resolve().parent / "skills" / "meight-worker" / "SKILL.md"
+# Role contracts resolve relative to this file so any clone location works.
+_SKILLS_ROOT = Path(__file__).resolve().parent / "skills"
+ROLE_SKILL_PATHS = {
+    "mate": _SKILLS_ROOT / "meight-mate" / "SKILL.md",
+    "worker": _SKILLS_ROOT / "meight-worker" / "SKILL.md",
+}
+COMMON_CONTRACT_PATH = _SKILLS_ROOT / "meight-common" / "CONTRACT.md"
+DAEMON_CAPABILITIES = ["role"]
 
 # Every worker runs in an explicit mode; the CLI requires it so the choice cannot be skipped.
 MODE_MAP = {
@@ -48,6 +54,8 @@ MODE_MAP = {
     "delegate": "delegated",
     "delegated": "delegated",
 }
+
+ROLES = frozenset(ROLE_SKILL_PATHS)
 
 # Friendly names are a CLI contract, while the SDK requires ChatGPT-account model slugs.
 # Keep matching exact so arbitrary full/custom model strings pass through unchanged.
@@ -101,26 +109,38 @@ def normalize_model(model: str | None) -> str | None:
 
 # Single source of the teaching error shown wherever --mode is missing (validated before any side effect).
 MODE_TEACHING_ERROR = """error: --mode is required. Pick one:
-  --mode collab    think together: consult, design, diagnosis, alternatives — worker exposes options and reasoning
-  --mode delegate  own the technical loop: bounded implementation, fix, review — worker reports a decision surface"""
+  --mode collab    think together: expose options, evidence, and reasoning
+  --mode delegate  own the assigned technical loop and report a decision surface"""
 
-# Initial turns receive only the runtime mode/report values and the worker-side SSOT location.
-# All operating rules live in the skill so the harness cannot drift into a second contract.
-_PREAMBLE_TEMPLATE = """[Harness protocol — mode: {mode}; report: {report} — applies on top of the task below]
-Read and follow the meight-worker skill at `{skill_path}`. It is the worker-side SSOT.
+ROLE_TEACHING_ERROR = """error: --role is required. Pick one:
+  --role mate      challenge and review: consult, plan review, adversarial review
+  --role worker    implement and verify: bounded changes, tests, runtime QA"""
+
+# Initial turns receive runtime role/mode/report values plus role/common SSOT paths.
+# All operating rules live in those files so the harness cannot drift into another contract.
+_PREAMBLE_TEMPLATE = """[Harness protocol — role: {role}; mode: {mode}; report: {report} — applies on top of the task below]
+Read and follow the {skill_name} skill at `{skill_path}`. It is the {role}-side SSOT.
+Also read and follow the shared meight contract at `{common_path}`.
 """
 
 
-def build_preamble(mode: str, report: str = "text") -> str:
+def build_preamble(role: str, mode: str, report: str = "text") -> str:
+    skill_path = ROLE_SKILL_PATHS[role]
     return _PREAMBLE_TEMPLATE.format(
-        mode=mode, report=report, skill_path=WORKER_SKILL_PATH,
+        role=role,
+        mode=mode,
+        report=report,
+        skill_name=skill_path.parent.name,
+        skill_path=skill_path,
+        common_path=COMMON_CONTRACT_PATH,
     )
 
 
-def build_follow_reminder(mode: str, report: str = "text") -> str:
+def build_follow_reminder(role: str, mode: str, report: str = "text") -> str:
     """Follow/reply turns get a one-line reminder instead of re-injecting the full preamble."""
-    return (f"[Harness reminder — mode: {mode}; report: {report} — continue following "
-            f"the meight-worker skill at `{WORKER_SKILL_PATH}`.]\n")
+    return (f"[Harness reminder — role: {role}; mode: {mode}; report: {report} — continue following "
+            f"the {role} skill at `{ROLE_SKILL_PATHS[role]}` and shared contract at "
+            f"`{COMMON_CONTRACT_PATH}`.]\n")
 
 
 def install_computer_use_approval_bridge(codex, worker_name: str) -> None:
@@ -521,7 +541,7 @@ class Worker:
     def __init__(self, name: str, repo_home: Path, repo_root: str, repo_key: str, cwd: str, sandbox: str,
                  model: str | None, effort: str, service_tier: str | None = None,
                  thread_source: str = "subagent", thread_ephemeral: bool = True,
-                 mode: str = "delegated", report: str = "text"):
+                 role: str = "worker", mode: str = "delegated", report: str = "text"):
         self.name = name
         self.repo_home = repo_home
         self.repo_root = repo_root
@@ -534,6 +554,7 @@ class Worker:
         self.service_tier = service_tier  # "default" unless --fast maps the worker to "priority"
         self.thread_source = thread_source
         self.thread_ephemeral = thread_ephemeral
+        self.role = role          # "mate" | "worker"; follow/reply turns inherit it
         self.mode = mode          # "collaborative" | "delegated"; follow/reply turns inherit it
         self.report = report      # "text" | "decision" (decision = output_schema-forced final report)
         self.thread = None       # openai_codex.Thread (kept while daemon lives -> reused for follow)
@@ -580,6 +601,7 @@ class Worker:
             "service_tier": self.service_tier,
             "thread_source": self.thread_source,
             "thread_ephemeral": self.thread_ephemeral,
+            "role": self.role,
             "mode": self.mode,
             "report": self.report,
             "current_item": None,
@@ -1213,7 +1235,12 @@ class Daemon:
         cmd = req.get("cmd")
         try:
             if cmd == "ping":
-                return {"ok": True, "pid": os.getpid(), "idle_timeout_sec": self.idle_timeout_sec}
+                return {
+                    "ok": True,
+                    "pid": os.getpid(),
+                    "idle_timeout_sec": self.idle_timeout_sec,
+                    "capabilities": DAEMON_CAPABILITIES,
+                }
             if cmd == "start":
                 return self.cmd_start(req)
             if cmd == "follow":
@@ -1259,7 +1286,12 @@ class Daemon:
         with self.reg_lock:
             w = self.workers.get(self._worker_key(repo_key, name))
         if w is None:
-            return {"ok": True, "known": False, "pid": os.getpid()}
+            return {
+                "ok": True,
+                "known": False,
+                "pid": os.getpid(),
+                "capabilities": DAEMON_CAPABILITIES,
+            }
         with w.lock:
             state = w.status.get("state", "unknown")
             source = w.status.get("needs_input_source")
@@ -1270,6 +1302,7 @@ class Daemon:
             "ok": True,
             "known": True,
             "pid": os.getpid(),
+            "capabilities": DAEMON_CAPABILITIES,
             "worker_daemon_pid": daemon_pid,
             "state": state,
             "needs_input_source": source,
@@ -1281,6 +1314,21 @@ class Daemon:
         }
 
     def cmd_start(self, req: dict) -> dict:
+        raw_mode = req.get("mode")
+        mode = MODE_MAP.get(raw_mode or "")
+        if mode is None:
+            # Enforced at the daemon boundary too: stale CLIs and direct socket clients
+            # must not get an implicitly delegated worker.
+            return {"ok": False,
+                    "error": f"missing or invalid mode: {raw_mode!r} "
+                             "(expected collab|collaborative|delegate|delegated)"}
+        role = req.get("role")
+        if role not in ROLES:
+            # Keep this validation before imports, path creation, registry reservation,
+            # or SDK startup. Direct socket clients must receive the same teaching
+            # contract as the CLI and can never silently fall back to worker.
+            return {"ok": False, "error": ROLE_TEACHING_ERROR.removeprefix("error: ")}
+
         from openai_codex import Codex, CodexConfig, Sandbox
         try:
             from openai_codex.types import ThreadSource
@@ -1292,16 +1340,8 @@ class Daemon:
         wid = self._worker_key(repo_key, name)
         brief = req["brief"]
         use_preamble = not req.get("no_preamble")
-        raw_mode = req.get("mode")
-        mode = MODE_MAP.get(raw_mode or "")
-        if mode is None:
-            # Enforced at the daemon boundary too: stale CLIs and direct socket clients
-            # must not get an implicitly delegated worker.
-            return {"ok": False,
-                    "error": f"missing or invalid mode: {raw_mode!r} "
-                             "(expected collab|collaborative|delegate|delegated)"}
         report = "decision" if req.get("report") == "decision" else "text"
-        preamble = build_preamble(mode, report)
+        preamble = build_preamble(role, mode, report)
         turn_input = f"{preamble}\n{brief}" if use_preamble else brief
         file_brief = f"{preamble}\n---\n\n{brief}" if use_preamble else brief
         cwd = req.get("cwd") or os.getcwd()
@@ -1341,8 +1381,9 @@ class Daemon:
                 service_tier,
                 thread_source_label,
                 thread_ephemeral,
-                mode,
-                report,
+                role=role,
+                mode=mode,
+                report=report,
             )
             w.dir.mkdir(parents=True, exist_ok=True)
             # Restarting the same name creates a new worker, so reset prior outputs.
@@ -1420,9 +1461,9 @@ class Daemon:
         self.log(
             f"start worker={name} repo={repo_key} thread={thread.id} "
             f"cwd={cwd} sandbox={sandbox_key} thread_source={thread_source_label} "
-            f"ephemeral={thread_ephemeral}"
+            f"ephemeral={thread_ephemeral} role={role}"
         )
-        return {"ok": True, "thread_id": thread.id}
+        return {"ok": True, "thread_id": thread.id, "role": role}
 
     def cmd_follow(self, req: dict) -> dict:
         name = req["name"]
@@ -1452,7 +1493,7 @@ class Daemon:
                 return {"ok": False,
                         "error": f"worker '{name}' previous stream is still finishing — retry shortly"}
 
-            reminder = build_follow_reminder(w.mode, w.report)
+            reminder = build_follow_reminder(w.role, w.mode, w.report)
             turn_input = f"{reminder}{brief}" if use_preamble else brief
             file_brief = f"{reminder}---\n\n{brief}" if use_preamble else brief
             # reset_for_follow flips the worker back to "starting", which reserves it:
@@ -1499,7 +1540,7 @@ class Daemon:
 
         self.touch_activity()
         self.log(f"follow worker={name} repo={repo_key} thread={thread_id} turn#{turns}")
-        return {"ok": True, "thread_id": thread_id, "turns": turns}
+        return {"ok": True, "thread_id": thread_id, "turns": turns, "role": w.role}
 
     def cmd_steer(self, req: dict) -> dict:
         name = req["name"]
@@ -1724,9 +1765,10 @@ def fmt_tokens(st: dict) -> str:
 
 def summary_line(st: dict, show_repo: bool = False) -> str:
     repo = f"{truncate(st.get('repo_key') or '-', 24):<24} " if show_repo else ""
+    role = str(st.get("role") or "-")[:6]
     mode_full = st.get("mode") or "-"
     mode = {"collaborative": "collab", "delegated": "delegate"}.get(mode_full, mode_full)[:8]
-    return (f"{repo}{st.get('name', '?'):<14} {st.get('state', '?'):<12} {mode:<9} "
+    return (f"{repo}{st.get('name', '?'):<14} {st.get('state', '?'):<12} {role:<7} {mode:<9} "
             f"{fmt_elapsed(st):>8} "
             f"files:{len(st.get('files_changed') or []):<3} {fmt_tokens(st):<22} "
             f"{truncate(st.get('current_item') or '-', 60)}")
@@ -1737,7 +1779,7 @@ def print_status_table(statuses: list[dict], show_repo: bool = False) -> None:
         print("(no workers)")
         return
     repo = f"{'REPO':<24} " if show_repo else ""
-    print(f"{repo}{'NAME':<14} {'STATE':<12} {'MODE':<9} {'ELAPSED':>8} {'FILES':<9} {'TOKENS':<22} CURRENT")
+    print(f"{repo}{'NAME':<14} {'STATE':<12} {'ROLE':<7} {'MODE':<9} {'ELAPSED':>8} {'FILES':<9} {'TOKENS':<22} CURRENT")
     for st in statuses:
         print(summary_line(st, show_repo=show_repo))
 
@@ -1755,8 +1797,30 @@ def require_mode(args) -> None:
         raise SystemExit(2)
 
 
+def require_role(args) -> None:
+    """Validate --role before any side effect (daemon auto-start included)."""
+    if getattr(args, "role", None) not in ROLES:
+        print(ROLE_TEACHING_ERROR, file=sys.stderr)
+        raise SystemExit(2)
+
+
+def require_role_capability(home: Path) -> dict:
+    """Fail closed when the live daemon predates the role-aware protocol."""
+    resp = send_request(home, {"cmd": "ping"}, timeout=10)
+    if not resp.get("ok"):
+        return resp
+    capabilities = resp.get("capabilities")
+    if not isinstance(capabilities, list) or "role" not in capabilities:
+        return {"ok": False, "error": "daemon predates --role; restart required"}
+    return {"ok": True}
+
+
 def start_request(args, home: Path) -> dict:
     require_mode(args)
+    require_role(args)
+    capability = require_role_capability(home)
+    if not capability.get("ok"):
+        return capability
     # --fast/--no-fast is the user-facing knob; map it to a codex service tier.
     # priority = Fast; default = a non-priority tier. The default is deliberately non-Fast.
     fast = bool(getattr(args, "fast", False))
@@ -1768,6 +1832,7 @@ def start_request(args, home: Path) -> dict:
         "service_tier": service_tier,
         "no_preamble": args.no_preamble,
         "main_thread": getattr(args, "main_thread", False),
+        "role": args.role,
         "mode": args.mode,
         "report": args.report,
     }
@@ -1825,7 +1890,7 @@ def cmd_status(args, home: Path) -> int:
             for key in ("thread_id", "turn_id", "repo_root", "repo_key", "cwd",
                         "sandbox", "model", "effort", "service_tier", "thread_source",
                         "thread_ephemeral", "daemon_pid", "started_at", "updated_at",
-                        "turns", "mode", "report", "needs_input_source",
+                        "turns", "role", "mode", "report", "needs_input_source",
                         "needs_input_target", "needs_input_kind", "needs_input_detail",
                         "runtime_lost_detail", "error_detail"):
                 print(f"  {key}: {st.get(key)}")
@@ -1969,6 +2034,7 @@ def ensure_daemon(home: Path) -> bool:
 def cmd_dispatch(args, home: Path) -> int:
     """One-shot: auto-start daemon -> start -> wait -> print full result.md. Exit matches wait."""
     require_mode(args)  # before ensure_daemon: a rejected call must not auto-start a daemon
+    require_role(args)
     if not ensure_daemon(home):
         print("error: daemon auto-start failed — check daemon.log", file=sys.stderr)
         return 4
@@ -2037,7 +2103,9 @@ def cmd_shutdown(args, home: Path) -> int:
 
 def cmd_ping(args, home: Path) -> int:
     resp = expect_ok(send_request(home, {"cmd": "ping"}, timeout=10))
-    print(f"pong (daemon pid {resp.get('pid')}, idle_timeout_sec={resp.get('idle_timeout_sec')})")
+    capabilities = ",".join(resp.get("capabilities") or []) or "none"
+    print(f"pong (daemon pid {resp.get('pid')}, idle_timeout_sec={resp.get('idle_timeout_sec')}, "
+          f"capabilities={capabilities})")
     return 0
 
 
@@ -2143,6 +2211,7 @@ def build_parser() -> argparse.ArgumentParser:
         # No argparse `choices`: require_mode() is the single CLI validation source for
         # missing AND invalid values, so both cases print the same teaching error.
         sp.add_argument("--mode", help="required: collab|collaborative|delegate|delegated")
+        sp.add_argument("--role", help="required: mate|worker")
         sp.add_argument("--report", choices=["text", "decision"], default="text")
         sp.add_argument("--sandbox", default="full", choices=sorted(SANDBOX_MAP.keys()))
         sp.add_argument("--model")
