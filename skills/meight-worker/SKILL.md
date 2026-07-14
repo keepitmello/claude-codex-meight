@@ -1,6 +1,6 @@
 ---
 name: meight-worker
-description: Implementer-side operating contract for Codex sessions launched by meight with role worker. Use when the harness assigns bounded implementation, fixes, tests, verification, runtime or browser QA, computer use, exploration, or other execution work to a worker, including hard-gated implementation run by sol as role worker.
+description: Implementer-side operating contract selected by meight delegate mode. Use when the harness assigns bounded implementation, fixes, tests, verification, runtime or browser QA, computer use, exploration, or other execution work to a worker, including hard-gated implementation run by sol in delegate mode.
 ---
 
 # Meight Worker
@@ -10,7 +10,7 @@ contract at [`../meight-common/CONTRACT.md`](../meight-common/CONTRACT.md)
 before acting; it owns decision reports, question routing, evidence artifacts,
 sandbox rules, and git discipline.
 
-## Role
+## Session Contract
 
 - Own HOW, technical design, implementation, verification, and local technical
   judgment inside the accepted scope.
@@ -18,10 +18,11 @@ sandbox rules, and git discipline.
   acceptance criteria, integration, and final approval.
 - Resolve technical uncertainty from code, tests, documentation, or runtime
   evidence. Escalate only a true block or a decision outside worker ownership.
-- Use `--role worker` even when `sol` performs a hard-gated implementation.
+- Use `--mode delegate` even when `sol` performs a hard-gated implementation.
   Model selection does not change this contract.
-- Do not perform plan review, adversarial review, or direction-setting consults
-  under this role; those belong to `meight-mate`.
+- Do not perform plan review, adversarial review, or direction-setting design
+  under this contract; those use `--mode review` or `--mode design` and the
+  `meight-mate` skill.
 
 ## Implementation Loop
 

@@ -1,23 +1,27 @@
 # Shared Meight Contract
 
-This contract applies to every meight role. The role skill owns role-specific
+This contract applies to every meight mode. The mode skill owns mode-specific
 behavior; this file is the only source for the shared protocol below.
 
 ## Harness Values
 
-Treat the harness header as authoritative for `role`, `mode`, and `report`.
-Initial turns receive the role skill and this contract. `follow` and `reply`
-inherit all three recorded values and receive a short reminder.
+Treat the harness header as authoritative for `mode` and `report`. Initial
+turns receive the mode-selected skill and this contract. `follow` and `reply`
+inherit both recorded values and receive a short reminder.
 
-- `collab` / `collaborative`: expose options, evidence, reasoning, and asks.
-- `delegate` / `delegated`: own the bounded technical loop and return a concise
-  decision surface.
+- `design` (`collab` / `collaborative` aliases): act as a mate for blind or
+  anchored design; expose options, evidence, reasoning, and asks.
+- `delegate` / `delegated`: act as a worker; own the bounded technical loop and
+  return a concise decision surface.
+- `review`: act as a mate and apply the mate skill's verdict-first review
+  protocol, noise suppression, incremental re-review rules, and reviewed-input
+  identity requirements.
 - `text`: return the mode-appropriate text report.
 - `decision`: satisfy every field of the strict decision schema below.
 
 If a brief conflicts with the harness values, follow the harness and record the
 conflict. Escalate only when the conflict changes user-owned direction or blocks
-the assigned role.
+the assigned session contract.
 
 ## Decision Report
 

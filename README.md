@@ -7,7 +7,7 @@
 **English** | [한국어](./docs/README.ko.md)
 
 > **A two-way harness where Codex mates challenge your plans and Codex workers
-> build them.** Meight is built for an LLM agent that consults, delegates,
+> build them.** Meight is built for an LLM agent that designs collaboratively, delegates,
 > steers, reviews, and signs off with evidence. Official `openai-codex` Python
 > SDK underneath. CLI: `meight`.
 
@@ -18,16 +18,17 @@ answers structured questions, and keeps final reports small enough to make
 user-facing decisions without drowning in implementation detail.
 
 The core idea is that a frontier model wasted as a silent executor is capability
-left on the table. So meight splits the Codex side into two roles:
+left on the table. So meight offers two Codex session contracts:
 
-- A **mate** (`--role mate`) is an independent challenger. It reviews plans
-  with a real verdict, hunts defects adversarially, and takes blind consults —
+- A **mate** (`--mode design` or `--mode review`) is an independent challenger.
+  It reviews plans with a real verdict, hunts defects adversarially, and joins blind design —
   its contract says *challenge the dispatcher, agreement is not the goal*.
-- A **worker** (`--role worker`) is a bounded implementer. It owns the
+- A **worker** (`--mode delegate`) is a bounded implementer. It owns the
   technical loop — code, tests, verification, runtime QA — and reports a
   decision surface, escalating real ambiguity instead of guessing.
 
-Role and model are independent axes. The dispatcher keeps direction,
+Mate and worker name the session's contract, not the model; the mode picks the
+contract, and `--model` picks the brain. The dispatcher keeps direction,
 arbitration, integration, and final sign-off; nothing merges on a mate's or
 worker's word alone.
 
@@ -38,7 +39,7 @@ worker's word alone.
         |-- start + brief ------|
         |
         |<- QUESTION / decision report / result
-        |-- reply / steer / consult / review
+        |-- reply / steer / design / review
         |
         v
    global daemon -- official openai-codex SDK -- per-worker codex app-server
@@ -50,7 +51,7 @@ worker's word alone.
 Meight ships an opinionated development loop, refined by running it on itself.
 Every stage is doctrine (files the harness injects), not framework code:
 
-1. **Blind consult for direction forks.** Before a direction-setting decision,
+1. **Blind design for direction forks.** Before a direction-setting decision,
    a read-only mate gets the problem and constraints only — no dispatcher lean
    to anchor on — and returns the best-supported design plus the strongest case
    against it.
@@ -102,7 +103,7 @@ Compared with tmux/exec wrappers:
 | Two-way conversation | no | no | structured `QUESTION:` -> exit 3 -> `reply` |
 | Result delivery | scrape | tool return | exit-code contract + result files |
 | Machine-readable reports | no | wrapper-specific | `--report decision` via `output_schema` |
-| Role contracts | no | no | `--role mate\|worker`, harness-injected |
+| Session contracts | no | no | `--mode design\|review\|delegate`, harness-injected |
 
 And because every judgment lands on disk — digests, decisions, preferences,
 lessons — the pairing gets more personal over time: the dispatcher learns
@@ -125,7 +126,7 @@ daemon by default (`$MEIGHT_HOME`, `$XDG_STATE_HOME/meight`, or `~/.meight`)
 while isolating worker state per repo under `repos/<repo-key>/`.
 
 ```bash
-meight start impl-1 --role worker --mode delegate --report decision --model luna --effort xhigh --fast \
+meight start impl-1 --mode delegate --report decision --model luna --effort xhigh --fast \
   --brief-file - --cwd ~/my-repo <<'EOF'
 Implement X in src/foo.py. Existing pattern: see src/bar.py:42.
 Verify with: pytest tests/test_foo.py.
@@ -160,10 +161,10 @@ visible in `status.json` and `meight status`.
 meight reply impl-1 --brief "Use config-a.json and keep the legacy field."
 ```
 
-A consult goes to a mate instead — read-only, collaborative:
+Blind design goes to a mate instead — read-only and collaborative:
 
 ```bash
-meight start consult-auth --role mate --mode collab --sandbox ro --model sol --effort high \
+meight start design-auth --mode design --sandbox ro --model sol --effort high \
   --cwd ~/my-repo --brief-file - <<'EOF'
 We need to choose an auth-token refresh design.
 
@@ -183,7 +184,7 @@ EOF
 For trivial, short, low-risk tasks, one-shot dispatch is available:
 
 ```bash
-meight dispatch tiny-1 --role worker --mode delegate --report decision --sandbox ro \
+meight dispatch tiny-1 --mode delegate --report decision --sandbox ro \
   --brief "Check whether README mentions LICENSE."
 ```
 
@@ -213,7 +214,7 @@ mode the same routing runs through `outcome=needs_decision` in the schema.
 Three plain-file ledgers make the dispatch loop improve with use:
 
 - **Decision records** (`<repo>/decisions/`). Every direction-setting fork
-  resolved by two independent reads leaves a record: both positions, where
+  resolved by two independent designs leaves a record: both positions, where
   they split, and what settled it. Later sessions audit the *why*; settled
   questions stay settled.
 - **Preference ledger** (`<daemon-home>/notes/preferences.md`). When the human
@@ -222,7 +223,7 @@ Three plain-file ledgers make the dispatch loop improve with use:
   human once — only irreversible and risk calls are always re-confirmed.
 - **Lessons** (`<daemon-home>/notes/lessons.md`). Recurring review findings
   and operational mistakes become one-line lessons, promoted into brief
-  templates when they repeat. Per-run records carry the role, plan-review
+  templates when they repeat. Per-run records carry the mode, plan-review
   rounds and revise causes, escalation rates and which hard-gate clause fired,
   gate skips, and post-sign-off defects — the baseline that tunes the routing
   gates empirically instead of by vibe.
@@ -238,7 +239,7 @@ For real work, run `wait --timeout` as the background shell call. The agent
 wakes at completion, question, failure, daemon death, or checkpoint timeout.
 
 ```text
-Bash(command: "meight start review-1 --role mate --mode delegate --report decision --sandbox ro --model sol --effort high --brief-file - <<'EOF' ... EOF")
+Bash(command: "meight start review-1 --mode review --report decision --sandbox ro --model sol --effort high --brief-file - <<'EOF' ... EOF")
 Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 -> checkpoint exit 1
 -> meight status review-1
@@ -248,7 +249,7 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 A drop-in Claude orchestrator prompt ships as [`CLAUDE.md`](./CLAUDE.md). A
 Codex-as-orchestrator prompt ships as [`AGENTS.md`](./AGENTS.md). The full
 dispatcher-facing skill is [`skills/meight/`](./skills/meight/SKILL.md). The
-role contracts are [`skills/meight-mate/`](./skills/meight-mate/SKILL.md) and
+session contracts are [`skills/meight-mate/`](./skills/meight-mate/SKILL.md) and
 [`skills/meight-worker/`](./skills/meight-worker/SKILL.md), with their shared
 protocol in [`skills/meight-common/`](./skills/meight-common/CONTRACT.md).
 
@@ -260,11 +261,11 @@ protocol in [`skills/meight-common/`](./skills/meight-common/CONTRACT.md).
   follow-ups.
 - **Sparse checkpoints, not busy polling.** `wait --timeout` is a wake-up dial;
   it does not kill the worker.
-- **Status is pre-digested.** `status` returns role, mode, report type, current
+- **Status is pre-digested.** `status` returns mode, report type, current
   item, changed files, needs-input target/kind, and last-message tail.
-- **Policy cannot be forgotten.** Role, mode, role-skill loading, the shared
-  contract, and report shape are injected by the harness — `--role` and
-  `--mode` are required flags with teaching errors, validated at the daemon
+- **Policy cannot be forgotten.** Mode, mode-skill loading, the shared
+  contract, and report shape are injected by the harness — `--mode` is a
+  required flag with a teaching error, validated at the daemon
   boundary too, so a stale CLI or a raw socket client gets the same contract.
 - **Results survive on disk.** `result.md` remains the raw audit record;
   decision reports add `decision.json` and `decision.md`.
@@ -274,28 +275,29 @@ protocol in [`skills/meight-common/`](./skills/meight-common/CONTRACT.md).
 
 | Command | What it does |
 |---|---|
-| `meight start <name> --role mate\|worker --mode collab\|delegate [opts]` | Start a session and return immediately with the thread id. Supervised workflow entry point. |
+| `meight start <name> --mode design\|review\|delegate [opts]` | Start a session and return immediately with the thread id. Supervised workflow entry point. |
 | `meight wait <name> --timeout SEC` | Checkpoint wait: return on terminal state, replyable QUESTION, daemon death, or timeout. Timeout leaves the worker running. |
-| `meight dispatch <name> --role mate\|worker --mode collab\|delegate [opts]` | One-shot: auto-start daemon -> capability check -> start -> wait -> print preferred result. Use only for trivial, short, low-risk work. |
-| `meight reply <name> --brief ...` | One-shot answer to a replyable question; inherits role/mode/report and prints the latest result. |
-| `meight follow <name> --brief ...` | Low-level: new turn on the same live thread; inherits role/mode/report. |
+| `meight dispatch <name> --mode design\|review\|delegate [opts]` | One-shot: auto-start daemon -> capability check -> start -> wait -> print preferred result. Use only for trivial, short, low-risk work. |
+| `meight reply <name> --brief ...` | One-shot answer to a replyable question; inherits mode/report and prints the latest result. |
+| `meight follow <name> --brief ...` | Low-level: new turn on the same live thread; inherits mode/report. |
 | `meight result <name> [--raw]` | Print `decision.md` when present; `--raw` prints raw `result.md`. |
-| `meight status [name] [--json] [--all-repos]` | Pull digest. Table includes `ROLE` and `MODE`; legacy rows show `-` for role. Reads disk. |
+| `meight status [name] [--json] [--all-repos]` | Pull digest. Table includes `MODE`; legacy rows with old role or long-form mode values remain readable. Reads disk. |
 | `meight steer <name> "text"` | Inject instruction into the running turn. |
 | `meight interrupt <name>` | Cancel the turn. An interrupt that arrives while a worker is still starting — or while a reply turn is being opened — is recorded, and aborts the turn the moment it would commit. |
 | `meight list / daemon / ping / shutdown / launchd` | Low-level support commands. |
 
 Common options:
 
-- `--role mate|worker` is required on `start` and `dispatch`; there is no
-  default. `mate` is for consult/review, `worker` for implementation/verification.
-- `--mode collab|delegate` is required on `start` and `dispatch`
-  (`collaborative`/`delegated` aliases accepted).
+- `--mode design|review|delegate` is required on `start` and `dispatch`.
+  `collab`, `collaborative`, and `delegated` are accepted aliases. Design and
+  review are the two collaborative modes (mate contract); delegate is the
+  delegation mode (worker contract). Design is for blind/anchored design,
+  review for verdict-first plan/diff review, and delegate for implementation.
 - `--report text|decision` defaults to `text`; `decision` writes
   `decision.json`/`decision.md`.
 - `--cwd` sets the worker workdir. Use separate git worktrees for overlapping
   file scopes.
-- `--sandbox ws|ro|full` defaults to `full`; reviews and consults usually use
+- `--sandbox ws|ro|full` defaults to `full`; reads and reviews usually use
   `ro`.
 - `--model luna|sol|terra` accepts the short aliases; full model strings pass
   through unchanged.
@@ -313,21 +315,21 @@ runtime immediately. A final structured `QUESTION:` remains attached to the live
 daemon so `reply` can answer on the same thread. After daemon restart, disk
 artifacts remain but same-thread reply is expired; start a fresh worker.
 
-## Upgrading An Old Daemon To Role Support
+## Upgrading An Old Daemon To Mode3 Support
 
 The new CLI fails closed before `start` when `meight ping` does not advertise
-`capabilities=role` — and it verifies the role echo in the start response, so
-even a daemon swapped mid-handshake cannot silently degrade a mate request to
-the worker contract. Drain and restart manually:
+`capabilities=mode3` — and it verifies the normalized mode echo in start and
+follow responses, so even a daemon swapped mid-handshake cannot silently use
+the wrong contract. Drain and restart manually:
 
 1. Inspect `meight list --all-repos --json`; wait until no session across any
    repo is `starting`, `running`, or `needs_input`.
 2. Run non-force `meight shutdown`. If it refuses, finish draining; do not use
    `--force` for this migration.
 3. Start the daemon normally and confirm `meight ping` shows
-   `capabilities=role`.
-4. Start a throwaway read-only `--role mate --mode delegate` session. Confirm
-   status records `role=mate` and its saved preamble references both
+   `capabilities=mode3`.
+4. Start a throwaway read-only `--mode review` session. Confirm status records
+   `mode=review` and its saved preamble references both
    `skills/meight-mate/SKILL.md` and `skills/meight-common/CONTRACT.md`.
 5. Resume real dispatches only after that smoke passes.
 

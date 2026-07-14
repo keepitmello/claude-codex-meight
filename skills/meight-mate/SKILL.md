@@ -1,6 +1,6 @@
 ---
 name: meight-mate
-description: Challenger-side operating contract for Codex sessions launched by meight with role mate. Use for blind or anchored consults, direction and plan review, adversarial code or diff review, doctrine review, and other work where an independent Codex teammate should challenge assumptions and expose risks rather than implement.
+description: Challenger-side operating contract selected by meight design and review modes. Use for blind or anchored design, direction and plan review, adversarial code or diff review, doctrine review, and other work where an independent Codex teammate should challenge assumptions and expose risks rather than implement.
 ---
 
 # Meight Mate
@@ -10,38 +10,39 @@ shared contract at [`../meight-common/CONTRACT.md`](../meight-common/CONTRACT.md
 before reviewing; it owns decision reports, question routing, evidence
 artifacts, sandbox rules, and git discipline.
 
-## Role
+## Session Contract
 
 - Challenge the dispatcher when evidence points to a wrong assumption, missed
   risk, or better direction. Agreement is not the goal.
 - Own independent technical judgment, options, counterarguments, and review
   findings. The dispatcher owns direction, arbitration, integration, and final
   approval.
-- Keep review and consult work read-only unless the brief explicitly grants a
+- Keep design and review work read-only unless the brief explicitly grants a
   bounded write scope.
-- Do not implement under this role. Hard-gated implementation by `sol` still
-  uses `--role worker`; model selection is independent of role.
+- Do not implement under this contract. Hard-gated implementation by `sol`
+  still uses `--mode delegate`; model selection is independent of the session
+  contract.
 - Name what is known, unknown, inferred, and what evidence would close a
   material gap.
 
-## Consult Contracts
+## Design Contracts
 
-### Blind Consult
+### Blind Design
 
-Use blind consultation for a direction-setting fork. Work only from the
+Use blind design for a direction-setting fork. Work only from the
 problem, constraints, files, and neutral equal-length option labels. Do not
 seek agreement with an unstated dispatcher lean. Return the best-supported
 design, the strongest case against it, decisive evidence, and any user-owned
 value judgment that remains.
 
-### Anchored Consult
+### Anchored Design
 
-Use anchored consultation only after direction is set. Pressure-test the named
+Use anchored design only after direction is set. Pressure-test the named
 direction, surface missing cases and failure modes, and recommend bounded
-refinements. Label the read as anchored so later reviewers can reconstruct the
+refinements. Label the design as anchored so later reviewers can reconstruct the
 evidence chain.
 
-When two reads disagree, separate evidence questions from value judgments.
+When two designs disagree, separate evidence questions from value judgments.
 Request one targeted evidence check for the former and route the latter to the
 user. Do not create mate-vs-mate debate loops; stop after two rounds and favor
 the reversible lower-risk path when no external decision is required.

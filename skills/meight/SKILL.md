@@ -1,6 +1,6 @@
 ---
 name: meight
-description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-meight). Route independent consult and review work to role mate, bounded implementation and verification to role worker, require explicit --role and --mode, supervise with start/status/result, and use one-shot dispatch only for trivial safe work. Use whenever a dispatcher delegates work to Codex. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임"
+description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-meight). Route blind and anchored design to design, verdict-first plan/diff review to review, and bounded implementation and verification to delegate; require explicit --mode, supervise with start/status/result, and use one-shot dispatch only for trivial safe work. Use whenever a dispatcher delegates work to Codex. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임"
 ---
 
 # meight (claude-codex-meight)
@@ -10,11 +10,11 @@ usable from any repo via the `meight` CLI. One global daemon is shared across
 repos; session state is isolated per invoking repo under
 `<daemon-home>/repos/<repo-key>/`.
 
-Role details live in [`skills/meight-mate/SKILL.md`](../meight-mate/SKILL.md)
+Contract details live in [`skills/meight-mate/SKILL.md`](../meight-mate/SKILL.md)
 and [`skills/meight-worker/SKILL.md`](../meight-worker/SKILL.md). Their shared
 protocol lives in
 [`skills/meight-common/CONTRACT.md`](../meight-common/CONTRACT.md). The harness
-preamble injects the selected role skill plus the common contract. This skill
+preamble injects the mode-selected skill plus the common contract. This skill
 is the dispatcher-facing SSOT for routing and supervision.
 
 ## Operating Model
@@ -25,7 +25,9 @@ is the dispatcher-facing SSOT for routing and supervision.
 - A Codex worker owns bounded technical design, implementation, verification,
   and local execution choices. A Codex mate independently challenges plans,
   direction, code, and doctrine.
-- Both roles are teammates, not silent executors. They can push back with a
+- Mate and worker name the session's contract, not the model: `--mode` picks
+  the contract and `--model` picks the brain.
+- Both contracts are teammate contracts, not silent executors. They can push back with a
   structured `QUESTION:` when they see a better direction, a wrong assumption,
   or a decision outside their ownership.
 - Verification owns the outcome. A worker's "done" is a claim; relevant tests
@@ -36,44 +38,31 @@ is the dispatcher-facing SSOT for routing and supervision.
 - Sessions may commit/push completed verified work when the brief allows it, but
   the dispatcher still owns final integration and approval.
 
-## Roles Are Required
-
-`start` and `dispatch` require `--role mate|worker`. There is no default.
-Omission or an unknown value produces a teaching error before start side
-effects.
-
-- `--role mate`: use for blind or anchored consults, plan review, adversarial
-  review, and doctrine/contract challenge.
-- `--role worker`: use for bounded implementation, fixes, tests, verification,
-  runtime/browser QA, computer use, and exploration.
-
-Role and model are independent. Hard-gated implementation by `sol` uses
-`--role worker`; `--role mate --model luna` is valid but unusual. `follow` and
-`reply` inherit the recorded role. Role is stored in `status.json` and shown in
-the `ROLE` status column.
-
-The CLI performs a capability handshake before sending `start`. If the live
-daemon does not advertise capability `role`, start fails closed with
-`daemon predates --role; restart required`; it never falls back to the worker
-skill.
-
 ## Modes Are Required
 
-`start` and `dispatch` require `--mode collab|delegate`. Aliases
-`collaborative` and `delegated` are accepted. There is no default; omitting the
+`start` and `dispatch` require `--mode design|review|delegate`. `collab`,
+`collaborative`, and `delegated` are accepted aliases. There is no default; omitting the
 flag is an error with a teaching message. The consumer is an LLM agent, so
 policy cannot be forgotten or left to memory.
 
-- `--mode collab`: use for consult, design, diagnosis, architecture,
-  alternatives, tradeoffs, planning, and direction-setting reads. The mate
-  exposes options and reasoning.
-- `--mode delegate`: use for bounded implementation, fixes, verification, and
-  review. The worker owns the technical loop and reports a decision surface.
+- `--mode design`: use for blind or anchored design,
+  diagnosis, architecture, alternatives, tradeoffs, planning, and direction
+  setting. The session is a mate and exposes options and reasoning.
+- `--mode delegate`: use for bounded implementation, fixes, tests,
+  verification, runtime/browser QA, computer use, and exploration. The session
+  is a worker and owns the technical loop.
+- `--mode review`: use for verdict-first plan, diff, adversarial, and doctrine
+  review. The session is a mate with explicit review duties.
 - `follow` and `reply` take no mode flag. They inherit the session's recorded
   mode and receive only a one-line harness reminder instead of the full
   preamble.
 
-Mode is recorded in `status.json` as `mode` and shown in the `MODE` column.
+Design and review are the two collaborative modes and use the mate contract;
+delegate is the delegation mode and uses the worker contract. Canonical mode is
+recorded in `status.json` and shown in the `MODE` column.
+The CLI performs a capability handshake before sending `start`. If the live
+daemon does not advertise capability `mode3`, start fails closed with
+`daemon predates --mode review; restart required`.
 
 ## Default: Start, Then Check Status
 
@@ -84,7 +73,7 @@ background work. Do not keep a long-running background checkpoint shell as the
 normal Claude Code supervision loop.
 
 ```bash
-meight start <name> --role worker --mode delegate --report decision --brief-file - --cwd <dir> \
+meight start <name> --mode delegate --report decision --brief-file - --cwd <dir> \
   [--sandbox ws|ro|full, default full] [--effort low|medium|high|xhigh|ultra|max, default medium] <<'EOF'
 ## Goal       <what this enables + success criteria>
 ## Scope      <file/dir boundary; do not exceed>
@@ -107,14 +96,14 @@ and service make Fast available.
 
 | Model | Use for | Typical effort |
 |-------|---------|----------------|
-| `luna` | Default model for role-worker implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `xhigh` + `--fast` when available |
-| `sol` | Default model for role-mate direction/plan/adversarial review, plus hard-gated role-worker implementation | `high`; reserve `xhigh` for genuinely hard problems — the dispatcher judges what qualifies |
+| `luna` | Default model for delegate-mode implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `xhigh` + `--fast` when available |
+| `sol` | Default model for design/review direction and verdict work, plus hard-gated delegate-mode implementation | `high`; reserve `xhigh` for genuinely hard problems — the dispatcher judges what qualifies |
 | `terra` | No default ownership; capability-specific fallback when measured evidence supports it | task-specific |
 
 `high` is the sol default, not a floor: `high` can overthink, so the dispatcher
 may drop to `medium` at its discretion for lighter mate work. One caution from
 measurement: `medium` has shown severity over-promotion in adversarial reviews,
-so prefer the drop for consults and scoping reads over verdict-bearing reviews.
+so prefer the drop for design thinking and scoping design over verdict-bearing reviews.
 
 Hard gate (verbatim contract wording): **acceptance-critical한 부분이 concurrency,
 security, 공개 schema/API 계약 설계, 영속 데이터 마이그레이션, cross-cutting
@@ -155,7 +144,7 @@ failure.
 Use one-shot dispatch only when supervision is not worth it.
 
 ```bash
-meight dispatch tiny-1 --role worker --mode delegate --report decision --sandbox ro \
+meight dispatch tiny-1 --mode delegate --report decision --sandbox ro \
   --brief "Check whether README mentions LICENSE."
 ```
 
@@ -211,18 +200,18 @@ dispatcher-targeted `QUESTION:` plus `reply` to preserve the thread. If daemon
 restart or GC expired the same-thread session, `status` shows
 `runtime_lost_detail`; start a fresh worker instead of replying.
 
-## Consult Doctrine
+## Design Doctrine
 
-Use consults for direction-setting forks and for genuine uncertainty.
+Use design with a mate for direction-setting forks and genuine uncertainty.
 
-### Blind Consult (Default For Direction Forks)
+### Blind Design (Default For Direction Forks)
 
 Analyze first and keep your own analysis out of the brief. Send only the
 problem, constraints, relevant files, and neutral option labels. Ask for the
 best-supported design and the strongest case against it, not agreement.
 
 ```bash
-meight start consult-auth --role mate --mode collab --sandbox ro --model sol --effort high --cwd <repo root> --brief-file - <<'EOF'
+meight start design-auth --mode design --sandbox ro --model sol --effort high --cwd <repo root> --brief-file - <<'EOF'
 We need to choose an auth-token refresh design.
 
 Constraints:
@@ -239,12 +228,12 @@ that would settle remaining uncertainty. No code changes.
 EOF
 ```
 
-### Anchored Consult (Only After Direction Is Set)
+### Anchored Design (Only After Direction Is Set)
 
-Use anchored consults to refine an already-set direction:
+Use anchored design to refine an already-set direction:
 
 ```bash
-meight start consult-refine --role mate --mode collab --sandbox ro --model sol --effort high --cwd <repo root> \
+meight start design-refine --mode design --sandbox ro --model sol --effort high --cwd <repo root> \
   --brief "Direction is Option B. Pressure-test it: what am I missing, and what edge cases should the implementation cover?"
 ```
 
@@ -259,14 +248,13 @@ skipped and why (trivial case), or ask first (borderline case); (2) failure-cost
 hard gates and money-path sign-off are never skippable. Record skips in the run
 metrics — a skip is data too.
 
-Blind consult remains unchanged for direction-setting forks. Only after the
+The blind-design contract remains unchanged for direction-setting forks. Only after the
 direction is set does the dispatcher author a plan and enter this bounded,
 anchored refinement loop with `sol high` (`xhigh` only for genuinely hard
 design problems):
 
 1. The dispatcher authors the plan and sends it to a persistent `mate/sol` review
-   mate thread. Run this bounded loop with `--role mate --mode delegate
-   --report decision` so
+   mate thread. Run this bounded loop with `--mode review --report decision` so
    verdicts arrive schema-validated; `--report text` remains acceptable for
    collab-style exploratory reviews.
 2. The reviewer leads with `APPROVE` or `REVISE`. In decision-report mode the
@@ -293,7 +281,7 @@ design problems):
    with separate `new-risks` and `resolved-risks` headings, listed in
    `evidence_artifacts` — the strict schema has no fields for it.
 4. If round three does not approve, do not auto-reenter. The dispatcher chooses
-   exactly one next step: residual-risk sign-off, a targeted evidence read, or
+   exactly one next step: residual-risk sign-off, a targeted evidence check, or
    user escalation.
 5. Freeze the approved contract as versioned `PLAN.md`. Implementation and
    final review both use that exact plan. A scope change reopens plan approval.
@@ -303,14 +291,14 @@ fired, or explicitly records `none—luna eligible`.
 
 ### Disagreement Protocol
 
-1. Compare the two reads.
+1. Compare the two designs.
 2. Split disagreements into evidence questions vs value judgments.
 3. Evidence questions get one targeted verification session.
 4. User-owned value judgments (scope, UX, priority, risk appetite,
    irreversible action, acceptance criteria) escalate to the human.
 5. Max two rounds. Then prefer the reversible/lower-risk option or escalate.
 
-Do not run mate-vs-mate debate loops. Do not feed one read into the other
+Do not run mate-vs-mate debate loops. Do not feed one design into the other
 before both exist.
 
 ## Learning Loop: Decision Records, Preferences, Lessons
@@ -320,14 +308,14 @@ somewhere agents actually read. Three ledgers, all plain files:
 
 ### Decision Records (`<repo>/decisions/`)
 
-After any direction-setting fork resolved by two reads, write
+After any direction-setting fork resolved by two designs, write
 `decisions/YYYY-MM-DD-<slug>.md` in the working repo:
 
 ```md
 # <the question>
 DATE: <date> · MODE: consensus|delegation
-READ A (dispatcher): <one-paragraph position>
-READ B (mate, blind|anchored): <one-paragraph position>
+ANALYSIS A (dispatcher): <one-paragraph position>
+DESIGN B (mate, blind|anchored): <one-paragraph position>
 DISAGREEMENT: <where they split, or "none">
 RESOLUTION: evidence|value-judgment — <what settled it>
 DECISION: <what was chosen>
@@ -359,7 +347,7 @@ skill. Repo-specific code patterns belong in that repo's own docs, not here.
 For this operating model, record enough structured data to measure:
 
 - plan-review round count and the cause of each `REVISE`;
-- role (`mate` or `worker`) for every run record;
+- mode (`design`, `review`, or `delegate`) for every run record;
 - escalation rate as rerouted tasks divided by `luna`-started tasks, with
   ordinary `QUESTION:` events tracked separately;
 - the escalation axis (`luna→sol` or `luna→terra`) and the hard-gate clause
@@ -379,7 +367,7 @@ review → dispatcher full-diff read and final sign-off. The review contract is
 the frozen, versioned `PLAN.md`, not a summary written after implementation.
 
 ```bash
-meight start review-X --role mate --mode delegate --report decision --sandbox ro --model sol --effort high --cwd <repo root> --brief-file - <<'EOF'
+meight start review-X --mode review --report decision --sandbox ro --model sol --effort high --cwd <repo root> --brief-file - <<'EOF'
 Adversarial review. Target: <files>. Contract: <versioned PLAN.md>.
 Hunt for real defects: correctness, regressions, missing verification,
 security/data risk, edge cases, races. For each finding: severity P1/P2/P3,
@@ -403,7 +391,7 @@ fork. It also adds a Claude context-holding review at both the plan stage and
 the final-diff stage. The dispatcher remains the orchestrator, arbitrator, and
 final signer.
 
-Role-worker implementation reports from `luna` must map the approved-plan rationale onto
+Delegate-mode implementation reports from `luna` must map the approved-plan rationale onto
 the existing decision schema:
 
 - `summary`: name the plan version and state every deviation plus rationale;
@@ -426,7 +414,7 @@ When a frontend worker reports `IMPLEMENTED, FRESH-EYES PENDING`, dispatch an
 independent comprehension reviewer before accepting `VERIFIED`. Protocol and
 verbatim reviewer prompt: `~/.codex/skills/frontend-ux-router/references/fresh-eyes-review.md`.
 
-- One-shot `--role mate --model luna` with only: the persona line, screenshot paths (or route),
+- One-shot `--mode review --model luna` with only: the persona line, screenshot paths (or route),
   and the reviewer prompt. Zero implementation context — no brief, no diff,
   no explanations. Contamination invalidates the review.
 - FAIL → route the reviewer's raw answers back to the implementer as redesign
@@ -442,16 +430,16 @@ Use the smallest brief that gives the worker the right contract:
 - Verification
 - Report
 
-Do not paste role, mode, report, and QUESTION policy into every brief; the
+Do not paste mode, report, and QUESTION policy into every brief; the
 harness preamble injects those. Domain rules and task-specific constraints
 belong in the brief.
 
 ## Status, Steer, Interrupt
 
 ```bash
-meight status            # one-line table for this repo, includes ROLE and MODE
+meight status            # one-line table for this repo, includes MODE
 meight list --all-repos  # global table across repo namespaces
-meight status <name>     # detail, including role/mode/report/needs_input target+kind
+meight status <name>     # detail, including mode/report/needs_input target+kind
 meight steer <name> "instruction"
 meight interrupt <name>
 ```
@@ -480,7 +468,7 @@ used:
 Meight runtime code is loaded into the long-lived daemon process. After changing
 `meight.py`, restart the daemon before trusting behavior from new workers.
 
-### Role Migration And Post-Restart Smoke
+### Mode3 Migration And Post-Restart Smoke
 
 Do not restart while any repo namespace has an active or `needs_input` session.
 The operator performs this checklist manually:
@@ -491,16 +479,16 @@ The operator performs this checklist manually:
    refuse shutdown if the drain check missed anything; do not use `--force` for
    this migration.
 3. Start the new daemon by the installation's normal mechanism and run
-   `meight ping`. Confirm `capabilities=role`.
-4. Start a throwaway read-only session with `--role mate --mode delegate`.
-5. Confirm `meight status <name> --json` records `"role": "mate"` and inspect
+   `meight ping`. Confirm `capabilities=mode3`.
+4. Start a throwaway read-only session with `--mode review`.
+5. Confirm `meight status <name> --json` records `"mode": "review"` and inspect
    its `brief.md` to verify the preamble names
    `skills/meight-mate/SKILL.md` plus `skills/meight-common/CONTRACT.md`.
 6. Only then dispatch real work. Remove or retain the throwaway disk artifacts
    according to the normal operator policy; no forced cleanup is required.
 
 The implementation worker must document this procedure but must not execute it
-against the old daemon during the mate-split rollout.
+against the old daemon during the mode3 rollout.
 
 Useful checks:
 
