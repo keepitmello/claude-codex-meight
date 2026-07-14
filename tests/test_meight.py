@@ -25,11 +25,11 @@ class EffortTests(unittest.TestCase):
         parser = meight.build_parser()
         for effort in ("ultra", "max"):
             args = parser.parse_args([
-                "start", f"effort-{effort}", "--role", "worker", "--mode", "delegate",
+                "start", f"effort-{effort}", "--mode", "delegate",
                 "--brief", "Say OK", "--effort", effort,
             ])
-            responses = ({"ok": True, "capabilities": ["role"]},
-                         {"ok": True, "role": "worker"})
+            responses = ({"ok": True, "capabilities": ["mode3"]},
+                         {"ok": True, "mode": "delegate"})
             with patch.object(meight, "send_request", side_effect=responses) as send:
                 meight.start_request(args, Path("/tmp/meight-test"))
             self.assertEqual(send.call_args.args[1]["effort"], effort)
@@ -119,7 +119,7 @@ class DecisionRoutingTests(unittest.TestCase):
                     worker = meight.Worker(
                         name, repo_home, "/repo", "repo-key", "/repo",
                         "workspace_write", "gpt-5.6-sol", "medium",
-                        mode="delegated", report="decision",
+                        mode="delegate", report="decision",
                     )
                     worker.dir.mkdir(parents=True)
                     worker.init_status(thread_id="thread-1")
@@ -136,7 +136,7 @@ class DecisionRoutingTests(unittest.TestCase):
                     self.assertEqual(worker.status["needs_input_kind"], expected_kind)
 
 
-class RoleLifecycleTests(unittest.TestCase):
+class ModeLifecycleTests(unittest.TestCase):
     class _EmptyHandle:
         def stream(self):
             return iter(())
@@ -146,101 +146,98 @@ class RoleLifecycleTests(unittest.TestCase):
 
     class _CaptureThread:
         def __init__(self):
-            self.id = "thread-role-test"
+            self.id = "thread-mode-test"
             self.inputs = []
 
         def turn(self, turn_input, **kwargs):
             self.inputs.append(turn_input)
-            return RoleLifecycleTests._EmptyHandle()
+            return ModeLifecycleTests._EmptyHandle()
 
-    def _start_args(self, cwd: str, role: str = "mate"):
+    def _start_args(self, cwd: str, mode: str = "review"):
         return meight.build_parser().parse_args([
-            "start", "role-test", "--role", role, "--mode", "delegate",
+            "start", "mode-test", "--mode", mode,
             "--brief", "Review the contract.", "--cwd", cwd,
         ])
 
-    def test_role_maps_to_role_skill_and_common_contract(self):
-        for role, directory in (("mate", "meight-mate"), ("worker", "meight-worker")):
-            with self.subTest(role=role):
-                preamble = meight.build_preamble(role, "delegated", "decision")
+    def test_each_mode_maps_to_expected_skill_and_common_contract(self):
+        for mode, directory in (
+            ("design", "meight-mate"),
+            ("delegate", "meight-worker"),
+            ("review", "meight-mate"),
+        ):
+            with self.subTest(mode=mode):
+                preamble = meight.build_preamble(mode, "decision")
                 self.assertIn(f"skills/{directory}/SKILL.md", preamble)
                 self.assertIn("skills/meight-common/CONTRACT.md", preamble)
-                self.assertIn(f"role: {role}", preamble)
+                self.assertIn(f"mode: {mode}", preamble)
+                self.assertNotIn("role:", preamble)
+        review = meight.build_preamble("review", "decision")
+        for duty in ("verdict-first", "noise suppression", "incremental re-review", "reviewed-input identity"):
+            self.assertIn(duty, review)
 
-    def test_daemon_rejects_missing_or_invalid_role_before_side_effects(self):
+    def test_mode_aliases_normalize_and_review_has_no_alias(self):
+        self.assertEqual(meight.normalize_mode("design"), "design")
+        self.assertEqual(meight.normalize_mode("collab"), "design")
+        self.assertEqual(meight.normalize_mode("collaborative"), "design")
+        self.assertEqual(meight.normalize_mode("delegate"), "delegate")
+        self.assertEqual(meight.normalize_mode("delegated"), "delegate")
+        self.assertEqual(meight.normalize_mode("review"), "review")
+        self.assertIsNone(meight.normalize_mode("reviewer"))
+
+    def test_daemon_rejects_missing_or_invalid_mode_before_side_effects(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             daemon = meight.Daemon(home)
-            for role in (None, "reviewer"):
-                with self.subTest(role=role):
-                    req = {"cmd": "start", "mode": "delegate"}
-                    if role is not None:
-                        req["role"] = role
+            for mode in (None, "reviewer"):
+                with self.subTest(mode=mode):
+                    req = {"cmd": "start"}
+                    if mode is not None:
+                        req["mode"] = mode
                     response = daemon._dispatch(req)
                     self.assertFalse(response["ok"])
-                    self.assertIn("--role is required", response["error"])
+                    self.assertEqual(response["error"], meight.MODE_TEACHING_ERROR.removeprefix("error: "))
                     self.assertEqual(daemon.workers, {})
                     self.assertFalse((home / "repos").exists())
 
-    def test_daemon_role_teaching_error_precedes_mode_error(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            home = Path(tmp)
-            daemon = meight.Daemon(home)
-            for req in (
-                {"cmd": "start"},
-                {"cmd": "start", "role": "reviewer", "mode": "invalid"},
-            ):
-                with self.subTest(req=req):
-                    response = daemon._dispatch(req)
-                    self.assertFalse(response["ok"])
-                    self.assertIn("--role is required", response["error"])
-                    self.assertEqual(daemon.workers, {})
-                    self.assertFalse((home / "repos").exists())
-
-    def test_cli_missing_and_invalid_role_share_teaching_error(self):
+    def test_cli_missing_and_invalid_mode_share_teaching_error(self):
         parser = meight.build_parser()
-        for role_args in ([], ["--role", "reviewer"]):
-            with self.subTest(role_args=role_args):
+        for mode_args in ([], ["--mode", "reviewer"]):
+            with self.subTest(mode_args=mode_args):
                 args = parser.parse_args([
-                    "start", "role-teaching", "--mode", "delegate",
-                    "--brief", "No side effects.", *role_args,
+                    "start", "mode-teaching", "--brief", "No side effects.", *mode_args,
                 ])
                 stderr = io.StringIO()
                 with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
-                    meight.start_request(args, Path("/tmp/meight-role-teaching"))
+                    meight.start_request(args, Path("/tmp/meight-mode-teaching"))
                 self.assertEqual(error.exception.code, 2)
-                self.assertEqual(stderr.getvalue().strip(), meight.ROLE_TEACHING_ERROR)
+                self.assertEqual(stderr.getvalue().strip(), meight.MODE_TEACHING_ERROR)
 
-    def test_cli_role_teaching_error_precedes_mode_error(self):
+    def test_single_axis_mode_validation_precedes_side_effects(self):
         parser = meight.build_parser()
         for command in ("start", "dispatch"):
-            for role_args, mode_args in (
-                ([], []),
-                (["--role", "reviewer"], ["--mode", "invalid"]),
-            ):
-                with self.subTest(command=command, role_args=role_args, mode_args=mode_args):
+            for mode_args in ([], ["--mode", "invalid"]):
+                with self.subTest(command=command, mode_args=mode_args):
                     args = parser.parse_args([
-                        command, "role-precedence", "--brief", "No side effects.",
-                        *role_args, *mode_args,
+                        command, "mode-precedence", "--brief", "No side effects.", *mode_args,
                     ])
                     stderr = io.StringIO()
                     call = meight.start_request if command == "start" else meight.cmd_dispatch
                     with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
-                        call(args, Path("/tmp/meight-role-precedence"))
+                        call(args, Path("/tmp/meight-mode-precedence"))
                     self.assertEqual(error.exception.code, 2)
-                    self.assertEqual(stderr.getvalue().strip(), meight.ROLE_TEACHING_ERROR)
+                    self.assertEqual(stderr.getvalue().strip(), meight.MODE_TEACHING_ERROR)
 
-    def test_follow_and_reply_path_inherit_recorded_role(self):
+    def test_follow_path_inherits_recorded_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             repo_home = home / "repos" / "repo-key"
             worker = meight.Worker(
-                "inherit-role", repo_home, "/repo", "repo-key", "/repo",
+                "inherit-mode", repo_home, "/repo", "repo-key", "/repo",
                 "workspace_write", "gpt-5.6-sol", "high",
-                role="mate", mode="delegated", report="decision",
+                mode="review", report="decision",
             )
             worker.dir.mkdir(parents=True)
-            worker.init_status(thread_id="thread-role-test")
+            worker.init_status(thread_id="thread-mode-test")
             worker.status["state"] = "needs_input"
             worker.status["needs_input_source"] = "question"
             worker.write_status(force=True)
@@ -248,9 +245,9 @@ class RoleLifecycleTests(unittest.TestCase):
             worker.thread = thread
 
             daemon = meight.Daemon(home)
-            daemon.workers[meight.registry_key("repo-key", "inherit-role")] = worker
+            daemon.workers[meight.registry_key("repo-key", "inherit-mode")] = worker
             response = daemon.cmd_follow({
-                "name": "inherit-role",
+                "name": "inherit-mode",
                 "brief": "Use the recommended correction.",
                 "repo_key": "repo-key",
                 "repo_root": "/repo",
@@ -260,39 +257,50 @@ class RoleLifecycleTests(unittest.TestCase):
                 worker.consumer.join(timeout=2)
 
             self.assertTrue(response["ok"])
-            self.assertEqual(response["role"], "mate")
-            self.assertEqual(worker.status["role"], "mate")
+            self.assertEqual(response["mode"], "review")
+            self.assertEqual(worker.status["mode"], "review")
             self.assertIn("skills/meight-mate/SKILL.md", thread.inputs[0])
             self.assertIn("skills/meight-common/CONTRACT.md", thread.inputs[0])
+            self.assertIn("verdict-first", thread.inputs[0])
 
-    def test_status_table_has_role_column(self):
+    def test_status_table_has_mode_cell_and_no_role_column(self):
         status = {
             "name": "review-1",
             "state": "running",
-            "role": "mate",
-            "mode": "delegated",
+            "mode": "review",
             "started_at": meight.now_iso(),
             "updated_at": meight.now_iso(),
         }
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             meight.print_status_table([status])
-        self.assertIn("ROLE", output.getvalue().splitlines()[0])
-        self.assertIn("mate", output.getvalue().splitlines()[1])
+        self.assertNotIn("ROLE", output.getvalue().splitlines()[0])
+        self.assertIn("MODE", output.getvalue().splitlines()[0])
+        self.assertIn("review", output.getvalue().splitlines()[1])
 
-    def test_legacy_status_without_role_renders_without_crash(self):
-        status = {
-            "name": "legacy",
+    def test_legacy_rows_with_role_and_old_modes_render_without_crash(self):
+        for old_mode, expected in (("collaborative", "design"), ("delegated", "delegate")):
+            status = {
+                "name": "legacy",
+                "state": "completed",
+                "role": "mate",
+                "mode": old_mode,
+                "started_at": meight.now_iso(),
+                "updated_at": meight.now_iso(),
+            }
+            line = meight.summary_line(status)
+            self.assertIn("legacy", line)
+            self.assertEqual(line.split()[2], expected)
+        role_only = {
+            "name": "role-only",
             "state": "completed",
-            "mode": "delegated",
+            "role": "mate",
             "started_at": meight.now_iso(),
             "updated_at": meight.now_iso(),
         }
-        line = meight.summary_line(status)
-        self.assertIn("legacy", line)
-        self.assertEqual(line.split()[2], "-")
+        self.assertEqual(meight.summary_line(role_only).split()[2], "-")
 
-    def test_missing_role_capability_fails_before_start_request(self):
+    def test_missing_mode3_capability_fails_before_start_request(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             args = self._start_args(tmp)
@@ -307,26 +315,26 @@ class RoleLifecycleTests(unittest.TestCase):
 
             self.assertEqual(response, {
                 "ok": False,
-                "error": "daemon predates --role; restart required",
+                "error": "daemon predates --mode review; restart required",
             })
             self.assertEqual(requests, [{"cmd": "ping"}])
             self.assertFalse((home / "repos").exists())
 
-    def test_missing_or_mismatched_start_role_echo_fails_and_interrupts(self):
-        for echo in (None, "worker"):
+    def test_missing_or_mismatched_start_mode_echo_fails_and_interrupts(self):
+        for echo in (None, "delegate"):
             with self.subTest(echo=echo), tempfile.TemporaryDirectory() as tmp:
                 home = Path(tmp)
-                args = self._start_args(tmp, role="mate")
+                args = self._start_args(tmp, mode="review")
                 requests = []
 
                 def swapped_daemon(_home, req, timeout=meight.SOCKET_TIMEOUT_SEC):
                     requests.append(req)
                     if req["cmd"] == "ping":
-                        return {"ok": True, "capabilities": ["role"]}
+                        return {"ok": True, "capabilities": ["mode3"]}
                     if req["cmd"] == "start":
                         response = {"ok": True, "thread_id": "old-daemon-worker"}
                         if echo is not None:
-                            response["role"] = echo
+                            response["mode"] = echo
                         return response
                     return {"ok": True}
 
@@ -341,14 +349,54 @@ class RoleLifecycleTests(unittest.TestCase):
                 self.assertEqual(error.exception.code, 1)
                 self.assertEqual(
                     stderr.getvalue().strip(),
-                    "error: legacy daemon accepted the start without role support",
+                    "error: legacy daemon accepted the start without mode3 support",
                 )
                 self.assertEqual([req["cmd"] for req in requests], ["ping", "start", "interrupt"])
                 self.assertEqual(requests[2]["name"], args.name)
                 for key in ("repo_root", "repo_key", "repo_home"):
                     self.assertEqual(requests[2][key], requests[1][key])
 
-    def test_ping_and_runtime_status_advertise_role_capability(self):
+    def test_missing_or_mismatched_follow_mode_echo_fails_and_interrupts(self):
+        for echo in (None, "delegate"):
+            with self.subTest(echo=echo), tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp)
+                repo_home = home / "repos" / "repo-key"
+                status_dir = repo_home / "workers" / "follow-mode"
+                status_dir.mkdir(parents=True)
+                (status_dir / "status.json").write_text(
+                    json.dumps({"mode": "review"}), encoding="utf-8",
+                )
+                args = meight.build_parser().parse_args([
+                    "follow", "follow-mode", "--brief", "Re-review.",
+                ])
+                requests = []
+
+                def swapped_daemon(_home, req, timeout=meight.SOCKET_TIMEOUT_SEC):
+                    requests.append(req)
+                    if req["cmd"] == "follow":
+                        response = {"ok": True, "thread_id": "thread-mode", "turns": 2}
+                        if echo is not None:
+                            response["mode"] = echo
+                        return response
+                    return {"ok": True}
+
+                with (
+                    patch.object(meight, "repo_home_for_cli", return_value=repo_home),
+                    patch.object(meight, "request_repo_context", return_value={
+                        "repo_root": "/repo", "repo_key": "repo-key", "repo_home": str(repo_home),
+                    }),
+                    patch.object(meight, "send_request", side_effect=swapped_daemon),
+                ):
+                    response = meight.follow_request(args, home)
+
+                self.assertEqual(response, {
+                    "ok": False,
+                    "error": "legacy daemon accepted the follow without mode3 support",
+                })
+                self.assertEqual([req["cmd"] for req in requests], ["follow", "interrupt"])
+                self.assertEqual(requests[1]["name"], args.name)
+
+    def test_ping_and_runtime_status_advertise_mode3_capability(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             daemon = meight.Daemon(home)
@@ -359,14 +407,14 @@ class RoleLifecycleTests(unittest.TestCase):
                 "repo_root": "/repo",
                 "repo_home": str(home / "repos" / "repo-key"),
             })
-            self.assertIn("role", ping["capabilities"])
-            self.assertIn("role", runtime["capabilities"])
+            self.assertIn("mode3", ping["capabilities"])
+            self.assertIn("mode3", runtime["capabilities"])
 
-    def test_advertised_role_capability_starts_and_records_role(self):
+    def test_advertised_mode3_capability_starts_and_records_mode(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             daemon = meight.Daemon(home)
-            args = self._start_args(tmp, role="mate")
+            args = self._start_args(tmp, mode="review")
             capture_thread = self._CaptureThread()
 
             class FakeCodex:
@@ -405,11 +453,12 @@ class RoleLifecycleTests(unittest.TestCase):
                 response = meight.start_request(args, home)
 
             self.assertTrue(response["ok"])
-            self.assertEqual(response["role"], "mate")
+            self.assertEqual(response["mode"], "review")
             repo_home = Path(meight.repo_context(home)["repo_home"])
-            status_path = repo_home / "workers" / "role-test" / "status.json"
+            status_path = repo_home / "workers" / "mode-test" / "status.json"
             status = json.loads(status_path.read_text(encoding="utf-8"))
-            self.assertEqual(status["role"], "mate")
+            self.assertNotIn("role", status)
+            self.assertEqual(status["mode"], "review")
             self.assertIn("skills/meight-mate/SKILL.md", capture_thread.inputs[0])
 
 
