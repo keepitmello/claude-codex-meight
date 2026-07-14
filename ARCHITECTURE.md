@@ -15,8 +15,9 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
    challenger (`mate`) contract; delegate selects the implementer (`worker`)
    contract. The preamble injects the mode-selected skill plus
    `meight-common/CONTRACT.md`. `follow`/`reply` inherit mode and report. Model
-   stays independent: `sol` can run as a worker for hard-gated implementation,
-   while `luna` can be a mate for design or review.
+   stays independent: in practice mate work runs on `sol` and worker work on
+   `luna`, and `sol` drops to the worker contract for hard-gated
+   implementation.
 5. **Two-way by protocol, not plumbing.** A preamble frames either contract as a
    teammate: sessions may commit/push completed verified work while the
    orchestrator owns integration and final sign-off; and rather than guessing or

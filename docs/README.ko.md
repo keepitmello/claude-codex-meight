@@ -209,7 +209,7 @@ decision-report 모드에서는 같은 라우팅이 스키마의 `outcome=needs_
 
 plain file 원장 세 개가 디스패치 루프를 쓸수록 좋게 만듭니다:
 
-- **결정 기록** (`<repo>/decisions/`). 두 독립 읽기로 해소된 모든 방향
+- **결정 기록** (`<repo>/decisions/`). 두 독립 설계로 해소된 모든 방향
   갈림길이 기록을 남깁니다: 양쪽 입장, 갈린 지점, 무엇이 결론을 냈는지.
   나중 세션이 *왜*를 감사할 수 있고, 정해진 질문은 정해진 채로 유지됩니다.
 - **선호 원장** (`<daemon-home>/notes/preferences.md`). 사람이 `TARGET: user`

@@ -261,7 +261,9 @@ class ModeLifecycleTests(unittest.TestCase):
             self.assertEqual(worker.status["mode"], "review")
             self.assertIn("skills/meight-mate/SKILL.md", thread.inputs[0])
             self.assertIn("skills/meight-common/CONTRACT.md", thread.inputs[0])
-            self.assertIn("verdict-first", thread.inputs[0])
+            for duty in ("verdict-first", "noise-suppressed", "incremental review",
+                         "reviewed-input identity"):
+                self.assertIn(duty, thread.inputs[0])
 
     def test_status_table_has_mode_cell_and_no_role_column(self):
         status = {

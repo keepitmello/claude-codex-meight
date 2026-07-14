@@ -313,7 +313,7 @@ After any direction-setting fork resolved by two designs, write
 
 ```md
 # <the question>
-DATE: <date> · MODE: consensus|delegation
+DATE: <date> · MODE: two-design|delegation
 ANALYSIS A (dispatcher): <one-paragraph position>
 DESIGN B (mate, blind|anchored): <one-paragraph position>
 DISAGREEMENT: <where they split, or "none">
@@ -322,7 +322,7 @@ DECISION: <what was chosen>
 STATUS: adopted
 ```
 
-This is the durable output of consensus mode: it survives context compaction,
+This is the durable output of a two-design fork: it survives context compaction,
 lets any later session audit *why*, and accumulates the judgment patterns that
 settle future forks faster. Supersede with `STATUS: superseded by <file>`
 rather than deleting.
@@ -414,7 +414,8 @@ When a frontend worker reports `IMPLEMENTED, FRESH-EYES PENDING`, dispatch an
 independent comprehension reviewer before accepting `VERIFIED`. Protocol and
 verbatim reviewer prompt: `~/.codex/skills/frontend-ux-router/references/fresh-eyes-review.md`.
 
-- One-shot `--mode review --model luna` with only: the persona line, screenshot paths (or route),
+- One-shot `--mode delegate --model luna` (a comprehension check, not a verdict
+  review) with only: the persona line, screenshot paths (or route),
   and the reviewer prompt. Zero implementation context — no brief, no diff,
   no explanations. Contamination invalidates the review.
 - FAIL → route the reviewer's raw answers back to the implementer as redesign
