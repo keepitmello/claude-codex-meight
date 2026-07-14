@@ -111,6 +111,11 @@ and service make Fast available.
 | `sol` | Default model for role-mate direction/plan/adversarial review, plus hard-gated role-worker implementation | `high`; reserve `xhigh` for genuinely hard problems (large harness surgery, deeply entangled debugging) |
 | `terra` | No default ownership; capability-specific fallback when measured evidence supports it | task-specific |
 
+`high` is the sol default, not a floor: `high` can overthink, so the dispatcher
+may drop to `medium` at its discretion for lighter mate work. One caution from
+measurement: `medium` has shown severity over-promotion in adversarial reviews,
+so prefer the drop for consults and scoping reads over verdict-bearing reviews.
+
 Hard gate (verbatim contract wording): **acceptance-critical한 부분이 concurrency,
 security, 공개 schema/API 계약 설계, 영속 데이터 마이그레이션, cross-cutting
 리팩터에 materially 의존하거나 실패가 돈/데이터 손상·비가역·고임팩트 프로덕션
