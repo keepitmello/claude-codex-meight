@@ -1,5 +1,9 @@
 # v3 Pipeline — 설계·검증 회고와 고도화 가이드 (2026-07-14)
 
+> **후속 (같은 날 밤)**: 이 문서의 "sol 워커" 표현은 이후 mate/worker 역할
+> 분리로 대체됐다 — sol 역할명은 mate, `--role mate|worker` required, 스킬
+> 3분할. [`decisions/2026-07-14-mate-worker-role-split.md`](../decisions/2026-07-14-mate-worker-role-split.md) 참조.
+
 이 문서는 2026-07-14에 채택된 v3 운영 모델(plan-review loop + luna 기본 일꾼
 체제)이 **어떤 과정으로 설계·검증·반영됐는지**의 전체 기록이다. 목적은 두 가지:
 (1) 이후 고도화 작업의 출발점 — 무엇이 왜 이렇게 결정됐고, 어디까지가 실측이며,
