@@ -6,42 +6,30 @@
 
 **English** | [한국어](./docs/README.ko.md)
 
-> **A two-way harness for orchestrating Codex mates and workers.** Meight is built for an
-> LLM agent that delegates, consults, steers, reviews, and signs off with
-> evidence. It runs on the official `openai-codex` Python SDK. CLI: `meight`.
+> **A two-way harness where Codex mates challenge your plans and Codex workers
+> build them.** Meight is built for an LLM agent that consults, delegates,
+> steers, reviews, and signs off with evidence. Official `openai-codex` Python
+> SDK underneath. CLI: `meight`.
 
 Most bridges are built for a human watching a terminal: tmux panes, dashboards,
-stdout scraping. Meight is built for agents. A dispatcher can start hidden Codex
-sessions, read compact disk digests, steer a live turn, answer structured
-questions, and keep final reports small enough to make user-facing decisions.
+stdout scraping. Meight is built for the agent itself — a dispatcher that
+starts hidden Codex sessions, reads compact disk digests, steers a live turn,
+answers structured questions, and keeps final reports small enough to make
+user-facing decisions without drowning in implementation detail.
 
-- **Explicit roles.** `--role mate` selects the independent consult/review
-  contract; `--role worker` selects bounded implementation/verification. Role
-  and model are independent, and there is no default.
-- **Explicit modes.** `start` and `dispatch` require `--mode collab|delegate`.
-  No default. The consumer is an LLM agent, so policy is harness-enforced rather
-  than remembered.
-- **Supervised by default.** `start` + `wait` keeps `status` and `steer`
-  available. `dispatch` remains for trivial, short, low-risk work.
-- **Structured questions.** A worker can end with `QUESTION:` plus
-  `TARGET: dispatcher|user` and a `KIND`, so a middle-layer agent knows whether
-  to answer or escalate.
-- **Decision reports.** `--report decision` writes `decision.json` and rendered
-  `decision.md`; raw `result.md` stays as the audit record. This keeps technical
-  context contained.
-- **Blind consults for forks.** Direction-setting decisions use an independent
-  read-only consult with problem and constraints only, before debate or
-  implementation.
-- **Plan review before implementation.** After direction is set, a bounded
-  `--role mate --model sol` loop approves and freezes versioned `PLAN.md`; `REVISE` stays on
-  the same thread through a dispatcher-targeted question.
-- **Worker/luna implements, mate/sol reviews.** `worker/luna xhigh` plus Fast
-  when available is the default for bounded work. Failure-cost hard gates route
-  critical implementation to `worker/sol`; `terra` has no default ownership.
-- **It gets better with use.** Direction decisions, user preferences, and
-  operational lessons persist as plain files the dispatcher reads before
-  acting. Repeat questions stop reaching the human; settled directions stay
-  settled.
+The core idea is that a frontier model wasted as a silent executor is capability
+left on the table. So meight splits the Codex side into two roles:
+
+- A **mate** (`--role mate`) is an independent challenger. It reviews plans
+  with a real verdict, hunts defects adversarially, and takes blind consults —
+  its contract says *challenge the dispatcher, agreement is not the goal*.
+- A **worker** (`--role worker`) is a bounded implementer. It owns the
+  technical loop — code, tests, verification, runtime QA — and reports a
+  decision surface, escalating real ambiguity instead of guessing.
+
+Role and model are independent axes. The dispatcher keeps direction,
+arbitration, integration, and final sign-off; nothing merges on a mate's or
+worker's word alone.
 
 ```text
    dispatcher agent   <->   Codex mate(s) / worker(s)
@@ -57,6 +45,46 @@ questions, and keep final reports small enough to make user-facing decisions.
         status.json · events.log · result.md · decision.json · decision.md
 ```
 
+## The Pipeline
+
+Meight ships an opinionated development loop, refined by running it on itself.
+Every stage is doctrine (files the harness injects), not framework code:
+
+1. **Blind consult for direction forks.** Before a direction-setting decision,
+   a read-only mate gets the problem and constraints only — no dispatcher lean
+   to anchor on — and returns the best-supported design plus the strongest case
+   against it.
+2. **Plan-review loop.** Once direction is set, the dispatcher authors a plan
+   and a `mate/sol` reviews it: verdict-first `APPROVE`/`REVISE`, at most three
+   rounds, incremental re-review of prior findings, noise suppression (no style
+   nits, no impossible edge cases). `REVISE` keeps the same thread alive through
+   a structured question, so revisions stay in one conversation. Approval
+   freezes the plan as versioned `PLAN.md` — the review contract everything
+   downstream is judged against.
+3. **Workers implement.** `worker/luna` at `xhigh` (plus `--fast` when
+   available) is the cheap, capable default for bounded work. A failure-cost
+   hard gate routes acceptance-critical work — concurrency, security, public
+   API contract design, data migration, cross-cutting refactors, anything that
+   can corrupt money/data or cause irreversible harm — to `worker/sol` instead.
+   Implementation reports must state plan deviations, rationale, and what was
+   deliberately not done.
+4. **Review chain.** `mate/sol` adversarial review against the frozen plan
+   (maximum two rounds, runtime cross-checked, verdicts name exactly what they
+   reviewed so stale verdicts get discarded) → the dispatcher reads the full
+   diff with plan and repo context, fixes valid defects directly, and owns the
+   final sign-off.
+
+**Gates scale with the work.** The full chain is the default for plan-governed
+work, but the dispatcher may skip or shrink gates for small, low-risk,
+reversible tasks — never silently: the user is told which gate was skipped and
+why, or asked first when it is borderline. Failure-cost hard gates and
+money-path sign-off are never skippable, and skips are recorded as metrics.
+
+Effort follows the same economics: `luna` runs `xhigh` because it is cheap,
+`sol` defaults to `high` (it can overthink; the dispatcher may drop light mate
+work to `medium`) and reserves `xhigh` for genuinely hard problems — the
+dispatcher judges what qualifies.
+
 ## Why This Exists
 
 The official `openai-codex` Python SDK talks to `codex app-server` directly and
@@ -68,12 +96,13 @@ Compared with tmux/exec wrappers:
 
 | | tmux/exec bridges | MCP wrappers | **Meight** |
 |---|---|---|---|
-| Parallel workers | 1 process per worker | blocking tool calls | one SDK runtime per active worker |
+| Parallel sessions | 1 process per worker | blocking tool calls | one SDK runtime per active worker |
 | Mid-turn steering | attach/type or kill+resume | no | `meight steer` |
 | Progress observation | scrape stdout | no | disk digest, pull on demand |
 | Two-way conversation | no | no | structured `QUESTION:` -> exit 3 -> `reply` |
 | Result delivery | scrape | tool return | exit-code contract + result files |
 | Machine-readable reports | no | wrapper-specific | `--report decision` via `output_schema` |
+| Role contracts | no | no | `--role mate\|worker`, harness-injected |
 
 And because every judgment lands on disk — digests, decisions, preferences,
 lessons — the pairing gets more personal over time: the dispatcher learns
@@ -131,58 +160,16 @@ visible in `status.json` and `meight status`.
 meight reply impl-1 --brief "Use config-a.json and keep the legacy field."
 ```
 
-For trivial, short, low-risk tasks, one-shot dispatch is available:
+A consult goes to a mate instead — read-only, collaborative:
 
 ```bash
-meight dispatch tiny-1 --role worker --mode delegate --report decision --sandbox ro \
-  --brief "Check whether README mentions LICENSE."
-```
-
-Computer Use app-access is enabled by default for each meight worker session.
-Other MCP approvals remain unchanged.
-
-```bash
-meight dispatch desktop-qa --role worker --mode delegate --sandbox ro --model luna --effort xhigh --fast \
-  --brief "Use Computer Use to inspect Calculator. Do not change its state."
-```
-
-## Operating Model
-
-| Role / model | Default ownership | Effort |
-|---|---|---|
-| `worker` / `luna` | Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `xhigh`, plus `--fast` when available |
-| `mate` / `sol` | Direction, plan review, adversarial review | `high`; `xhigh` only for genuinely hard problems |
-| `worker` / `sol` | Hard-gated implementation | `high`; `xhigh` only for genuinely hard problems |
-| either / `terra` | Capability-specific fallback only; re-promotable on measured evidence | task-specific |
-
-Failure cost is the routing gate. Use `sol` when acceptance-critical behavior
-materially depends on concurrency, security, public schema/API contract design,
-persistent-data migration, or cross-cutting refactoring, or when failure can
-cause money/data damage, irreversible harm, or high-impact production damage.
-General endpoint implementation and read-only production log investigation stay
-with `luna`; API contract design/evolution and production mutation/remediation
-do not. Money paths still require dispatcher sign-off.
-
-The implementation chain is `worker/luna` → `mate/sol` adversarial review
-(maximum two rounds) → dispatcher full-diff read against frozen `PLAN.md` and repository
-context → direct fixes and final sign-off. A scope-changing fix reopens plan
-approval; a P1-fix-level correction does not. Harness/core surgery routes to
-`sol` and adds a Claude context-holding review at plan and final-diff stages.
-
-## Consults
-
-Direction-setting forks use blind consult by default: write your own analysis
-first, keep it out of the brief, and ask a read-only mate for the
-best-supported design and the strongest case against it.
-
-```bash
-meight start consult-auth --role mate --mode collab --sandbox ro --model sol --effort high --cwd ~/my-repo --brief-file - <<'EOF'
+meight start consult-auth --role mate --mode collab --sandbox ro --model sol --effort high \
+  --cwd ~/my-repo --brief-file - <<'EOF'
 We need to choose an auth-token refresh design.
 
 Constraints:
 - No user-visible logout regression.
 - Existing token storage is in src/auth/store.ts.
-- Existing request retry code is in src/api/client.ts.
 
 Options:
 - Option A: refresh before each protected request when expiry is near.
@@ -193,36 +180,33 @@ that would settle remaining uncertainty. No code changes.
 EOF
 ```
 
-Anchored consults are still valid after direction is already set:
+For trivial, short, low-risk tasks, one-shot dispatch is available:
 
 ```bash
-meight start consult-refine --role mate --mode collab --sandbox ro --model sol --brief \
-  "Direction is Option B. Pressure-test it: what am I missing?"
+meight dispatch tiny-1 --role worker --mode delegate --report decision --sandbox ro \
+  --brief "Check whether README mentions LICENSE."
 ```
 
-Once direction is set, plan review is a separate bounded anchored loop.
-Gates scale with the work: the dispatcher may skip or shrink the loop for
-small, low-risk, reversible tasks, but never silently — the user is told which
-gate was skipped and why, or asked first when it is borderline. Failure-cost
-hard gates and money-path sign-off are never skippable:
+Computer Use app-access is enabled by default for each meight session. Other
+MCP approvals remain unchanged.
 
-1. The dispatcher authors the plan; `mate/sol high` reviews it (`xhigh`
-   only for genuinely hard design problems).
-2. The reviewer leads with `APPROVE` or `REVISE`. `REVISE` keeps the thread
-   alive for `reply` (text mode: a dispatcher-targeted structured `QUESTION:`;
-   decision mode: the exact schema encoding in `skills/meight/SKILL.md`);
-   `APPROVE` is terminal.
-3. Run at most three rounds, recording `new-risks` and `resolved-risks`
-   separately each round.
-4. After an unapproved third round, choose residual-risk sign-off, a targeted
-   evidence read, or user escalation. Do not auto-reenter.
-5. Freeze approval as versioned `PLAN.md`; scope changes reopen approval.
+## Structured Questions
 
-When reads disagree, split evidence questions from value judgments. Evidence
-gets one targeted verification session. User-owned value judgments (scope, UX,
-priority, risk appetite, irreversible action, acceptance criteria) go to the
-human. Stop after at most two rounds; choose the reversible/lower-risk path or
-escalate.
+Sessions do not guess and do not silently comply. When blocked — or when they
+see a better direction — they end the turn with a structured question the
+daemon promotes to exit `3`:
+
+```text
+QUESTION:
+TARGET: dispatcher | user
+KIND: scope | ux | priority | risk | irreversible | acceptance | missing-info | better-direction | technical
+<question + options + recommendation>
+```
+
+`TARGET` says who must decide; `KIND` says why. A middle-layer agent answers
+dispatcher-owned questions with `meight reply` and escalates user-owned ones
+(scope, UX, risk appetite, irreversible actions) verbatim. In decision-report
+mode the same routing runs through `outcome=needs_decision` in the schema.
 
 ## The Harness Learns
 
@@ -238,11 +222,10 @@ Three plain-file ledgers make the dispatch loop improve with use:
   human once — only irreversible and risk calls are always re-confirmed.
 - **Lessons** (`<daemon-home>/notes/lessons.md`). Recurring review findings
   and operational mistakes become one-line lessons, promoted into brief
-  templates when they repeat. Every run record includes its `mate|worker`
-  role. The v3 baseline also records plan rounds and
-  revise causes, reroutes divided by `luna` starts (ordinary questions tracked
-  separately), `luna→sol|terra` plus the hard-gate clause, and false approvals
-  within the same release window or a repo-defined fixed time fallback.
+  templates when they repeat. Per-run records carry the role, plan-review
+  rounds and revise causes, escalation rates and which hard-gate clause fired,
+  gate skips, and post-sign-off defects — the baseline that tunes the routing
+  gates empirically instead of by vibe.
 
 None of this is a new subsystem — just files plus doctrine, defined in
 [`skills/meight/SKILL.md`](./skills/meight/SKILL.md#learning-loop-decision-records-preferences-lessons).
@@ -251,8 +234,8 @@ survives context compaction, fresh sessions, and even model swaps.
 
 ## Using It From Claude Code Or Codex
 
-For real work, run `wait --timeout` as the background shell call. The agent wakes
-at completion, question, failure, daemon death, or checkpoint timeout.
+For real work, run `wait --timeout` as the background shell call. The agent
+wakes at completion, question, failure, daemon death, or checkpoint timeout.
 
 ```text
 Bash(command: "meight start review-1 --role mate --mode delegate --report decision --sandbox ro --model sol --effort high --brief-file - <<'EOF' ... EOF")
@@ -273,14 +256,16 @@ protocol in [`skills/meight-common/`](./skills/meight-common/CONTRACT.md).
 
 - **Exit codes are the API.** `0` done, `2` failed/interrupted/runtime-lost, `3`
   question, `4` daemon gone, `1` checkpoint timeout.
-- **Names, not session IDs.** Workers are addressed as `review-1`, including
+- **Names, not session IDs.** Sessions are addressed as `review-1`, including
   follow-ups.
 - **Sparse checkpoints, not busy polling.** `wait --timeout` is a wake-up dial;
   it does not kill the worker.
-- **Status is pre-digested.** `status` returns role, mode, report type, current item,
-  changed files, needs-input target/kind, and last-message tail.
+- **Status is pre-digested.** `status` returns role, mode, report type, current
+  item, changed files, needs-input target/kind, and last-message tail.
 - **Policy cannot be forgotten.** Role, mode, role-skill loading, the shared
-  contract, and report shape are injected by the harness.
+  contract, and report shape are injected by the harness — `--role` and
+  `--mode` are required flags with teaching errors, validated at the daemon
+  boundary too, so a stale CLI or a raw socket client gets the same contract.
 - **Results survive on disk.** `result.md` remains the raw audit record;
   decision reports add `decision.json` and `decision.md`.
 - **Briefs go through stdin.** Multi-line briefs avoid shell quoting traps.
@@ -331,7 +316,9 @@ artifacts remain but same-thread reply is expired; start a fresh worker.
 ## Upgrading An Old Daemon To Role Support
 
 The new CLI fails closed before `start` when `meight ping` does not advertise
-`capabilities=role`. Drain and restart manually:
+`capabilities=role` — and it verifies the role echo in the start response, so
+even a daemon swapped mid-handshake cannot silently degrade a mate request to
+the worker contract. Drain and restart manually:
 
 1. Inspect `meight list --all-repos --json`; wait until no session across any
    repo is `starting`, `running`, or `needs_input`.
@@ -351,16 +338,18 @@ The new CLI fails closed before `start` when `meight ping` does not advertise
 - Meight uses the current system `codex` executable rather than the SDK's
   bundled runtime. Set `MEIGHT_CODEX_BIN` only when an explicit executable
   override is needed.
-- Workers start as hidden ephemeral Codex subagent threads by default:
+- Sessions start as hidden ephemeral Codex subagent threads by default:
   `thread_source=subagent`, `thread_ephemeral=true`.
 - Foreground `meight daemon` exits after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with
   no active workers by default. Managed `dispatch` auto-start and LaunchAgent
   starts disable idle shutdown; verify the live value with `meight ping`.
-- `openai-codex` is pinned (`0.1.0b3`, beta). When bumping the SDK or Codex CLI, re-run the
-  verification suite in [`SPEC.md`](./SPEC.md).
+- `openai-codex` is pinned (`0.1.0b3`, beta). When bumping the SDK or Codex
+  CLI, re-run the verification suite in [`SPEC.md`](./SPEC.md).
 - Design details, state machine, hardening history, and lifecycle caveats live
   in [`ARCHITECTURE.md`](./ARCHITECTURE.md). Full dispatcher protocol lives in
-  [`skills/meight/SKILL.md`](./skills/meight/SKILL.md).
+  [`skills/meight/SKILL.md`](./skills/meight/SKILL.md). Why the pipeline looks
+  like this — including the day it was designed by running itself — is in
+  [`docs/2026-07-14-v3-pipeline-retrospective.md`](./docs/2026-07-14-v3-pipeline-retrospective.md).
 
 ## License
 
