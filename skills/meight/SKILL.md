@@ -108,7 +108,7 @@ and service make Fast available.
 | Model | Use for | Typical effort |
 |-------|---------|----------------|
 | `luna` | Default model for role-worker implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `xhigh` + `--fast` when available |
-| `sol` | Default model for role-mate direction/plan/adversarial review, plus hard-gated role-worker implementation | `high` or `xhigh` |
+| `sol` | Default model for role-mate direction/plan/adversarial review, plus hard-gated role-worker implementation | `high`; reserve `xhigh` for genuinely hard problems (large harness surgery, deeply entangled debugging) |
 | `terra` | No default ownership; capability-specific fallback when measured evidence supports it | task-specific |
 
 Hard gate (verbatim contract wording): **acceptance-critical한 부분이 concurrency,
@@ -245,9 +245,19 @@ meight start consult-refine --role mate --mode collab --sandbox ro --model sol -
 
 ### Plan-Review Loop (Bounded Anchored Refinement)
 
+**Gates scale with the work.** The full chain (plan-review loop, adversarial
+review, dispatcher full-diff read) is the default for plan-governed work, but
+the dispatcher may scale it down for small, low-risk, reversible tasks — a
+direct user instruction, a doc-local edit, a single-file fix. Two rules bind
+every skip: (1) skipping a gate is never silent — tell the user which gate was
+skipped and why (trivial case), or ask first (borderline case); (2) failure-cost
+hard gates and money-path sign-off are never skippable. Record skips in the run
+metrics — a skip is data too.
+
 Blind consult remains unchanged for direction-setting forks. Only after the
 direction is set does the dispatcher author a plan and enter this bounded,
-anchored refinement loop with `sol high` or `sol xhigh`:
+anchored refinement loop with `sol high` (`xhigh` only for genuinely hard
+design problems):
 
 1. The dispatcher authors the plan and sends it to a persistent `mate/sol` review
    mate thread. Run this bounded loop with `--role mate --mode delegate
@@ -350,7 +360,10 @@ For this operating model, record enough structured data to measure:
 - the escalation axis (`luna→sol` or `luna→terra`) and the hard-gate clause
   that fired;
 - false approvals found after sign-off, measured within the same release
-  window; repos without releases must define a fixed time-window fallback.
+  window; repos without releases must define a fixed time-window fallback;
+- gate skips: which gate was skipped, why, and whether the user was informed
+  or asked — a skipped gate that later produces a defect is the key signal
+  for tightening the proportionality guidance.
 
 Do not harden escalation rules until this baseline exists.
 

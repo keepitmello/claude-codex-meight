@@ -151,8 +151,8 @@ meight dispatch desktop-qa --role worker --mode delegate --sandbox ro --model lu
 | Role / model | Default ownership | Effort |
 |---|---|---|
 | `worker` / `luna` | Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `xhigh`, plus `--fast` when available |
-| `mate` / `sol` | Direction, plan review, adversarial review | `high` or `xhigh` |
-| `worker` / `sol` | Hard-gated implementation | `xhigh` |
+| `mate` / `sol` | Direction, plan review, adversarial review | `high`; `xhigh` only for genuinely hard problems |
+| `worker` / `sol` | Hard-gated implementation | `high`; `xhigh` only for genuinely hard problems |
 | either / `terra` | Capability-specific fallback only; re-promotable on measured evidence | task-specific |
 
 Failure cost is the routing gate. Use `sol` when acceptance-critical behavior
@@ -200,9 +200,14 @@ meight start consult-refine --role mate --mode collab --sandbox ro --model sol -
   "Direction is Option B. Pressure-test it: what am I missing?"
 ```
 
-Once direction is set, plan review is a separate bounded anchored loop:
+Once direction is set, plan review is a separate bounded anchored loop.
+Gates scale with the work: the dispatcher may skip or shrink the loop for
+small, low-risk, reversible tasks, but never silently — the user is told which
+gate was skipped and why, or asked first when it is borderline. Failure-cost
+hard gates and money-path sign-off are never skippable:
 
-1. The dispatcher authors the plan; `mate/sol high|xhigh` reviews it.
+1. The dispatcher authors the plan; `mate/sol high` reviews it (`xhigh`
+   only for genuinely hard design problems).
 2. The reviewer leads with `APPROVE` or `REVISE`. `REVISE` keeps the thread
    alive for `reply` (text mode: a dispatcher-targeted structured `QUESTION:`;
    decision mode: the exact schema encoding in `skills/meight/SKILL.md`);

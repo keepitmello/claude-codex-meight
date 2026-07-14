@@ -127,7 +127,7 @@ main orchestrator.
 | Work | Route |
 |---|---|
 | Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `--role worker --model luna --effort xhigh`, plus Fast when available |
-| Direction, plan review, adversarial review | `--role mate --model sol --effort high|xhigh` |
+| Direction, plan review, adversarial review | `--role mate --model sol --effort high` (`xhigh` only for genuinely hard problems) |
 | Hard-gated implementation | `--role worker --model sol --effort xhigh` |
 | Capability-specific fallback | either role with `terra`; no default ownership, re-promotable on measured evidence |
 
@@ -162,7 +162,10 @@ main orchestrator.
 - `follow`/`reply` at most ~2 times per thread for ordinary work; the plan-review
   loop is the explicit three-round exception.
 - The CLI retains `medium` as a compatibility default, but doctrine selects
-  `luna xhigh` for bounded work and `sol high|xhigh` for its ownership areas.
+  `luna xhigh` for bounded work and `sol high` for its ownership areas (`xhigh`
+  reserved for genuinely hard problems). Pipeline gates scale with the work at
+  the dispatcher's judgment — skips are announced to the user or asked first,
+  and failure-cost hard gates plus money-path sign-off are never skippable.
 
 ## Hardening history
 

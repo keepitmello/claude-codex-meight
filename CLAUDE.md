@@ -22,8 +22,8 @@ acceptance criteria, and final approval.
 | Work | Route |
 |---|---|
 | Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `--role worker --model luna --effort xhigh`, plus Fast when available |
-| Direction, plan review, adversarial review | `--role mate --model sol --effort high|xhigh` |
-| Hard-gated implementation | `--role worker --model sol --effort xhigh` |
+| Direction, plan review, adversarial review | `--role mate --model sol --effort high` (`xhigh` only for genuinely hard problems) |
+| Hard-gated implementation | `--role worker --model sol --effort high` (`xhigh` only for genuinely hard problems) |
 | Capability-specific fallback | either role with `terra` only when measured evidence supports it |
 
 Failure cost is the gate. Hard-route to `sol` when acceptance-critical work
@@ -108,8 +108,15 @@ or escalate. Do not create mate-vs-mate debate loops.
 ## Plan-Review Loop
 
 After direction is set, author a plan and send it to a persistent
-`--role mate --model sol --effort high|xhigh` reviewer. This is bounded anchored refinement, not a
-replacement for blind consult:
+`--role mate --model sol --effort high` reviewer (`xhigh` only for genuinely
+hard design problems). This is bounded anchored refinement, not
+a replacement for blind consult. Gates scale with the work: the dispatcher may
+skip or shrink this loop for small, low-risk, reversible tasks, but never
+silently — tell the user which gate was skipped and why, or ask first when
+borderline. Failure-cost hard gates and money-path sign-off are never
+skippable.
+
+The loop:
 
 1. The reviewer leads with `APPROVE` or `REVISE`. In decision-report mode
    these encode as `outcome=done, verdict=GO` / `outcome=needs_decision,
