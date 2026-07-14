@@ -313,7 +313,7 @@ After any direction-setting fork resolved by two designs, write
 
 ```md
 # <the question>
-DATE: <date> · MODE: two-design|delegation
+DATE: <date> · FORK: two-design
 ANALYSIS A (dispatcher): <one-paragraph position>
 DESIGN B (mate, blind|anchored): <one-paragraph position>
 DISAGREEMENT: <where they split, or "none">
