@@ -87,7 +87,15 @@ decisions, so a faster model wins.
 | `sol` | Implementation, fixes, verification (default for code work) | medium |
 | `sol` | Design, consult, architecture, adversarial review | high |
 | `terra` | Computer use, browser QA, runtime automation, step-heavy flows | medium |
-| `luna` | One-shot trivial checks (`dispatch tiny-*`), lookups, screenshot reads | low–medium |
+| `terra` | Exploration/recon with runtime or many steps | medium |
+| `luna` | One-shot trivial checks (`dispatch tiny-*`), lookups, screenshot reads, doc/code exploration | low–medium |
+
+Exploration/recon/lookup work routes to Codex (`luna` for simple reads,
+`terra` for step-heavy/runtime recon) — Codex quota is ~3x Claude, so send
+volume there. If implementation judgment is entangled, use `sol`. UX and
+user-visible-behavior judgment stays with the dispatcher; never delegate UX
+decisions to a worker — briefs specify button layout and copy explicitly
+(user directive, 2026-07-11).
 
 Benchmark rumor "sol medium ≈ terra high" is unverified for our workloads —
 when in doubt on code quality, prefer `sol`. Revisit this table after A/B
@@ -330,7 +338,18 @@ decision surface. Guardrails:
 - Record P2/P3 without broadening scope.
 - Put detailed review logs in `<worker-name>-evidence.md`.
 
-## Writing Briefs
+### Fresh-Eyes UI Review (frontend dispatches)
+
+When a frontend worker reports `IMPLEMENTED, FRESH-EYES PENDING`, dispatch an
+independent comprehension reviewer before accepting `VERIFIED`. Protocol and
+verbatim reviewer prompt: `~/.codex/skills/frontend-ux-router/references/fresh-eyes-review.md`.
+
+- One-shot `luna` with only: the persona line, screenshot paths (or route),
+  and the reviewer prompt. Zero implementation context — no brief, no diff,
+  no explanations. Contamination invalidates the review.
+- FAIL → route the reviewer's raw answers back to the implementer as redesign
+  input (path-card recomposition, not copy patches). One re-review; a second
+  FAIL on the same question escalates to the user.
 
 Use the smallest brief that gives the worker the right contract:
 

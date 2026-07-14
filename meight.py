@@ -78,6 +78,24 @@ def allow_dynamic_sdk_effort(effort: str) -> None:
         TurnStartParams.model_rebuild(force=True)
 
 
+def relax_sdk_effort_echo() -> None:
+    """Thread lifecycle responses echo the account-default reasoning effort
+    (e.g. model_reasoning_effort = "ultra" in ~/.codex/config.toml), which the
+    closed ReasoningEffort enum in SDK 0.1.0b3 rejects regardless of the effort
+    requested for the turn. Relax those response fields to plain strings."""
+    from openai_codex.generated import v2_all
+
+    for cls_name in ("ThreadStartResponse", "ThreadForkResponse", "ThreadResumeResponse"):
+        cls = getattr(v2_all, cls_name, None)
+        if cls is None:
+            continue
+        field = cls.model_fields.get("reasoning_effort")
+        if field is None or field.annotation == (str | None):
+            continue
+        field.annotation = str | None
+        cls.model_rebuild(force=True)
+
+
 def normalize_model(model: str | None) -> str | None:
     return MODEL_ALIASES.get(model, model)
 
@@ -1347,6 +1365,7 @@ class Daemon:
         try:
             w.codex = Codex(config=CodexConfig(codex_bin=system_codex_bin()))
             install_computer_use_approval_bridge(w.codex, w.name)
+            relax_sdk_effort_echo()
             thread = w.codex.thread_start(
                 cwd=cwd,
                 # Hidden workers must be ephemeral subagent threads. Persistent user
