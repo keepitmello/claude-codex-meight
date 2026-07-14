@@ -77,5 +77,58 @@ class TerminalErrorTests(unittest.TestCase):
             self.assertEqual(result.count(provider_message), 1)
 
 
+class DecisionRoutingTests(unittest.TestCase):
+    def test_needs_decision_routes_user_entry_before_dispatcher_fallback(self):
+        cases = (
+            (
+                "dispatcher-first-user-later",
+                [
+                    {"target": "dispatcher", "kind": "technical"},
+                    {"target": "user", "kind": "scope"},
+                ],
+                "user",
+                "scope",
+            ),
+            (
+                "all-dispatcher",
+                [
+                    {"target": "dispatcher", "kind": "technical"},
+                    {"target": "dispatcher", "kind": "risk"},
+                ],
+                "dispatcher",
+                "technical",
+            ),
+            (
+                "single-user",
+                [{"target": "user", "kind": "acceptance"}],
+                "user",
+                "acceptance",
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_home = Path(tmp)
+            for name, decisions, expected_target, expected_kind in cases:
+                with self.subTest(name=name):
+                    worker = meight.Worker(
+                        name, repo_home, "/repo", "repo-key", "/repo",
+                        "workspace_write", "gpt-5.6-sol", "medium",
+                        mode="delegated", report="decision",
+                    )
+                    worker.dir.mkdir(parents=True)
+                    worker.init_status(thread_id="thread-1")
+                    worker._last_agent_msg = json.dumps({
+                        "outcome": "needs_decision",
+                        "decisions": decisions,
+                    })
+
+                    worker._on_turn_completed({"status": "completed"})
+
+                    self.assertEqual(worker.status["state"], "needs_input")
+                    self.assertEqual(worker.status["needs_input_source"], "question")
+                    self.assertEqual(worker.status["needs_input_target"], expected_target)
+                    self.assertEqual(worker.status["needs_input_kind"], expected_kind)
+
+
 if __name__ == "__main__":
     unittest.main()
