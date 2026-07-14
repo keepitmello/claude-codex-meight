@@ -108,7 +108,7 @@ and service make Fast available.
 | Model | Use for | Typical effort |
 |-------|---------|----------------|
 | `luna` | Default model for role-worker implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `xhigh` + `--fast` when available |
-| `sol` | Default model for role-mate direction/plan/adversarial review, plus hard-gated role-worker implementation | `high`; reserve `xhigh` for genuinely hard problems (large harness surgery, deeply entangled debugging) |
+| `sol` | Default model for role-mate direction/plan/adversarial review, plus hard-gated role-worker implementation | `high`; reserve `xhigh` for genuinely hard problems — the dispatcher judges what qualifies |
 | `terra` | No default ownership; capability-specific fallback when measured evidence supports it | task-specific |
 
 `high` is the sol default, not a floor: `high` can overthink, so the dispatcher
