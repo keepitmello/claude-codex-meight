@@ -256,7 +256,7 @@ design problems):
 1. The dispatcher authors the plan and sends it to a persistent `mate/sol` review
    mate thread. Run this bounded loop with `--mode review --report decision` so
    verdicts arrive schema-validated; `--report text` remains acceptable for
-   collab-style exploratory reviews.
+   design-mode exploratory analysis.
 2. The reviewer leads with `APPROVE` or `REVISE`. In decision-report mode the
    strict schema has no APPROVE/REVISE values, so the exact encoding is:
    `APPROVE` ⇒ `outcome=done`, `verdict=GO`, summary starting
