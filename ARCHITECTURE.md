@@ -9,21 +9,22 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
 1. **Observation is pull, completion is push.** Streaming worker events into the orchestrator's context would burn tokens linearly with worker runtime. Instead the daemon reduces the event stream to disk digests (`status.json`, `events.log`, `result.md`); the orchestrator polls only when it cares, and a blocking `wait`/`dispatch` (run as a background shell) delivers a push — the completion notification with the result attached, or a checkpoint wake-up when `wait --timeout` elapses while the worker keeps running. Supervised dispatch leans on that second case: a `wait --timeout` set near the expected duration is a sparse checkpoint, letting the orchestrator read one `status` and `steer` mid-run without ever streaming.
 2. **Exit codes are the API.** `0` done, `2` failed/interrupted, `3` worker has a question, `4` daemon dead, `1` timeout. An agent branches on these without parsing prose.
 3. **One call per intent (one-shot), or a supervised loop.** `dispatch` = (ensure daemon → start → wait → print result) and `reply` = (follow → wait → print last-turn result) are symmetric single background calls — one-shot driving costs the same tool calls as a native subagent, which suits trivial work. For substantial work the orchestrator instead uses `start` plus `wait`, so the door to `status`/`steer` stays open mid-run; how often it actually checks is its judgment, not a fixed cadence. Same pull/push primitives — just sampled when it matters instead of a single fire-and-forget.
-4. **Mode is harness policy, not memory.** `start` and `dispatch` require
-   `--mode collab|delegate`. The preamble is built per mode at dispatch time,
-   recorded in `status.json`, and shown in status tables. `follow`/`reply`
-   inherit the mode and receive only a one-line reminder. The consumer is an LLM
-   agent, so the harness enforces policy instead of hoping the agent remembers
-   it.
-5. **Two-way by protocol, not plumbing.** A preamble frames the worker as a
-   teammate: workers may commit/push completed verified work while the
+4. **Role and mode are harness policy, not memory.** `start` and `dispatch`
+   require both `--role mate|worker` and `--mode collab|delegate`. Role selects
+   the independent challenger (`mate`) or implementer (`worker`) contract;
+   mode selects collaborative or delegated posture. The preamble injects the
+   selected role skill plus `meight-common/CONTRACT.md`. `follow`/`reply`
+   inherit role, mode, and report. Model stays independent: `sol` can run as a
+   worker for hard-gated implementation.
+5. **Two-way by protocol, not plumbing.** A preamble frames either role as a
+   teammate: sessions may commit/push completed verified work while the
    orchestrator owns integration and final sign-off; and rather than guessing or
    silently complying, end with a structured `QUESTION:` paragraph when blocked,
    or to flag a better approach, a wrong assumption, or a tradeoff before a
    direction locks in. The daemon promotes that to `needs_input` -> exit 3 -> the
    orchestrator triages `TARGET: dispatcher|user` and replies or escalates. The
    same primitives run the other way: the orchestrator can dispatch a read-only
-   blind consult to think a problem through with a worker, not just hand off
+   blind consult to think a problem through with a mate, not just hand off
    work.
 6. **Decision reports contain technical context.** `--report decision` uses the
    SDK `output_schema` to produce `decision.json` and rendered `decision.md`.
@@ -31,7 +32,7 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
    prefer the decision surface so the orchestrator can communicate with the user
    without absorbing every implementation detail.
 7. **Plans are versioned review contracts.** Direction forks remain blind
-   consults. After direction is set, a bounded anchored `sol` review loop
+   consults. After direction is set, a bounded anchored `mate/sol` review loop
    freezes versioned `PLAN.md`; implementation, adversarial review, and
    dispatcher sign-off all evaluate the same contract.
 
@@ -50,6 +51,15 @@ meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  g
 
 - **Daemon home** = `$MEIGHT_HOME` if set, otherwise `$XDG_STATE_HOME/meight` or `~/.meight` → one daemon shared across repos.
 - **Repo state home** = `<daemon-home>/repos/<repo-key>/`, where `<repo-key>` is a stable slug plus hash of the invoking repo root. `--cwd` still controls the worker execution directory; it does not change the repo namespace for status/result lookup.
+- **Role capability boundary** = `ping` and `runtime_status` advertise
+  `capabilities=["role"]`. A new CLI checks this before sending `start`; an old
+  daemon therefore fails closed instead of silently loading the worker skill.
+  The daemon independently rejects missing or unknown role before imports,
+  directory creation, registry reservation, or SDK startup.
+- **Role contract path** = `mate` maps to `skills/meight-mate/SKILL.md`,
+  `worker` maps to `skills/meight-worker/SKILL.md`, and both load
+  `skills/meight-common/CONTRACT.md`. Status persists role; legacy rows without
+  it render `-`.
 - The SDK spawns `codex app-server --listen stdio://` and speaks JSON-RPC. Meight owns one SDK runtime per active worker so terminal workers can close their app-server, MCP subprocesses, and stdio file descriptors without waiting for daemon shutdown.
 - The daemon holds `Thread` objects in a registry keyed by `(repo_key, worker_name)` only while that worker is active or waiting on a final `QUESTION:`. It keeps a `TurnHandle` only while a stream is live. `steer` and `interrupt` require the live handle; terminal workers release the whole SDK runtime after stream end, while a final `QUESTION:` keeps the worker-owned thread so `reply` can start the next turn.
 - Workers start with `ephemeral=True` and `thread_source=ThreadSource.subagent` by default so they stay out of Codex Desktop's main user-thread list. `--main-thread` is the explicit opt-in to `ephemeral=False` plus `ThreadSource.user` for tools that need a visible/main thread. Hidden ephemeral worker `thread_id`s are audit pointers, not daemon-restart recovery handles.
@@ -116,9 +126,10 @@ main orchestrator.
 
 | Work | Route |
 |---|---|
-| Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `luna xhigh`, plus Fast when available |
-| Direction, plan review, adversarial review, hard-gated implementation | `sol high|xhigh` |
-| Capability-specific fallback | `terra`; no default ownership, re-promotable on measured evidence |
+| Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `--role worker --model luna --effort xhigh`, plus Fast when available |
+| Direction, plan review, adversarial review | `--role mate --model sol --effort high|xhigh` |
+| Hard-gated implementation | `--role worker --model sol --effort xhigh` |
+| Capability-specific fallback | either role with `terra`; no default ownership, re-promotable on measured evidence |
 
 - **Failure cost is the hard gate**: route to `sol` when acceptance-critical
   behavior materially depends on concurrency, security, public schema/API
@@ -130,7 +141,7 @@ main orchestrator.
   sign-off.
 - **Direction-setting forks use blind consult by default**: the orchestrator
   writes its own analysis first, keeps it out of the brief, and asks a read-only
-  worker for the best-supported design plus the strongest case against it.
+  mate for the best-supported design plus the strongest case against it.
   Anchored consults are only for refining an already-set direction. Plan review
   is a bounded anchored loop after that direction is set.
 - **Plan review is persistent and bounded**: `REVISE` keeps the thread alive
@@ -140,13 +151,13 @@ main orchestrator.
   `resolved-risks` separately. An unapproved third round returns control to the
   dispatcher for residual-risk sign-off, a targeted evidence read, or user
   escalation. Approval freezes versioned `PLAN.md`; scope changes reopen it.
-- **The review chain is explicit**: `luna` implementation → `sol` adversarial
+- **The review chain is explicit**: `worker/luna` implementation → `mate/sol` adversarial
   review (maximum two rounds) → dispatcher full-diff read with plan and repo
   context → direct fixes and final sign-off. P1-fix-level corrections preserve
   the contract; beyond-plan fixes reopen approval. Harness/core surgery routes
   to `sol` and adds a Claude context-holding review at plan and final-diff
   stages.
-- Workers may commit/push completed verified work; the orchestrator still owns integration and final sign-off.
+- Sessions may commit/push completed verified work; the orchestrator still owns integration and final sign-off.
 - Briefs must point at *existing patterns* relevant to the task — detail-oriented reviewers flag absent context as defects otherwise.
 - `follow`/`reply` at most ~2 times per thread for ordinary work; the plan-review
   loop is the explicit three-round exception.
@@ -173,7 +184,14 @@ State-machine changes should re-run the fake-event scenarios (tool-wait→stream
 
 ## Operational notes
 
-- **Editing `meight.py` does not affect a running daemon** — restart it (`meight shutdown`, next dispatch auto-starts). Easy to forget.
+- **Editing `meight.py` does not affect a running daemon.** For the role
+  migration, first inspect `meight list --all-repos --json` and drain all
+  active/`needs_input` sessions across every namespace. Then use non-force
+  `meight shutdown`; its daemon-wide guard is the enforcement backstop. After
+  restart, require `meight ping` capability `role`, then run a throwaway
+  read-only `--role mate` start and verify both its status role and saved
+  mate/common preamble paths before real work. Do not use forced shutdown for
+  this migration.
 - Optional LaunchAgent support lives behind `meight launchd install --load`; `KeepAlive` stays off, and the LaunchAgent sets both `MEIGHT_IDLE_TIMEOUT_SEC=0` and `daemon --idle-timeout-sec 0` so live control channels stay attached until explicit shutdown. Verify the loaded job with `launchctl print`, not only the plist file.
 - Beta SDK (`openai-codex==0.1.0b3`, pinned): meight deliberately supplies the current system `codex` executable instead of the SDK's older bundled runtime. `MEIGHT_CODEX_BIN` is the explicit override. Before bumping the SDK or Codex CLI, re-introspect the API surface (`inspect.signature`), dump real event payloads (`MEIGHT_DEBUG=1` → per-worker `debug-events.log`), and re-run the verification suite.
 - Approval requests arrive as SDK server-requests (auto-accepted by the SDK's default handler), not stream notifications — the `needs_input` tool path is defensive.

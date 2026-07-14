@@ -1,7 +1,7 @@
 # claude-codex-meight SPEC
 
 `claude-codex-meight` is a harness that lets an orchestrator run multiple Codex
-workers in parallel.
+mate and worker sessions in parallel.
 
 Core design goals:
 
@@ -113,6 +113,7 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   "daemon_pid": 12345,
   "cwd": "...",
   "sandbox": "workspace-write",
+  "role": "mate|worker",
   "mode": "delegate",
   "report": "decision",
   "model": null,
@@ -142,8 +143,11 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   the worker is still attached to the live daemon and can accept `reply`;
   `"tool"` means an SDK tool or approval wait and is treated as active until
   stream-end cleanup.
-- `mode` is required on `start`/`dispatch`: `collab` or `delegate` after alias
-  normalization. `follow`/`reply` inherit it from status.
+- `role` is required on `start`/`dispatch`: exactly `mate` or `worker`.
+  `follow`/`reply` inherit it from status. Legacy rows may omit `role`; status
+  rendering displays `-` and must not crash.
+- `mode` is also required on `start`/`dispatch`: `collab` or `delegate` after
+  alias normalization. `follow`/`reply` inherit it from status.
 - `report` is `text` or `decision`.
 - `needs_input_target` is `dispatcher|user|null`; missing `TARGET` in a parsed
   question defaults to `dispatcher`.
@@ -161,39 +165,45 @@ The command table must match the `python3 meight.py --help` subcommand list exac
 | Command | Behavior |
 |---|---|
 | `daemon [--idle-timeout-sec SEC]` | Run the foreground global daemon. The orchestrator starts it in the background. If a live daemon already exists, return exit `1`. `0` disables idle shutdown. |
-| `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid and runtime `idle_timeout_sec`. |
+| `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid, runtime `idle_timeout_sec`, and advertised `capabilities` including `role`. |
 | `launchd install [--load]` / `launchd status` / `launchd uninstall` | Manage an optional macOS LaunchAgent for the global daemon. The plist uses `RunAtLoad` and `KeepAlive=false`; CLI auto-start remains the on-demand path. |
-| `start <name> --mode collab\|delegate (--brief-file F\|- \| --brief TEXT) [--report text\|decision] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new hidden worker thread with `thread_start(ephemeral=True, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--mode` is required; aliases `collaborative` and `delegated` normalize to `collab` and `delegate`. Model aliases `sol`, `terra`, and `luna` normalize to `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`; other model strings pass through unchanged. Effort values pass through using the same SDK/app-server slugs, including `ultra` and `max`. Defaults: `report=text`, `sandbox=full`, `effort=medium`, `cwd=current directory`, `thread_source=subagent`, `thread_ephemeral=true`, `service_tier=default` so workers run non-Fast unless `--fast` is passed. `--report decision` supplies the SDK `output_schema` and writes `decision.json` plus `decision.md`. `--main-thread` intentionally uses `thread_start(ephemeral=False, thread_source=ThreadSource.user)` for tools that require a visible/main Codex Desktop thread. `--fast` maps the SDK turn's `service_tier` to `priority`; omitted or `--no-fast` maps it to `default`. Reject duplicate active worker names inside the same repo namespace. `--brief-file -` reads the brief from stdin. |
-| `dispatch <name> --mode collab\|delegate (--brief-file F\|- \| --brief TEXT) [--report text\|decision] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, `start`, `wait`, then print `decision.md` when present or `result.md` otherwise. `--mode` is required with the same aliases as `start`. Default timeout is `1800` seconds. Exit code matches `wait`. `--shutdown-when-idle` asks the global daemon to stop after a terminal result if no workers are active. |
-| `follow <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble]` | Start a new turn on the same thread only for a worker waiting on a final `QUESTION:` while that worker remains attached to the current daemon. It takes no mode flag; it inherits the worker's recorded `mode` and `report` and receives a one-line harness reminder instead of the full preamble. Terminal workers release their SDK runtime immediately after stream end, so follow-up work should start a new worker. Hidden ephemeral workers are not resumed from disk after daemon restart; in that case `follow` fails clearly and the orchestrator must start a new worker. Reset status, increment `turns`, and append to `result.md`, `decision.json`/`decision.md` when applicable, and `events.log` with a separator. |
-| `reply <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot answer path for `QUESTION:` blockers: `follow`, `wait`, then print the latest `decision.md` when present or latest raw result otherwise. It takes no mode flag and inherits `mode`/`report`. Default timeout is `1800` seconds. |
+| `start <name> --role mate\|worker --mode collab\|delegate (--brief-file F\|- \| --brief TEXT) [--report text\|decision] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new hidden Codex session with `thread_start(ephemeral=True, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--role` is required as `mate` or `worker`; `--mode` is independently required, with `collaborative` and `delegated` aliases. Before sending `start`, the CLI pings the daemon and requires capability `role`; absence fails closed with `daemon predates --role; restart required`. Model aliases `sol`, `terra`, and `luna` normalize to `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`; other strings pass through. Defaults: `report=text`, `sandbox=full`, `effort=medium`, `cwd=current directory`, `thread_source=subagent`, `thread_ephemeral=true`, `service_tier=default`. `--report decision` supplies `output_schema`. `--main-thread` opts into a visible persistent user thread. `--fast` maps to service tier `priority`. Reject duplicate active names inside the same repo namespace. |
+| `dispatch <name> --role mate\|worker --mode collab\|delegate (--brief-file F\|- \| --brief TEXT) [start opts] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, capability-check, `start`, `wait`, then print `decision.md` or `result.md`. Both role and mode are required. Default timeout is `1800` seconds. Exit code matches `wait`. |
+| `follow <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble]` | Start a new turn on the same thread only for a session waiting on a final `QUESTION:` while attached to the current daemon. It takes no role or mode flag; it inherits recorded `role`, `mode`, and `report` and receives a one-line reminder. Terminal sessions release their SDK runtime, and hidden sessions are not resumed from disk after restart. |
+| `reply <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot answer path: `follow`, `wait`, then print the latest preferred result. It inherits `role`/`mode`/`report`. Default timeout is `1800` seconds. |
 | `steer <name> TEXT` | Inject mid-turn text into a running turn. Return an error unless the worker is currently running. |
 | `interrupt <name>` | Interrupt the active turn. For `ACTIVE` workers without a live `TurnHandle` yet, including the initial starting/SDK phase and follow/reply SDK phase, set `interrupt_requested`, return ok with a recorded-interrupt note, and let the atomic post-SDK commit abort the turn. |
-| `status [name] [--json] [--all-repos]` | Does not require the daemon. Read repo-scoped `status.json` directly. With no name, print a one-line table for workers in the invoking repo, including a `MODE` column; `--all-repos` reads every repo namespace. With a name, print details. `--json` prints JSON. |
+| `status [name] [--json] [--all-repos]` | Does not require the daemon. Read repo-scoped `status.json` directly. With no name, print a table including `ROLE` and `MODE`; `--all-repos` reads every repo namespace. Legacy rows without role render `-`. |
 | `list [--json] [--all-repos]` | Alias for `status` with no worker name. |
 | `result <name> [--raw]` | Print `decision.md` when present. `--raw` prints `result.md`. |
 | `wait <name> [--timeout SEC]` | Poll `status.json` once per second. Terminal states return `completed=0`, `failed=2`, `interrupted=2`. Final `QUESTION:` returns `3` only while the worker is still attached to the live daemon and can accept `reply`. Daemon death returns `4`. Timeout returns `1`. Print one final status summary line to stdout. |
 | `shutdown [--force]` | Refuse shutdown while active workers exist. With `--force`, interrupt live turns, mark final `QUESTION:` waits interrupted, and then shut down. |
 
-## Harness Preamble, Mode, and QUESTION Protocol
+## Harness Preamble, Role, Mode, and QUESTION Protocol
 
 By default, `start`, `dispatch`, `follow`, and `reply` prepend the harness
 protocol preamble to the brief. `--no-preamble` disables this.
 
-`start` and `dispatch` build a mode-specific preamble at dispatch time:
+`start` and `dispatch` build a role- and mode-specific preamble at dispatch
+time. Role selects the contract:
+
+- `mate`: `skills/meight-mate/SKILL.md` for consult, plan review, and
+  adversarial review.
+- `worker`: `skills/meight-worker/SKILL.md` for bounded implementation and
+  verification.
+
+Both preambles also inject `skills/meight-common/CONTRACT.md`, the sole shared
+source for decision fields, question routing, evidence artifacts, sandbox, and
+commit discipline. Mode independently selects posture:
 
 - `collab` / `collaborative`: collaborative consult/design/diagnosis posture.
-- `delegate` / `delegated`: delegated implementation/review/verification
-  posture.
+- `delegate` / `delegated`: delegated execution or verdict posture.
 
-The preamble includes the normalized mode, allows workers to `git commit` and
-`git push` their completed, verified work while the orchestrator still owns
-integration and final sign-off, and points workers at
-`skills/meight-worker/SKILL.md` as the worker-side contract. That path resolves
-relative to the `meight.py` location, not the invoking cwd.
+The preamble includes role, normalized mode, and report type. All skill paths
+resolve relative to `meight.py`, not the invoking cwd.
 
-`follow` and `reply` do not accept a mode flag. They inherit the existing
-worker's mode and use a one-line harness reminder instead of the full preamble.
+`follow` and `reply` do not accept role or mode flags. They inherit the existing
+session's role, mode, and report and use a one-line reminder.
 
 Structured final questions use this exact format:
 
@@ -281,6 +291,13 @@ the worker's report mode.
 - Socket protocol: one JSON request line and one JSON response line.
   Example: `{"cmd":"start",...}` -> `{"ok":true}` or
   `{"ok":false,"error":"..."}`.
+- `ping` and `runtime_status` responses advertise
+  `"capabilities": ["role"]`. The CLI must observe that capability before it
+  sends a role-aware start request.
+- The daemon validates missing or unknown role before imports, directory
+  creation, registry reservation, SDK startup, or any other start side effect.
+  Direct socket clients cannot bypass this boundary or receive an implicit
+  worker role.
 - Socket-dispatched commands: `start`, `follow`, `steer`, `interrupt`,
   `shutdown`, `ping`, `runtime_status`.
 - Worker registry: `(repo_key, name) -> {thread, handle, state}`.
@@ -344,14 +361,26 @@ the worker's report mode.
 
 Run these checks after implementation and attach the evidence.
 
+The automated suite is:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests -v
+```
+
+It covers role-to-skill mapping, missing/invalid role rejection at the daemon
+boundary before side effects, follow/reply role inheritance, the `ROLE` status
+column, legacy status rows without role, negative capability handshake with no
+start request or state creation, and positive handshake with requested role in
+status.
+
 1. Start `daemon` in the background with a temporary `MEIGHT_HOME`, then confirm
-   `ping` returns ok and the socket lives under that global home.
+   `ping` returns capability `role` and the socket lives under that global home.
 2. Run:
-   `start t1 --mode delegate --brief "create /tmp/fleet-test/hello.txt with content 'hi', then reply DONE" --cwd /tmp/fleet-test --sandbox ws`
+   `start t1 --role worker --mode delegate --brief "create /tmp/fleet-test/hello.txt with content 'hi', then reply DONE" --cwd /tmp/fleet-test --sandbox ws`
    Then `wait t1` must exit `0`; the file must exist; repo-scoped `status.json`,
    `events.log`, and `result.md` must agree.
 3. Steering test:
-   `start t2 --mode delegate --brief "Count from 1 to 50 slowly, one number per line, pausing to think between each"`
+   `start t2 --role worker --mode delegate --brief "Count from 1 to 50 slowly, one number per line, pausing to think between each"`
    While running, send `steer t2 "Stop counting, just reply STEERED"` and
    confirm the result reflects the steer.
 4. Interrupt test: interrupt a long-running task and confirm
@@ -383,6 +412,22 @@ Run these checks after implementation and attach the evidence.
     `mcpServer/elicitation/request` for `connector_id="computer-use"` accepts,
     while a different connector, method, or malformed metadata reaches the
     original handler.
+
+### Safe Role Migration Checklist
+
+This is operator-run after the old daemon finishes serving current sessions;
+implementation must not restart it.
+
+1. Run `meight list --all-repos --json` and drain every `starting`, `running`,
+   and `needs_input` row across all repo namespaces.
+2. Run non-force `meight shutdown`. Its daemon-wide active-session guard is the
+   enforcement backstop; do not use `--force` for migration.
+3. Start the new daemon normally and require `meight ping` to advertise
+   `capabilities=role`.
+4. Start a throwaway `--role mate --mode delegate --sandbox ro` session.
+5. Verify its status records `"role": "mate"` and its saved `brief.md`
+   preamble names `skills/meight-mate/SKILL.md` and
+   `skills/meight-common/CONTRACT.md` before real dispatches resume.
 
 ## Scope-Outs
 

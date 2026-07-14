@@ -6,17 +6,20 @@
 
 [English](../README.md) | **한국어**
 
-> **Codex 워커를 오케스트레이션하기 위한 양방향 하네스.** Meight는
+> **Codex 메이트와 워커를 오케스트레이션하기 위한 양방향 하네스.** Meight는
 > 위임하고, 상의하고, 조향하고, 리뷰하고, 근거로 승인하는 LLM 에이전트를
 > 위해 만들었습니다. 공식 `openai-codex` Python SDK 위에서 동작합니다.
 > CLI: `meight`.
 
 대부분의 브릿지는 터미널을 보는 사람을 기준으로 만들어졌습니다: tmux pane,
 대시보드, stdout 스크래핑 같은 방식입니다. Meight는 에이전트를 기준으로
-설계했습니다. 디스패처는 숨겨진 Codex 워커를 시작하고, 작은 디스크 요약을
+설계했습니다. 디스패처는 숨겨진 Codex 세션을 시작하고, 작은 디스크 요약을
 읽고, 실행 중인 턴을 조향하고, 구조화된 질문에 답하고, 사용자에게 전달할
 만큼 작은 최종 보고를 받을 수 있습니다.
 
+- **명시적 역할.** `--role mate`는 독립 consult/리뷰 계약,
+  `--role worker`는 구현/검증 계약을 선택합니다. 역할과 모델은 독립 축이고
+  기본 역할은 없습니다.
 - **명시적 모드.** `start`와 `dispatch`에는 `--mode collab|delegate`가
   필수입니다. 기본값은 없습니다. 소비자가 LLM 에이전트이므로 정책은 기억이
   아니라 하네스가 강제합니다.
@@ -31,15 +34,18 @@
   기술 맥락을 격리합니다.
 - **방향 갈림길은 blind consult.** 방향을 정하는 결정은 문제와 제약만 담은
   읽기 전용 consult로 독립 의견을 먼저 받습니다.
-- **독립 리뷰.** 중요 작업은 만든 워커의 말만 믿고 받지 않습니다. 핵심은
-  fresh context이고, 교차 모델 리뷰는 가능할 때 추가 커버리지입니다.
+- **구현 전 plan review.** 방향이 정해지면 `mate/sol`의 최대 3라운드 리뷰가
+  versioned `PLAN.md`를 승인·동결합니다.
+- **worker/luna 구현, mate/sol 리뷰.** bounded 작업은 `worker/luna xhigh`가
+  기본이고, failure-cost hard gate는 `worker/sol` 구현으로 올립니다. 구현 뒤
+  `mate/sol`이 동결 plan을 기준으로 적대 리뷰합니다.
 - **쓸수록 좋아집니다.** 방향 결정, 사용자 선호, 운영 교훈이 plain file로
   남고, 디스패처는 행동하기 전에 그것부터 읽습니다. 같은 질문이 사람에게 두 번
   가지 않고, 한번 정해진 방향은 정해진 채로 유지됩니다.
 
 ```text
-   디스패처 에이전트   <->   Codex 워커
-   (무엇과 왜)               (어떻게)
+   디스패처 에이전트   <->   Codex 메이트 / 워커
+   (무엇과 왜)               (도전 / 구현)
         |                       ^
         |-- start + brief ------|
         |
@@ -90,7 +96,7 @@ cd claude-codex-meight
 `~/.meight`). 워커 상태는 `repos/<repo-key>/` 아래 repo별로 격리됩니다.
 
 ```bash
-meight start impl-1 --mode delegate --report decision --brief-file - --cwd ~/my-repo <<'EOF'
+meight start impl-1 --role worker --mode delegate --report decision --brief-file - --cwd ~/my-repo <<'EOF'
 src/foo.py에 X를 구현해. 기존 패턴: src/bar.py:42 참고.
 검증: pytest tests/test_foo.py.
 변경 파일, 검증, 남은 P1, 리스크, 증거 artifact를 보고해.
@@ -127,7 +133,7 @@ meight reply impl-1 --brief "config-a.json을 쓰고 legacy 필드는 유지해.
 짧고 단순하고 위험 낮은 작업에는 one-shot dispatch를 쓸 수 있습니다:
 
 ```bash
-meight dispatch tiny-1 --mode delegate --report decision --sandbox ro \
+meight dispatch tiny-1 --role worker --mode delegate --report decision --sandbox ro \
   --brief "README에 LICENSE 언급이 있는지만 확인해."
 ```
 
@@ -135,18 +141,36 @@ meight 워커의 Computer Use 앱 접근은 기본으로 켜져 있습니다. �
 동작은 바꾸지 않습니다.
 
 ```bash
-meight dispatch desktop-qa --mode delegate --sandbox ro \
+meight dispatch desktop-qa --role worker --mode delegate --sandbox ro \
   --brief "Computer Use로 Calculator를 확인해. UI 상태는 바꾸지 마."
 ```
+
+## 운영 모델
+
+| 역할 / 모델 | 기본 소유권 | Effort |
+|---|---|---|
+| `worker` / `luna` | bounded 구현, 수정, 테스트, 검증, read-only 로그 조사, browser/runtime QA, computer use, 탐색 | `xhigh`, 가능하면 `--fast` |
+| `mate` / `sol` | 방향, plan review, adversarial review | `high` 또는 `xhigh` |
+| `worker` / `sol` | failure-cost hard gate가 발화한 구현 | `xhigh` |
+| 어느 역할이든 / `terra` | 실측 근거가 있는 capability fallback | 작업별 |
+
+Acceptance-critical 동작이 concurrency, security, 공개 schema/API 계약 설계,
+영속 데이터 migration, cross-cutting refactor에 materially 의존하거나 실패가
+돈/데이터 손상·비가역·고임팩트 production 피해를 만들면 `sol`로 hard
+route합니다. 모델이 `sol`이어도 구현은 `--role worker`입니다.
+
+구현 체인은 `worker/luna` → `mate/sol` adversarial review(최대 2라운드) →
+dispatcher의 frozen `PLAN.md` + full diff 정독과 최종 sign-off입니다. Scope를
+바꾸는 수정은 plan 승인을 다시 열고, P1-fix 수준 수정은 기존 계약을 유지합니다.
 
 ## Consult
 
 방향을 정하는 갈림길에서는 blind consult가 기본입니다. 먼저 자신의 분석을
-작성하되 브리프에는 넣지 말고, 읽기 전용 워커에게 가장 근거가 좋은 설계와
+작성하되 브리프에는 넣지 말고, 읽기 전용 메이트에게 가장 근거가 좋은 설계와
 그 설계에 대한 가장 강한 반론을 묻습니다.
 
 ```bash
-meight start consult-auth --mode collab --sandbox ro --effort high --cwd ~/my-repo --brief-file - <<'EOF'
+meight start consult-auth --role mate --mode collab --sandbox ro --model sol --effort high --cwd ~/my-repo --brief-file - <<'EOF'
 auth token refresh 설계를 골라야 한다.
 
 제약:
@@ -166,15 +190,22 @@ EOF
 이미 방향이 정해진 뒤에는 anchored consult도 유효합니다:
 
 ```bash
-meight start consult-refine --mode collab --sandbox ro --brief \
+meight start consult-refine --role mate --mode collab --sandbox ro --model sol --brief \
   "방향은 Option B야. 놓친 점과 edge case를 압박해서 봐줘."
 ```
 
 두 의견이 갈리면 evidence question과 value judgment를 나눕니다. Evidence는
-targeted verification worker 하나로 확인합니다. Scope, UX, priority, risk
+targeted verification 세션 하나로 확인합니다. Scope, UX, priority, risk
 appetite, irreversible action, acceptance criteria 같은 user-owned 판단은
 사람에게 올립니다. 최대 두 라운드 뒤에는 되돌리기 쉽고 위험 낮은 쪽을
 택하거나 escalation합니다.
+
+방향이 정해진 뒤 plan review는 별도의 anchored loop입니다. Dispatcher가 plan을
+쓰고 `--role mate --model sol --mode delegate --report decision`으로 보냅니다.
+`APPROVE`는 종료하고, `REVISE`는 dispatcher-targeted decision으로 같은 thread를
+살려 `reply`로 다음 라운드를 받습니다. 최대 3라운드이며 매 라운드
+`new-risks`와 `resolved-risks`를 분리합니다. 승인된 versioned `PLAN.md`가 구현과
+최종 리뷰 계약이고, scope 변경은 승인을 다시 엽니다.
 
 ## 하네스는 배웁니다
 
@@ -189,7 +220,8 @@ appetite, irreversible action, acceptance criteria 같은 user-owned 판단은
   먼저 확인하므로, 같은 부류의 질문은 사람에게 한 번만 도달합니다 — 단,
   irreversible과 risk 결정만은 항상 다시 확인합니다.
 - **교훈** (`<daemon-home>/notes/lessons.md`). 반복되는 리뷰 발견과 운영
-  실수는 한 줄 교훈이 되고, 재발하면 brief template으로 승격됩니다.
+  실수는 한 줄 교훈이 되고, 재발하면 brief template으로 승격됩니다. Run
+  record마다 `mate|worker` 역할도 기록합니다.
 
 이 중 무엇도 새 서브시스템이 아닙니다 — 파일과 doctrine뿐이며, 정의는
 [`skills/meight/SKILL.md`](../skills/meight/SKILL.md#learning-loop-decision-records-preferences-lessons)에
@@ -202,7 +234,7 @@ appetite, irreversible action, acceptance criteria 같은 user-owned 판단은
 에이전트는 완료, 질문, 실패, 데몬 사망, 체크포인트 타임아웃에서 깨어납니다.
 
 ```text
-Bash(command: "meight start review-1 --mode delegate --report decision --sandbox ro --effort high --brief-file - <<'EOF' ... EOF")
+Bash(command: "meight start review-1 --role mate --mode delegate --report decision --sandbox ro --model sol --effort high --brief-file - <<'EOF' ... EOF")
 Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 -> checkpoint exit 1
 -> meight status review-1
@@ -212,8 +244,10 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 Claude 오케스트레이터용 drop-in prompt는 [`CLAUDE.md`](../CLAUDE.md)에
 있습니다. Codex-as-orchestrator prompt는 [`AGENTS.md`](../AGENTS.md)에
 있습니다. 전체 dispatcher-facing skill은
-[`skills/meight/`](../skills/meight/SKILL.md)에 있고, worker-facing skill은
-[`skills/meight-worker/`](../skills/meight-worker/SKILL.md)에 있습니다.
+[`skills/meight/`](../skills/meight/SKILL.md)에 있고, 역할 계약은
+[`skills/meight-mate/`](../skills/meight-mate/SKILL.md)와
+[`skills/meight-worker/`](../skills/meight-worker/SKILL.md), 공유 계약은
+[`skills/meight-common/`](../skills/meight-common/CONTRACT.md)에 있습니다.
 
 ## "에이전트에게 편하다"는 뜻
 
@@ -223,10 +257,10 @@ Claude 오케스트레이터용 drop-in prompt는 [`CLAUDE.md`](../CLAUDE.md)에
   다룹니다.
 - **촘촘한 폴링이 아니라 드문 체크포인트.** `wait --timeout`은 깨우는
   다이얼이지 워커를 죽이는 시간이 아닙니다.
-- **Status는 이미 요약본입니다.** mode, report type, current item,
+- **Status는 이미 요약본입니다.** role, mode, report type, current item,
   changed files, needs-input target/kind, last-message tail을 보여줍니다.
-- **정책은 잊힐 수 없습니다.** Mode, worker skill loading, git/question
-  policy, report shape은 하네스가 주입합니다.
+- **정책은 잊힐 수 없습니다.** Role, mode, role skill, shared contract,
+  report shape은 하네스가 주입합니다.
 - **결과는 디스크에 남습니다.** `result.md`는 원본 감사 기록이고,
   decision report는 `decision.json`과 `decision.md`를 추가합니다.
 - **브리프는 stdin으로 받습니다.** 긴 멀티라인 브리프가 shell quoting
@@ -236,19 +270,21 @@ Claude 오케스트레이터용 drop-in prompt는 [`CLAUDE.md`](../CLAUDE.md)에
 
 | 커맨드 | 동작 |
 |---|---|
-| `meight start <name> --mode collab\|delegate [opts]` | 워커를 시작하고 thread id를 출력한 뒤 바로 반환. 감독형 워크플로우 시작점 |
+| `meight start <name> --role mate\|worker --mode collab\|delegate [opts]` | 세션을 시작하고 thread id를 출력한 뒤 바로 반환. 감독형 워크플로우 시작점 |
 | `meight wait <name> --timeout SEC` | terminal 상태, 답장 가능한 QUESTION, 데몬 사망, 타임아웃 중 하나에서 반환. 타임아웃은 워커를 계속 살려둠 |
-| `meight dispatch <name> --mode collab\|delegate [opts]` | one-shot: 데몬 자동 시작 -> 워커 시작 -> 대기 -> 선호 결과 출력. 짧고 단순하고 위험 낮은 작업용 |
-| `meight reply <name> --brief ...` | 답장 가능한 워커 질문에 one-shot 답변. mode/report를 상속하고 최신 턴의 선호 결과를 출력 |
-| `meight follow <name> --brief ...` | 저수준: 같은 live thread에 새 턴. mode/report 상속 |
+| `meight dispatch <name> --role mate\|worker --mode collab\|delegate [opts]` | one-shot: 데몬 자동 시작 -> capability 확인 -> 시작 -> 대기 -> 선호 결과 출력 |
+| `meight reply <name> --brief ...` | 답장 가능한 질문에 one-shot 답변. role/mode/report를 상속 |
+| `meight follow <name> --brief ...` | 저수준: 같은 live thread에 새 턴. role/mode/report 상속 |
 | `meight result <name> [--raw]` | 있으면 `decision.md` 출력. `--raw`는 원본 `result.md` 출력 |
-| `meight status [name] [--json] [--all-repos]` | digest pull. 테이블에는 `MODE`, 상세에는 report와 needs-input target/kind 포함. 디스크 읽기 |
+| `meight status [name] [--json] [--all-repos]` | digest pull. 테이블에는 `ROLE`과 `MODE`; legacy row의 role은 `-` |
 | `meight steer <name> "text"` | 실행 중 턴에 지시 주입 |
 | `meight interrupt <name>` | 턴 취소. 워커가 아직 시작 중이거나 답변 턴을 여는 중에 도착한 interrupt는 기록되었다가, 시작이 완료되는 순간 턴을 중단시킵니다 |
 | `meight list / daemon / ping / shutdown / launchd` | 저수준 보조 커맨드 |
 
 자주 쓰는 옵션:
 
+- `--role mate|worker`는 `start`와 `dispatch`에 필수이며 기본값이 없습니다.
+  Consult/review는 `mate`, 구현/검증은 `worker`입니다.
 - `--mode collab|delegate`는 `start`와 `dispatch`에 필수입니다
   (`collaborative`/`delegated` alias 허용).
 - `--report text|decision`은 기본 `text`입니다. `decision`은
@@ -269,6 +305,23 @@ artifact를 남기지만 SDK runtime은 즉시 해제합니다. 마지막 struct
 `QUESTION:`만 live daemon에 붙어 있어서 같은 thread로 `reply`할 수
 있습니다. 데몬 재시작 뒤에는 디스크 artifact는 남지만 same-thread reply는
 만료되므로 새 워커를 시작하세요.
+
+## 구 데몬을 role 지원 버전으로 바꾸기
+
+새 CLI는 live daemon이 `role` capability를 광고하지 않으면 start request를
+보내기 전에 `daemon predates --role; restart required`로 fail-closed합니다.
+마이그레이션은 운영자가 다음 체크리스트로 수행합니다:
+
+1. `meight list --all-repos --json`으로 모든 repo namespace를 확인하고
+   `starting`, `running`, `needs_input` 세션을 전부 drain합니다.
+2. non-force `meight shutdown`을 실행합니다. 거부되면 drain을 마저 하고,
+   이 마이그레이션에서는 `--force`를 쓰지 않습니다.
+3. 정상 설치 경로로 새 데몬을 시작한 뒤 `meight ping`의
+   `capabilities=role`을 확인합니다.
+4. read-only throwaway 세션을 `--role mate --mode delegate`로 시작합니다.
+5. status에 `role=mate`가 기록되고 saved `brief.md` preamble에
+   `skills/meight-mate/SKILL.md`와 `skills/meight-common/CONTRACT.md`가 모두
+   들어가는지 확인한 뒤 실제 dispatch를 재개합니다.
 
 ## 알아두면 좋은 것
 
