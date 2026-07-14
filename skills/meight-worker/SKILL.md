@@ -271,9 +271,22 @@ Plan-review role:
   `dispatcher`; the daemon routes it as the final structured question.
 - `APPROVE` is terminal. Do not append a question or invite another automatic
   round.
-- The loop permits at most three plan-review rounds. Record `new-risks` and
-  `resolved-risks` separately each round. If round three still needs revision,
+- Reviewers must not flag:
+  - naming/style preferences in the plan document itself;
+  - theoretical edge cases that cannot occur with real inputs;
+  - out-of-scope “what about” hypotheticals; or
+  - findings the plan text or a prior round already resolved.
+- The loop permits at most three plan-review rounds. From round 2 onward, before
+  raising new findings, first disposition every prior finding as `addressed`,
+  `partially addressed`, or `not addressed`, citing the plan text/evidence that
+  resolved it or explains why it remains open. Record that disposition with the
+  `resolved-risks` half of the round ledger; `new-risks` contains only new
+  findings, and the two remain separate. If round three still needs revision,
   return the remaining risk to the dispatcher without auto-reentering.
+- Name the exact input reviewed in every verdict: the `PLAN.md` version for a
+  plan review, or a commit hash/diff identity for a code review. If the named
+  input no longer matches the current artifact, the dispatcher discards the
+  verdict as stale instead of acting on it.
 
 Explicit code/diff review work (not plan review):
 

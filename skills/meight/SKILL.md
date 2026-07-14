@@ -263,12 +263,23 @@ direction is set does the dispatcher author a plan and enter this bounded,
 anchored refinement loop with `sol high` or `sol xhigh`:
 
 1. The dispatcher authors the plan and sends it to a persistent `sol` review
-   thread.
+   thread. Run this bounded loop with `--mode delegate --report decision` so
+   `APPROVE`/`REVISE` verdicts arrive as schema-validated decisions;
+   `--report text` remains acceptable for collab-style exploratory reviews.
 2. The reviewer leads with `APPROVE` or `REVISE`. `REVISE` ends as a
    dispatcher-targeted structured `QUESTION:` so `meight reply` preserves the
    thread; `APPROVE` is terminal.
-3. Run at most three plan-review rounds. Each round records `new-risks` and
-   `resolved-risks` separately; do not collapse them into one list.
+   Reviewers must not flag:
+   - naming/style preferences in the plan document itself;
+   - theoretical edge cases that cannot occur with real inputs;
+   - out-of-scope “what about” hypotheticals; or
+   - findings the plan text or a prior round already resolved.
+3. Run at most three plan-review rounds. From round 2 onward, before raising
+   new findings, the reviewer first dispositions every prior finding as
+   `addressed`, `partially addressed`, or `not addressed`, citing the plan
+   text/evidence that resolved it or explains why it remains open. Record that
+   disposition with the `resolved-risks` half of the round ledger, while
+   `new-risks` contains only new findings; keep the two separate.
 4. If round three does not approve, do not auto-reenter. The dispatcher chooses
    exactly one next step: residual-risk sign-off, a targeted evidence read, or
    user escalation.
@@ -359,6 +370,11 @@ security/data risk, edge cases, races. For each finding: severity P1/P2/P3,
 file:line, why, fix direction. End with GO or NO-GO.
 EOF
 ```
+
+Every review verdict must name the exact input reviewed: the `PLAN.md` version
+for plan reviews, or a commit hash/diff identity for code reviews. Before acting
+on a verdict, the dispatcher compares that identity with the current artifact
+and discards the verdict as stale if they no longer match.
 
 The dispatcher reads the complete diff with both `PLAN.md` and repository
 context, arbitrates findings, fixes valid defects directly, and owns the final
