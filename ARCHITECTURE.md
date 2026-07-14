@@ -30,6 +30,10 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
    `result.md` remains the raw audit record, but `result`/`dispatch`/`reply`
    prefer the decision surface so the orchestrator can communicate with the user
    without absorbing every implementation detail.
+7. **Plans are versioned review contracts.** Direction forks remain blind
+   consults. After direction is set, a bounded anchored `sol` review loop
+   freezes versioned `PLAN.md`; implementation, adversarial review, and
+   dispatcher sign-off all evaluate the same contract.
 
 ## Process topology
 
@@ -112,24 +116,41 @@ main orchestrator.
 
 | Work | Route |
 |---|---|
-| Bounded implementation with a clear spec; code review; browser/runtime checks | Codex worker via `meight --mode delegate` |
-| Direction forks, architecture, diagnosis, alternatives | Codex worker via `meight --mode collab --sandbox ro` |
-| Exploration fan-out; fresh-context verification; anything needing the orchestrator's own tooling | Codex workers or local subagents |
-| High-stakes or irreversible paths | Either — but runtime evidence + explicit orchestrator sign-off regardless |
+| Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `luna xhigh`, plus Fast when available |
+| Direction, plan review, adversarial review, hard-gated implementation | `sol high|xhigh` |
+| Capability-specific fallback | `terra`; no default ownership, re-promotable on measured evidence |
 
-- **Independent review is risk-based**: use a fresh-context Codex reviewer for
-  security-sensitive, irreversible, broad, genuinely uncertain, or
-  high-impact work. Routine bounded and reversible changes can rely on relevant
-  verification plus orchestrator sign-off. A cross-model read remains optional
-  extra coverage for important work.
+- **Failure cost is the hard gate**: route to `sol` when acceptance-critical
+  behavior materially depends on concurrency, security, public schema/API
+  contract design, persistent-data migration, or cross-cutting refactoring, or
+  when failure can cause money/data damage, irreversible harm, or high-impact
+  production damage. General endpoint implementation and read-only production
+  log investigation remain `luna`; API contract design/evolution and
+  production mutation/remediation do not. Money paths retain dispatcher
+  sign-off.
 - **Direction-setting forks use blind consult by default**: the orchestrator
   writes its own analysis first, keeps it out of the brief, and asks a read-only
   worker for the best-supported design plus the strongest case against it.
-  Anchored consults are only for refining an already-set direction.
+  Anchored consults are only for refining an already-set direction. Plan review
+  is a bounded anchored loop after that direction is set.
+- **Plan review is persistent and bounded**: `REVISE` ends as a
+  dispatcher-targeted structured `QUESTION:` so `reply` retains the thread;
+  `APPROVE` is terminal. Run at most three rounds, recording `new-risks` and
+  `resolved-risks` separately. An unapproved third round returns control to the
+  dispatcher for residual-risk sign-off, a targeted evidence read, or user
+  escalation. Approval freezes versioned `PLAN.md`; scope changes reopen it.
+- **The review chain is explicit**: `luna` implementation → `sol` adversarial
+  review (maximum two rounds) → dispatcher full-diff read with plan and repo
+  context → direct fixes and final sign-off. P1-fix-level corrections preserve
+  the contract; beyond-plan fixes reopen approval. Harness/core surgery routes
+  to `sol` and adds a Claude context-holding review at plan and final-diff
+  stages.
 - Workers may commit/push completed verified work; the orchestrator still owns integration and final sign-off.
 - Briefs must point at *existing patterns* relevant to the task — detail-oriented reviewers flag absent context as defects otherwise.
-- `follow` at most ~2 times per thread, then reset with a fresh brief (long Codex sessions degrade).
-- Effort by complexity: `medium` default, `high` for tricky implementation/review/debugging, `xhigh` for precision verification (concurrency, critical paths).
+- `follow`/`reply` at most ~2 times per thread for ordinary work; the plan-review
+  loop is the explicit three-round exception.
+- The CLI retains `medium` as a compatibility default, but doctrine selects
+  `luna xhigh` for bounded work and `sol high|xhigh` for its ownership areas.
 
 ## Hardening history
 
@@ -155,7 +176,9 @@ State-machine changes should re-run the fake-event scenarios (tool-wait→stream
 - Optional LaunchAgent support lives behind `meight launchd install --load`; `KeepAlive` stays off, and the LaunchAgent sets both `MEIGHT_IDLE_TIMEOUT_SEC=0` and `daemon --idle-timeout-sec 0` so live control channels stay attached until explicit shutdown. Verify the loaded job with `launchctl print`, not only the plist file.
 - Beta SDK (`openai-codex==0.1.0b3`, pinned): meight deliberately supplies the current system `codex` executable instead of the SDK's older bundled runtime. `MEIGHT_CODEX_BIN` is the explicit override. Before bumping the SDK or Codex CLI, re-introspect the API surface (`inspect.signature`), dump real event payloads (`MEIGHT_DEBUG=1` → per-worker `debug-events.log`), and re-run the verification suite.
 - Approval requests arrive as SDK server-requests (auto-accepted by the SDK's default handler), not stream notifications — the `needs_input` tool path is defensive.
-- Per-turn `cwd`/`sandbox`/`model`/`effort` come from the SDK's `Thread.turn()` — worktree isolation is just `--cwd`.
+- Per-turn `cwd`/`sandbox`/`model`/`effort`/`service_tier` come from the SDK's
+  `Thread.turn()`. `--fast` maps to `service_tier="priority"`; it is not a
+  separate model slug. Worktree isolation is just `--cwd`.
 
 ## Deliberate non-features (v1)
 

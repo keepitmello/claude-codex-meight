@@ -29,10 +29,12 @@ questions, and keep final reports small enough to make user-facing decisions.
 - **Blind consults for forks.** Direction-setting decisions use an independent
   read-only consult with problem and constraints only, before debate or
   implementation.
-- **Risk-based independent review.** Security-sensitive, irreversible, broad,
-  genuinely uncertain, or high-impact work gets a fresh-context read; routine
-  bounded and reversible work can rely on relevant verification plus
-  orchestrator sign-off. Cross-model review is optional extra coverage.
+- **Plan review before implementation.** After direction is set, a bounded
+  `sol` review loop approves and freezes versioned `PLAN.md`; `REVISE` stays on
+  the same thread through a dispatcher-targeted question.
+- **Luna implements, sol reviews.** `luna xhigh` plus Fast when available is the
+  default for bounded work. Failure-cost hard gates route critical work to
+  `sol`; `terra` has no default ownership.
 - **It gets better with use.** Direction decisions, user preferences, and
   operational lessons persist as plain files the dispatcher reads before
   acting. Repeat questions stop reaching the human; settled directions stay
@@ -91,7 +93,8 @@ daemon by default (`$MEIGHT_HOME`, `$XDG_STATE_HOME/meight`, or `~/.meight`)
 while isolating worker state per repo under `repos/<repo-key>/`.
 
 ```bash
-meight start impl-1 --mode delegate --report decision --brief-file - --cwd ~/my-repo <<'EOF'
+meight start impl-1 --mode delegate --report decision --model luna --effort xhigh --fast \
+  --brief-file - --cwd ~/my-repo <<'EOF'
 Implement X in src/foo.py. Existing pattern: see src/bar.py:42.
 Verify with: pytest tests/test_foo.py.
 Report changed files, verification, remaining P1s, risks, and evidence artifact.
@@ -136,9 +139,31 @@ Computer Use app-access is enabled by default for each meight worker session.
 Other MCP approvals remain unchanged.
 
 ```bash
-meight dispatch desktop-qa --mode delegate --sandbox ro \
+meight dispatch desktop-qa --mode delegate --sandbox ro --model luna --effort xhigh --fast \
   --brief "Use Computer Use to inspect Calculator. Do not change its state."
 ```
+
+## Operating Model
+
+| Model | Default ownership | Effort |
+|---|---|---|
+| `luna` | Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `xhigh`, plus `--fast` when available |
+| `sol` | Direction, plan review, adversarial review, hard-gated implementation | `high` or `xhigh` |
+| `terra` | Capability-specific fallback only; re-promotable on measured evidence | task-specific |
+
+Failure cost is the routing gate. Use `sol` when acceptance-critical behavior
+materially depends on concurrency, security, public schema/API contract design,
+persistent-data migration, or cross-cutting refactoring, or when failure can
+cause money/data damage, irreversible harm, or high-impact production damage.
+General endpoint implementation and read-only production log investigation stay
+with `luna`; API contract design/evolution and production mutation/remediation
+do not. Money paths still require dispatcher sign-off.
+
+The implementation chain is `luna` → `sol` adversarial review (maximum two
+rounds) → dispatcher full-diff read against frozen `PLAN.md` and repository
+context → direct fixes and final sign-off. A scope-changing fix reopens plan
+approval; a P1-fix-level correction does not. Harness/core surgery routes to
+`sol` and adds a Claude context-holding review at plan and final-diff stages.
 
 ## Consults
 
@@ -171,6 +196,18 @@ meight start consult-refine --mode collab --sandbox ro --brief \
   "Direction is Option B. Pressure-test it: what am I missing?"
 ```
 
+Once direction is set, plan review is a separate bounded anchored loop:
+
+1. The dispatcher authors the plan; `sol high|xhigh` reviews it.
+2. The reviewer leads with `APPROVE` or `REVISE`. `REVISE` ends as a
+   dispatcher-targeted structured `QUESTION:` so `reply` preserves the thread;
+   `APPROVE` is terminal.
+3. Run at most three rounds, recording `new-risks` and `resolved-risks`
+   separately each round.
+4. After an unapproved third round, choose residual-risk sign-off, a targeted
+   evidence read, or user escalation. Do not auto-reenter.
+5. Freeze approval as versioned `PLAN.md`; scope changes reopen approval.
+
 When reads disagree, split evidence questions from value judgments. Evidence
 gets one targeted verification worker. User-owned value judgments (scope, UX,
 priority, risk appetite, irreversible action, acceptance criteria) go to the
@@ -191,7 +228,10 @@ Three plain-file ledgers make the dispatch loop improve with use:
   human once — only irreversible and risk calls are always re-confirmed.
 - **Lessons** (`<daemon-home>/notes/lessons.md`). Recurring review findings
   and operational mistakes become one-line lessons, promoted into brief
-  templates when they repeat.
+  templates when they repeat. The v3 baseline also records plan rounds and
+  revise causes, reroutes divided by `luna` starts (ordinary questions tracked
+  separately), `luna→sol|terra` plus the hard-gate clause, and false approvals
+  within the same release window or a repo-defined fixed time fallback.
 
 None of this is a new subsystem — just files plus doctrine, defined in
 [`skills/meight/SKILL.md`](./skills/meight/SKILL.md#learning-loop-decision-records-preferences-lessons).
@@ -258,6 +298,8 @@ Common options:
   file scopes.
 - `--sandbox ws|ro|full` defaults to `full`; reviews and consults usually use
   `ro`.
+- `--model luna|sol|terra` accepts the short aliases; full model strings pass
+  through unchanged.
 - `--effort low|medium|high|xhigh` defaults to `medium`.
 - `--fast` opts a specific worker into priority service tier; omitted or
   `--no-fast` stays non-Fast.

@@ -21,16 +21,25 @@ acceptance criteria, and final approval.
 
 | Work | Route |
 |---|---|
-| Bounded implementation, fixes, code review, browser/runtime checks | Codex worker via `meight --mode delegate` |
-| Architecture, diagnosis, alternatives, direction checks | Codex worker via `meight --mode collab --sandbox ro` |
-| Exploration fan-out, codebase mapping, fresh-context verification | Codex workers or Claude subagents, depending on tools and context |
-| High-stakes or irreversible changes | Independent reads plus runtime evidence and explicit sign-off |
+| Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `luna`, `xhigh`, plus Fast when available |
+| Direction, plan review, adversarial review, hard-gated implementation | `sol`, `high` or `xhigh` |
+| Capability-specific fallback | `terra` only when measured evidence supports the route; no default ownership |
+
+Failure cost is the gate. Hard-route to `sol` when acceptance-critical work
+materially depends on concurrency, security, public schema/API contract design,
+persistent-data migration, or a cross-cutting refactor, or when failure can
+cause money/data damage, irreversible harm, or high-impact production damage.
+General endpoint implementation and read-only production log investigation
+remain `luna`; API contract design/evolution and production mutation or
+remediation do not. Money paths retain dispatcher sign-off. `luna` can escalate
+ambiguity with `QUESTION:`; `luna→terra` remains open as an evidence-backed
+capability fallback.
 
 ## Compact Quick Reference
 
 ```bash
-meight start <name> --mode delegate --report decision --brief-file - --cwd <dir> \
-  [--sandbox ws|ro|full] [--effort medium|high|xhigh] <<'EOF'
+meight start <name> --mode delegate --report decision --model luna --effort xhigh \
+  [--fast] --brief-file - --cwd <dir> [--sandbox ws|ro|full] <<'EOF'
 ## Goal
 ## Scope
 ## Existing patterns
@@ -92,18 +101,37 @@ gets one targeted verification worker. User-owned value judgments go to the
 human. Stop after at most two rounds; then choose the reversible/lower-risk path
 or escalate. Do not create worker-vs-worker debate loops.
 
+## Plan-Review Loop
+
+After direction is set, author a plan and send it to a persistent
+`sol high|xhigh` reviewer. This is bounded anchored refinement, not a
+replacement for blind consult:
+
+1. The reviewer leads with `APPROVE` or `REVISE`.
+2. `REVISE` ends as a dispatcher-targeted structured `QUESTION:` so `reply`
+   preserves the thread; `APPROVE` is terminal.
+3. Run at most three rounds and record `new-risks` and `resolved-risks`
+   separately each round.
+4. After an unapproved round three, choose residual-risk sign-off, a targeted
+   evidence read, or user escalation; do not auto-reenter.
+5. Freeze approval as versioned `PLAN.md`. Scope change reopens approval.
+
+Implementation follows `luna` → `sol` adversarial review (maximum two rounds)
+→ your full-diff read with plan and repo context → direct fixes and final
+sign-off. P1-fix-level corrections keep the contract; fixes beyond plan scope
+reopen approval. Harness/core surgery routes to `sol` and adds an explicit
+Claude context-holding review at both plan and final-diff stages.
+
 ## Safety Rules
 
-1. Use independent review when the risk warrants it: security-sensitive,
-   irreversible, broad, genuinely uncertain, or high-impact changes. For a
-   routine bounded and reversible change, relevant verification plus your
-   sign-off is sufficient. A fresh-context Codex review worker is the default
-   for riskier work; cross-model review is optional extra coverage.
+1. The frozen `PLAN.md` is the review contract. Implementation reports must
+   state plan deviations plus rationale and what was deliberately not done.
+   You read the full diff and own final sign-off.
 2. NO-GO means blockers were found. Fix valid blockers, then re-review. Push
    back only with code or runtime evidence.
 3. No completion claims without evidence. A worker's "done" is a claim;
-   relevant tests or runtime checks plus your sign-off make it a fact. When
-   rule 1 requires independent review, a reviewer verdict is required too.
+   relevant tests or runtime checks and your sign-off make it a fact.
+   Plan-governed implementation also requires the `sol` review verdict.
 4. Workers may commit/push completed verified work when allowed by the brief,
    but you still own final integration and approval.
 5. Parallel workers with overlapping file scopes need separate worktrees via

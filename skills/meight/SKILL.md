@@ -77,29 +77,30 @@ Pass `--model` explicitly; the flag already exists on `start` and `dispatch`.
 The short names are real aliases: `sol`, `terra`, and `luna` resolve to the
 current ChatGPT-account slugs `gpt-5.6-sol`, `gpt-5.6-terra`, and
 `gpt-5.6-luna`. Full or custom model strings pass through unchanged.
-Routing principle: **failure cost picks the model.** Code work that misses
-forces an extra review/fix round, so a slower-but-smarter model wins on total
-time. Step-heavy automation is latency-dominated with simple per-step
-decisions, so a faster model wins.
+Routing principle: **failure cost picks the model.** The default is broad on
+purpose: bounded work goes to `luna` at `xhigh`, with `--fast` when the account
+and service make Fast available.
 
 | Model | Use for | Typical effort |
 |-------|---------|----------------|
-| `sol` | Implementation, fixes, verification (default for code work) | medium |
-| `sol` | Design, consult, architecture, adversarial review | high |
-| `terra` | Computer use, browser QA, runtime automation, step-heavy flows | medium |
-| `terra` | Exploration/recon with runtime or many steps | medium |
-| `luna` | One-shot trivial checks (`dispatch tiny-*`), lookups, screenshot reads, doc/code exploration | low–medium |
+| `luna` | Default for bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `xhigh` + `--fast` when available |
+| `sol` | Direction, plan review, adversarial review, and hard-gated implementation | `high` or `xhigh` |
+| `terra` | No default ownership; capability-specific fallback when measured evidence supports it | task-specific |
 
-Exploration/recon/lookup work routes to Codex (`luna` for simple reads,
-`terra` for step-heavy/runtime recon) — Codex quota is ~3x Claude, so send
-volume there. If implementation judgment is entangled, use `sol`. UX and
-user-visible-behavior judgment stays with the dispatcher; never delegate UX
-decisions to a worker — briefs specify button layout and copy explicitly
-(user directive, 2026-07-11).
+Hard gate (verbatim contract wording): **acceptance-critical한 부분이 concurrency,
+security, 공개 schema/API 계약 설계, 영속 데이터 마이그레이션, cross-cutting
+리팩터에 materially 의존하거나 실패가 돈/데이터 손상·비가역·고임팩트 프로덕션
+피해를 낳으면 sol로 하드 라우팅.** General endpoint implementation remains
+`luna`; API contract design or evolution is `sol`. Read-only production log
+investigation is `luna`; production mutation or incident remediation is not a
+`luna` task, and money paths retain the existing dispatcher sign-off gate.
+Ambiguity inside a `luna` task is handled with `QUESTION:` escalation.
 
-Benchmark rumor "sol medium ≈ terra high" is unverified for our workloads —
-when in doubt on code quality, prefer `sol`. Revisit this table after A/B
-comparisons on real briefs (record findings in `notes/lessons.md`).
+`terra` can receive a `luna` escalation when a capability-specific reason and
+measured evidence justify it. It can be promoted back into default ownership
+after evidence accumulates, but no promotion rule is assumed before the
+baseline exists. UX and user-visible-behavior judgment stays with the
+dispatcher; briefs specify the accepted UX contract explicitly.
 
 When you revisit the worker, inspect once and decide:
 
@@ -211,7 +212,10 @@ answered class of question is answered from the ledger, not re-asked.
 meight reply <name> --brief "Use config-a.json and keep the legacy field."
 ```
 
-At most two `follow`/`reply` turns per thread is a good default. If daemon
+At most two `follow`/`reply` turns per thread is a good default for ordinary
+work and for the implementation review loop. The plan-review loop below is the
+explicit exception: it permits up to three total review rounds and uses
+dispatcher-targeted `QUESTION:` plus `reply` to preserve the thread. If daemon
 restart or GC expired the same-thread session, `status` shows
 `runtime_lost_detail`; start a fresh worker instead of replying.
 
@@ -251,6 +255,28 @@ Use anchored consults to refine an already-set direction:
 meight start consult-refine --mode collab --sandbox ro --effort high --cwd <repo root> \
   --brief "Direction is Option B. Pressure-test it: what am I missing, and what edge cases should the implementation cover?"
 ```
+
+### Plan-Review Loop (Bounded Anchored Refinement)
+
+Blind consult remains unchanged for direction-setting forks. Only after the
+direction is set does the dispatcher author a plan and enter this bounded,
+anchored refinement loop with `sol high` or `sol xhigh`:
+
+1. The dispatcher authors the plan and sends it to a persistent `sol` review
+   thread.
+2. The reviewer leads with `APPROVE` or `REVISE`. `REVISE` ends as a
+   dispatcher-targeted structured `QUESTION:` so `meight reply` preserves the
+   thread; `APPROVE` is terminal.
+3. Run at most three plan-review rounds. Each round records `new-risks` and
+   `resolved-risks` separately; do not collapse them into one list.
+4. If round three does not approve, do not auto-reenter. The dispatcher chooses
+   exactly one next step: residual-risk sign-off, a targeted evidence read, or
+   user escalation.
+5. Freeze the approved contract as versioned `PLAN.md`. Implementation and
+   final review both use that exact plan. A scope change reopens plan approval.
+
+Plan review is also the routing backstop: it records which hard-gate clause
+fired, or explicitly records `none—luna eligible`.
 
 ### Disagreement Protocol
 
@@ -307,31 +333,55 @@ brief-writing gaps, harness interference patterns — get one line each. When a
 lesson recurs, promote it into the brief template's Constraints or into this
 skill. Repo-specific code patterns belong in that repo's own docs, not here.
 
+For this operating model, record enough structured data to measure:
+
+- plan-review round count and the cause of each `REVISE`;
+- escalation rate as rerouted tasks divided by `luna`-started tasks, with
+  ordinary `QUESTION:` events tracked separately;
+- the escalation axis (`luna→sol` or `luna→terra`) and the hard-gate clause
+  that fired;
+- false approvals found after sign-off, measured within the same release
+  window; repos without releases must define a fixed time-window fallback.
+
+Do not harden escalation rules until this baseline exists.
+
 ## Review Worker Pattern
 
-Use an independent read when risk warrants it: security-sensitive,
-irreversible, broad, genuinely uncertain, or high-impact work. For a routine
-bounded and reversible change, relevant verification plus dispatcher sign-off
-is sufficient; do not spend a second worker merely as proof that ordinary work
-is complete.
+The normal implementation chain is `luna` implementation → `sol` adversarial
+review → dispatcher full-diff read and final sign-off. The review contract is
+the frozen, versioned `PLAN.md`, not a summary written after implementation.
 
 ```bash
-meight start review-X --mode delegate --report decision --sandbox ro --effort high --cwd <repo root> --brief-file - <<'EOF'
-Adversarial review. Target: <files>. Contract: <spec / PR description>.
+meight start review-X --mode delegate --report decision --sandbox ro --model sol --effort high --cwd <repo root> --brief-file - <<'EOF'
+Adversarial review. Target: <files>. Contract: <versioned PLAN.md>.
 Hunt for real defects: correctness, regressions, missing verification,
 security/data risk, edge cases, races. For each finding: severity P1/P2/P3,
 file:line, why, fix direction. End with GO or NO-GO.
 EOF
 ```
 
-Default to a fresh Codex review worker for riskier work. For important
-architecture, high-stakes, or irreversible work, add another independent read
-when available (for example a Claude agent) because critical work deserves more
-than one perspective. Independent context matters when review is warranted.
+The dispatcher reads the complete diff with both `PLAN.md` and repository
+context, arbitrates findings, fixes valid defects directly, and owns the final
+sign-off. A dispatcher fix that changes plan scope reopens plan approval; a
+P1-fix-level correction keeps the frozen contract. The adversarial code-review
+loop is capped at two rounds.
 
-For bounded implementation, you can push the implement/review/fix loop inside
-the worker by requiring it to spawn an independent reviewer and report only the
-decision surface. Guardrails:
+Harness-grade or core surgery routes to Codex `sol`, not a Claude implementation
+fork. It also adds a Claude context-holding review at both the plan stage and
+the final-diff stage. The dispatcher remains the orchestrator, arbitrator, and
+final signer.
+
+Implementation reports from `luna` must map the approved-plan rationale onto
+the existing decision schema:
+
+- `summary`: name the plan version and state every deviation plus rationale;
+- `verification`: show the evidence that the implementation satisfies the
+  frozen plan;
+- `risks`: state what was deliberately not done and why (use an empty list only
+  when there truly is nothing to record);
+- `changed_files` and `commits`: identify the review surface exactly.
+
+Review guardrails:
 
 - At most two review rounds.
 - Fix P1 blockers only unless the brief says otherwise.
