@@ -277,6 +277,20 @@ class RoleLifecycleTests(unittest.TestCase):
             self.assertEqual(requests, [{"cmd": "ping"}])
             self.assertFalse((home / "repos").exists())
 
+    def test_ping_and_runtime_status_advertise_role_capability(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            daemon = meight.Daemon(home)
+            ping = daemon._dispatch({"cmd": "ping"})
+            runtime = daemon.cmd_runtime_status({
+                "name": "unknown",
+                "repo_key": "repo-key",
+                "repo_root": "/repo",
+                "repo_home": str(home / "repos" / "repo-key"),
+            })
+            self.assertIn("role", ping["capabilities"])
+            self.assertIn("role", runtime["capabilities"])
+
     def test_advertised_role_capability_starts_and_records_role(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
