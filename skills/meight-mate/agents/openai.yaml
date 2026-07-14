@@ -1,0 +1,4 @@
+interface:
+  display_name: "Meight Mate"
+  short_description: "Challenge plans, code, and technical direction."
+  default_prompt: "Use $meight-mate to independently review this plan or implementation."
