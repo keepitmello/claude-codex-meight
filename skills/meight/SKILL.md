@@ -27,8 +27,10 @@ SSOT for how to supervise workers.
   structured `QUESTION:` when they see a better direction, a wrong assumption,
   or a decision outside their ownership.
 - Verification owns the outcome. A worker's "done" is a claim; relevant tests
-  or runtime checks plus dispatcher sign-off make it a fact. When risk warrants
-  independent review, a reviewer verdict is required too.
+  or runtime checks plus dispatcher sign-off make it a fact. Plan-governed
+  implementation additionally requires the `sol` review verdict from the
+  review chain below; verification plus dispatcher sign-off alone is
+  sufficient only for work outside a plan-governed review chain.
 - Workers may commit/push completed verified work when the brief allows it, but
   the dispatcher still owns final integration and approval.
 
@@ -174,8 +176,9 @@ Decision schema fields:
 }
 ```
 
-`outcome=needs_decision` routes to `needs_input` / exit `3` using the first
-entry in `decisions[]`.
+`outcome=needs_decision` routes to `needs_input` / exit `3`. The daemon
+prioritizes the first user-targeted entry anywhere in `decisions[]`; only when
+none targets the user does it fall back to `decisions[0]`.
 
 Recommended pairing: `--mode delegate --report decision` for bounded
 implementation, so dispatcher context stays clean for user communication.
@@ -264,11 +267,17 @@ anchored refinement loop with `sol high` or `sol xhigh`:
 
 1. The dispatcher authors the plan and sends it to a persistent `sol` review
    thread. Run this bounded loop with `--mode delegate --report decision` so
-   `APPROVE`/`REVISE` verdicts arrive as schema-validated decisions;
-   `--report text` remains acceptable for collab-style exploratory reviews.
-2. The reviewer leads with `APPROVE` or `REVISE`. `REVISE` ends as a
-   dispatcher-targeted structured `QUESTION:` so `meight reply` preserves the
-   thread; `APPROVE` is terminal.
+   verdicts arrive schema-validated; `--report text` remains acceptable for
+   collab-style exploratory reviews.
+2. The reviewer leads with `APPROVE` or `REVISE`. In decision-report mode the
+   strict schema has no APPROVE/REVISE values, so the exact encoding is:
+   `APPROVE` ⇒ `outcome=done`, `verdict=GO`, summary starting
+   `"APPROVE — <plan identity>"`; `REVISE` ⇒ `outcome=needs_decision`,
+   `verdict=NO-GO`, summary starting `"REVISE — <plan identity>"`, with the
+   dispatcher-owned revision decision as the only `decisions[]` entry unless a
+   genuine user-owned decision exists. In text mode, `REVISE` ends as a
+   dispatcher-targeted structured `QUESTION:`. Either way the thread survives
+   for `meight reply`; `APPROVE` is terminal.
    Reviewers must not flag:
    - naming/style preferences in the plan document itself;
    - theoretical edge cases that cannot occur with real inputs;
@@ -279,7 +288,10 @@ anchored refinement loop with `sol high` or `sol xhigh`:
    `addressed`, `partially addressed`, or `not addressed`, citing the plan
    text/evidence that resolved it or explains why it remains open. Record that
    disposition with the `resolved-risks` half of the round ledger, while
-   `new-risks` contains only new findings; keep the two separate.
+   `new-risks` contains only new findings; keep the two separate. In
+   decision-report mode the ledger lives in a worker-unique evidence artifact
+   with separate `new-risks` and `resolved-risks` headings, listed in
+   `evidence_artifacts` — the strict schema has no fields for it.
 4. If round three does not approve, do not auto-reenter. The dispatcher chooses
    exactly one next step: residual-risk sign-off, a targeted evidence read, or
    user escalation.

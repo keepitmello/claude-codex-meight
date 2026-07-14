@@ -199,8 +199,9 @@ meight start consult-refine --mode collab --sandbox ro --brief \
 Once direction is set, plan review is a separate bounded anchored loop:
 
 1. The dispatcher authors the plan; `sol high|xhigh` reviews it.
-2. The reviewer leads with `APPROVE` or `REVISE`. `REVISE` ends as a
-   dispatcher-targeted structured `QUESTION:` so `reply` preserves the thread;
+2. The reviewer leads with `APPROVE` or `REVISE`. `REVISE` keeps the thread
+   alive for `reply` (text mode: a dispatcher-targeted structured `QUESTION:`;
+   decision mode: the exact schema encoding in `skills/meight/SKILL.md`);
    `APPROVE` is terminal.
 3. Run at most three rounds, recording `new-risks` and `resolved-risks`
    separately each round.

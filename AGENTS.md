@@ -107,8 +107,9 @@ persistent `sol high|xhigh` reviewer. This is bounded anchored refinement, not
 a replacement for blind consult:
 
 1. The reviewer leads with `APPROVE` or `REVISE`.
-2. `REVISE` ends as a dispatcher-targeted structured `QUESTION:` so `reply`
-   preserves the thread; `APPROVE` is terminal.
+2. `REVISE` keeps the thread alive for `reply` (text mode: dispatcher-targeted
+   structured `QUESTION:`; decision mode: the exact schema encoding in
+   `skills/meight/SKILL.md`); `APPROVE` is terminal.
 3. Run at most three rounds and record `new-risks` and `resolved-risks`
    separately each round.
 4. After an unapproved round three, the dispatcher chooses residual-risk

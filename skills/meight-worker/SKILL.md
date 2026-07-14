@@ -137,8 +137,9 @@ Rules:
   is your escalation channel, with the same ownership boundaries.
 - `outcome=done` requires no P1 blockers and enough verification for the brief.
 - `outcome=needs_decision` requires at least one `decisions[]` entry. The daemon
-  routes it as `needs_input`/exit `3` using the first decision's `target` and
-  `kind`.
+  routes it as `needs_input`/exit `3`, prioritizing the first user-targeted
+  entry anywhere in the array and falling back to `decisions[0]` only when none
+  targets the user.
 - `outcome=blocked` means external input or environment prevents progress.
 - `outcome=failed` means the requested result was not achieved.
 - Use `verdict=GO` only when the dispatcher can accept the work subject to the
@@ -263,12 +264,19 @@ Plan-review role:
 - Treat the dispatcher-authored plan and current repository evidence as the
   review surface. This is bounded, anchored refinement after direction is set;
   it does not replace a blind consult for a direction fork.
-- Lead with exactly `APPROVE` or `REVISE`.
-- `REVISE` must end with a dispatcher-targeted structured `QUESTION:` so the
-  same thread survives for `reply`. Include the revision needed, evidence, and
-  recommendation. In decision-report mode, use the exact schema equivalent:
-  `outcome=needs_decision` with the first `decisions[]` item targeted to
-  `dispatcher`; the daemon routes it as the final structured question.
+- Lead with exactly `APPROVE` or `REVISE`. The strict decision schema has no
+  APPROVE/REVISE values, so in decision-report mode encode exactly:
+  `APPROVE` ⇒ `outcome=done`, `verdict=GO`, summary starting
+  `"APPROVE — <plan identity>"`; `REVISE` ⇒ `outcome=needs_decision`,
+  `verdict=NO-GO`, summary starting `"REVISE — <plan identity>"`.
+- `REVISE` must keep the thread alive for `reply`: in text mode end with a
+  dispatcher-targeted structured `QUESTION:`; in decision-report mode make the
+  dispatcher-owned revision decision the only `decisions[]` entry unless a
+  genuine user-owned decision exists (the daemon prioritizes user-targeted
+  entries). Include the revision needed, evidence, and recommendation.
+- The round ledger has no schema fields: put the separate `new-risks` and
+  `resolved-risks` headings in your worker-unique evidence artifact and list it
+  in `evidence_artifacts`.
 - `APPROVE` is terminal. Do not append a question or invite another automatic
   round.
 - Reviewers must not flag:

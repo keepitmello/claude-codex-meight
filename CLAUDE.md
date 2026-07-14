@@ -107,9 +107,13 @@ After direction is set, author a plan and send it to a persistent
 `sol high|xhigh` reviewer. This is bounded anchored refinement, not a
 replacement for blind consult:
 
-1. The reviewer leads with `APPROVE` or `REVISE`.
-2. `REVISE` ends as a dispatcher-targeted structured `QUESTION:` so `reply`
-   preserves the thread; `APPROVE` is terminal.
+1. The reviewer leads with `APPROVE` or `REVISE`. In decision-report mode
+   these encode as `outcome=done, verdict=GO` / `outcome=needs_decision,
+   verdict=NO-GO` with the summary starting `"APPROVE — "` / `"REVISE — "`
+   plus the plan identity; the risk ledger lives in the evidence artifact.
+2. `REVISE` keeps the thread alive for `reply` (text mode: dispatcher-targeted
+   structured `QUESTION:`; decision mode: dispatcher-owned revision decision);
+   `APPROVE` is terminal.
 3. Run at most three rounds and record `new-risks` and `resolved-risks`
    separately each round.
 4. After an unapproved round three, choose residual-risk sign-off, a targeted

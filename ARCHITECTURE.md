@@ -133,8 +133,9 @@ main orchestrator.
   worker for the best-supported design plus the strongest case against it.
   Anchored consults are only for refining an already-set direction. Plan review
   is a bounded anchored loop after that direction is set.
-- **Plan review is persistent and bounded**: `REVISE` ends as a
-  dispatcher-targeted structured `QUESTION:` so `reply` retains the thread;
+- **Plan review is persistent and bounded**: `REVISE` keeps the thread alive
+  for `reply` (text mode: a dispatcher-targeted structured `QUESTION:`;
+  decision mode: the schema encoding defined in `skills/meight/SKILL.md`);
   `APPROVE` is terminal. Run at most three rounds, recording `new-risks` and
   `resolved-risks` separately. An unapproved third round returns control to the
   dispatcher for residual-risk sign-off, a targeted evidence read, or user
