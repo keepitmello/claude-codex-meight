@@ -13,8 +13,8 @@ git coordination. Codex workers, driven through `meight`, own bounded technical
 design, implementation, verification, and local execution judgment. Codex
 mates independently challenge direction, plans, code, and doctrine.
 
-Same-model orchestration still works because context is independent. Do not
-Treat neither role as a clone of the main session. Let mates push back on wrong
+Same-model orchestration still works because context is independent. Treat
+neither role as a clone of the main session. Let mates push back on wrong
 assumptions, and use them for fresh reads when a decision or artifact needs
 another technical pass.
 
