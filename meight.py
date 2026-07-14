@@ -1314,6 +1314,12 @@ class Daemon:
         }
 
     def cmd_start(self, req: dict) -> dict:
+        role = req.get("role")
+        if role not in ROLES:
+            # Keep this validation before imports, path creation, registry reservation,
+            # or SDK startup. Direct socket clients must receive the same teaching
+            # contract as the CLI and can never silently fall back to worker.
+            return {"ok": False, "error": ROLE_TEACHING_ERROR.removeprefix("error: ")}
         raw_mode = req.get("mode")
         mode = MODE_MAP.get(raw_mode or "")
         if mode is None:
@@ -1322,12 +1328,6 @@ class Daemon:
             return {"ok": False,
                     "error": f"missing or invalid mode: {raw_mode!r} "
                              "(expected collab|collaborative|delegate|delegated)"}
-        role = req.get("role")
-        if role not in ROLES:
-            # Keep this validation before imports, path creation, registry reservation,
-            # or SDK startup. Direct socket clients must receive the same teaching
-            # contract as the CLI and can never silently fall back to worker.
-            return {"ok": False, "error": ROLE_TEACHING_ERROR.removeprefix("error: ")}
 
         from openai_codex import Codex, CodexConfig, Sandbox
         try:
@@ -1816,8 +1816,8 @@ def require_role_capability(home: Path) -> dict:
 
 
 def start_request(args, home: Path) -> dict:
-    require_mode(args)
     require_role(args)
+    require_mode(args)
     capability = require_role_capability(home)
     if not capability.get("ok"):
         return capability
@@ -1837,7 +1837,16 @@ def start_request(args, home: Path) -> dict:
         "report": args.report,
     }
     req.update(request_repo_context(home))
-    return send_request(home, req)
+    resp = send_request(home, req)
+    if resp.get("ok") and resp.get("role") != args.role:
+        cleanup = {"cmd": "interrupt", "name": args.name}
+        cleanup.update({key: req[key] for key in ("repo_root", "repo_key", "repo_home")})
+        try:
+            send_request(home, cleanup)
+        except (Exception, SystemExit):
+            pass
+        return {"ok": False, "error": "legacy daemon accepted the start without role support"}
+    return resp
 
 
 def cmd_start(args, home: Path) -> int:
@@ -2033,8 +2042,8 @@ def ensure_daemon(home: Path) -> bool:
 
 def cmd_dispatch(args, home: Path) -> int:
     """One-shot: auto-start daemon -> start -> wait -> print full result.md. Exit matches wait."""
-    require_mode(args)  # before ensure_daemon: a rejected call must not auto-start a daemon
     require_role(args)
+    require_mode(args)  # before ensure_daemon: a rejected call must not auto-start a daemon
     if not ensure_daemon(home):
         print("error: daemon auto-start failed — check daemon.log", file=sys.stderr)
         return 4

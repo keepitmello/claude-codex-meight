@@ -28,7 +28,8 @@ class EffortTests(unittest.TestCase):
                 "start", f"effort-{effort}", "--role", "worker", "--mode", "delegate",
                 "--brief", "Say OK", "--effort", effort,
             ])
-            responses = ({"ok": True, "capabilities": ["role"]}, {"ok": True})
+            responses = ({"ok": True, "capabilities": ["role"]},
+                         {"ok": True, "role": "worker"})
             with patch.object(meight, "send_request", side_effect=responses) as send:
                 meight.start_request(args, Path("/tmp/meight-test"))
             self.assertEqual(send.call_args.args[1]["effort"], effort)
@@ -181,6 +182,21 @@ class RoleLifecycleTests(unittest.TestCase):
                     self.assertEqual(daemon.workers, {})
                     self.assertFalse((home / "repos").exists())
 
+    def test_daemon_role_teaching_error_precedes_mode_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            daemon = meight.Daemon(home)
+            for req in (
+                {"cmd": "start"},
+                {"cmd": "start", "role": "reviewer", "mode": "invalid"},
+            ):
+                with self.subTest(req=req):
+                    response = daemon._dispatch(req)
+                    self.assertFalse(response["ok"])
+                    self.assertIn("--role is required", response["error"])
+                    self.assertEqual(daemon.workers, {})
+                    self.assertFalse((home / "repos").exists())
+
     def test_cli_missing_and_invalid_role_share_teaching_error(self):
         parser = meight.build_parser()
         for role_args in ([], ["--role", "reviewer"]):
@@ -194,6 +210,25 @@ class RoleLifecycleTests(unittest.TestCase):
                     meight.start_request(args, Path("/tmp/meight-role-teaching"))
                 self.assertEqual(error.exception.code, 2)
                 self.assertEqual(stderr.getvalue().strip(), meight.ROLE_TEACHING_ERROR)
+
+    def test_cli_role_teaching_error_precedes_mode_error(self):
+        parser = meight.build_parser()
+        for command in ("start", "dispatch"):
+            for role_args, mode_args in (
+                ([], []),
+                (["--role", "reviewer"], ["--mode", "invalid"]),
+            ):
+                with self.subTest(command=command, role_args=role_args, mode_args=mode_args):
+                    args = parser.parse_args([
+                        command, "role-precedence", "--brief", "No side effects.",
+                        *role_args, *mode_args,
+                    ])
+                    stderr = io.StringIO()
+                    call = meight.start_request if command == "start" else meight.cmd_dispatch
+                    with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                        call(args, Path("/tmp/meight-role-precedence"))
+                    self.assertEqual(error.exception.code, 2)
+                    self.assertEqual(stderr.getvalue().strip(), meight.ROLE_TEACHING_ERROR)
 
     def test_follow_and_reply_path_inherit_recorded_role(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -255,7 +290,7 @@ class RoleLifecycleTests(unittest.TestCase):
         }
         line = meight.summary_line(status)
         self.assertIn("legacy", line)
-        self.assertIn("-", line)
+        self.assertEqual(line.split()[2], "-")
 
     def test_missing_role_capability_fails_before_start_request(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -276,6 +311,42 @@ class RoleLifecycleTests(unittest.TestCase):
             })
             self.assertEqual(requests, [{"cmd": "ping"}])
             self.assertFalse((home / "repos").exists())
+
+    def test_missing_or_mismatched_start_role_echo_fails_and_interrupts(self):
+        for echo in (None, "worker"):
+            with self.subTest(echo=echo), tempfile.TemporaryDirectory() as tmp:
+                home = Path(tmp)
+                args = self._start_args(tmp, role="mate")
+                requests = []
+
+                def swapped_daemon(_home, req, timeout=meight.SOCKET_TIMEOUT_SEC):
+                    requests.append(req)
+                    if req["cmd"] == "ping":
+                        return {"ok": True, "capabilities": ["role"]}
+                    if req["cmd"] == "start":
+                        response = {"ok": True, "thread_id": "old-daemon-worker"}
+                        if echo is not None:
+                            response["role"] = echo
+                        return response
+                    return {"ok": True}
+
+                stderr = io.StringIO()
+                with (
+                    patch.object(meight, "send_request", side_effect=swapped_daemon),
+                    contextlib.redirect_stderr(stderr),
+                    self.assertRaises(SystemExit) as error,
+                ):
+                    meight.cmd_start(args, home)
+
+                self.assertEqual(error.exception.code, 1)
+                self.assertEqual(
+                    stderr.getvalue().strip(),
+                    "error: legacy daemon accepted the start without role support",
+                )
+                self.assertEqual([req["cmd"] for req in requests], ["ping", "start", "interrupt"])
+                self.assertEqual(requests[2]["name"], args.name)
+                for key in ("repo_root", "repo_key", "repo_home"):
+                    self.assertEqual(requests[2][key], requests[1][key])
 
     def test_ping_and_runtime_status_advertise_role_capability(self):
         with tempfile.TemporaryDirectory() as tmp:

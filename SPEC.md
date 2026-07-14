@@ -275,8 +275,9 @@ SDK schema validation and the turn.
 
 If `outcome=needs_decision`, `decisions[]` must contain at least one entry.
 The daemon routes the worker to `needs_input` / exit `3` using the first
-decision's `target` and `kind`. Decision-report workers cannot emit a text
-`QUESTION:` paragraph; `outcome=needs_decision` + `decisions[]` is their
+user-targeted decision anywhere in the array, falling back to `decisions[0]`;
+it uses that entry's `target` and `kind`. Decision-report workers cannot emit a
+text `QUESTION:` paragraph; `outcome=needs_decision` + `decisions[]` is their
 escalation channel, and the harness preamble teaches whichever channel matches
 the worker's report mode.
 
@@ -294,6 +295,9 @@ the worker's report mode.
 - `ping` and `runtime_status` responses advertise
   `"capabilities": ["role"]`. The CLI must observe that capability before it
   sends a role-aware start request.
+- Successful `start` and `follow` responses echo the selected `role`. The CLI
+  validates the `start` echo and fails closed with a best-effort interrupt if
+  a swapped legacy daemon accepts the request without the requested role.
 - The daemon validates missing or unknown role before imports, directory
   creation, registry reservation, SDK startup, or any other start side effect.
   Direct socket clients cannot bypass this boundary or receive an implicit
