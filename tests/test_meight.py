@@ -1190,10 +1190,10 @@ class ModeLifecycleTests(unittest.TestCase):
     def test_status_serializes_all_four_canonical_modes(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo_home = Path(tmp)
-            for mode in ("design", "review", "worker", "delegate"):
+            for idx, mode in enumerate(("design", "review", "worker", "delegate")):
                 with self.subTest(mode=mode):
                     worker = meight.Worker(
-                        f"status-{mode}", repo_home, "/repo", "repo-key", "/repo",
+                        f"status-{idx}", repo_home, "/repo", "repo-key", "/repo",
                         "workspace_write", "gpt-5.6-luna", "high", mode=mode,
                     )
                     worker.dir.mkdir(parents=True)

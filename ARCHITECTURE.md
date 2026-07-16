@@ -139,7 +139,7 @@ main orchestrator.
 | Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `--mode worker --model luna --effort xhigh`, plus Fast when available |
 | Blind/anchored design and diagnosis | `--mode design --model sol --effort high` (`xhigh` only for genuinely hard problems) |
 | Plan and adversarial review | `--mode review --model sol --effort high` (`xhigh` only for genuinely hard problems) |
-| Hard-gated implementation | `--mode worker --model sol --effort xhigh` |
+| Hard-gated implementation | `--mode worker --model sol --effort high` (`xhigh` only for genuinely hard problems) |
 | Full delegation outside dispatcher technical context | `--mode delegate` only outside hard gates, money paths, and frozen dispatcher review chains |
 | Capability-specific fallback | any mode with `terra`; no default ownership, re-promotable on measured evidence |
 
