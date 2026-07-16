@@ -32,6 +32,7 @@ VERIFICATION: 구현 sol worker(GO, 18 tests), 신체제 첫 --mode review 적�
 드레인 가드가 이번에도 타 세션 워커(arcaea)를 보호 — 데몬은 타 세션의
 dispatch auto-start로 이미 신 코드 전환돼 있었음.
 
-STATUS: adopted. supersedes the flag portion of
-2026-07-14-mate-worker-role-split.md (계약 내용·fail-closed 설계는 존속,
-선택 축만 role→mode로).
+STATUS: superseded in part by 2026-07-16-worker-delegate-split.md (worker 계약을
+delegate 단일 조합으로 본 3모드 상정은 폐기; 단일 mode 축, 별칭,
+fail-closed 설계는 존속). This record still supersedes the flag portion of
+2026-07-14-mate-worker-role-split.md.

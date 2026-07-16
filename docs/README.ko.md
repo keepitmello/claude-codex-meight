@@ -18,18 +18,22 @@
 최종 보고만 받아 사용자 대면 결정을 내립니다.
 
 핵심 아이디어는 이것입니다: **프론티어 모델을 말 없는 실행자로 쓰는 건 능력을
-버리는 일이다.** 그래서 meight는 Codex 세션 계약 두 가지를 제공합니다.
+버리는 일이다.** 그래서 meight는 세 가지 Codex 세션 계약을 네 운영 모드로
+제공합니다.
 
 - **메이트**(`--mode design` 또는 `--mode review`)는 독립적인 도전자입니다.
   진짜 판정이 걸린 plan 리뷰, 적대적 결함 사냥, blind design을 맡습니다 — 계약에 *디스패처에게
   도전하라, 동의가 목표가 아니다*라고 적혀 있습니다.
-- **워커**(`--mode delegate`)는 bounded 구현자입니다. 코드·테스트·검증·런타임
-  QA라는 기술 루프를 소유하고 decision surface로 보고하며, 진짜 애매함은
-  추측하는 대신 승격시킵니다.
+- **워커**(`--mode worker`)는 디스패처 참여형 bounded 구현자입니다.
+  코드·테스트·검증·런타임 QA를 소유하고, 외부 리뷰 체인은 디스패처가
+  유지합니다.
+- **델리게이트**(`--mode delegate`)는 디스패처가 기술 맥락에서 빠진 상태로
+  구현과 fresh-context 독립 리뷰를 끝까지 소유합니다. 하드게이트·money path·
+  frozen dispatcher review chain 작업은 worker 모드로 fail-closed 합니다.
 
-메이트와 워커는 모델 정체성이 아니라 세션 계약의 이름입니다. 모드는 계약을,
+메이트·워커·델리게이트는 모델 정체성이 아니라 세션 계약의 이름입니다. 모드는 계약을,
 `--model`은 두뇌를 고릅니다. 디스패처는 방향·중재·통합·최종 사인오프를
-쥐고 있고, 메이트나 워커의 말만으로 머지되는 것은 없습니다.
+쥐고 있고, 메이트·워커·델리게이트의 말만으로 머지되는 것은 없습니다.
 
 ```text
    디스패처 에이전트   <->   Codex 메이트 / 워커
@@ -99,7 +103,7 @@ tmux/exec 래퍼와 비교하면:
 | 양방향 대화 | 불가 | 불가 | 구조화 `QUESTION:` -> exit 3 -> `reply` |
 | 결과 전달 | 스크래핑 | 툴 반환값 | exit code 계약 + 결과 파일 |
 | 기계가 읽는 보고 | 불가 | 래퍼마다 다름 | `output_schema` 기반 `--report decision` |
-| 세션 계약 | 없음 | 없음 | `--mode design\|review\|delegate`, 하네스가 주입 |
+| 세션 계약 | 없음 | 없음 | `--mode design\|review\|worker\|delegate`, 하네스가 주입 |
 
 그리고 모든 판단이 디스크에 남기 때문에 — 요약, 결정, 선호, 교훈 — 쓸수록
 페어링이 개인화됩니다: 디스패처는 어떤 질문을 사람이 보고 싶어하는지, 어떤
@@ -121,7 +125,7 @@ cd claude-codex-meight
 `~/.meight`), 워커 상태는 `repos/<repo-key>/` 아래에 레포별로 격리합니다.
 
 ```bash
-meight start impl-1 --mode delegate --report decision --model luna --effort xhigh --fast \
+meight start impl-1 --mode worker --report decision --model luna --effort xhigh --fast \
   --brief-file - --cwd ~/my-repo <<'EOF'
 Implement X in src/foo.py. Existing pattern: see src/bar.py:42.
 Verify with: pytest tests/test_foo.py.
@@ -179,7 +183,7 @@ EOF
 짧고 단순하고 위험 낮은 작업에는 원샷 디스패치도 있습니다:
 
 ```bash
-meight dispatch tiny-1 --mode delegate --report decision --sandbox ro \
+meight dispatch tiny-1 --mode worker --report decision --sandbox ro \
   --brief "Check whether README mentions LICENSE."
 ```
 
@@ -243,8 +247,9 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 Claude 오케스트레이터용 드롭인 프롬프트는 [`CLAUDE.md`](../CLAUDE.md),
 Codex-as-orchestrator 프롬프트는 [`AGENTS.md`](../AGENTS.md)로 제공됩니다.
 디스패처용 전체 스킬은 [`skills/meight/`](../skills/meight/SKILL.md), 세션
-계약은 [`skills/meight-mate/`](../skills/meight-mate/SKILL.md)와
-[`skills/meight-worker/`](../skills/meight-worker/SKILL.md), 공유 프로토콜은
+계약은 [`skills/meight-mate/`](../skills/meight-mate/SKILL.md),
+[`skills/meight-worker/`](../skills/meight-worker/SKILL.md),
+[`skills/meight-delegate/`](../skills/meight-delegate/SKILL.md), 공유 프로토콜은
 [`skills/meight-common/`](../skills/meight-common/CONTRACT.md)입니다.
 
 기본 디스패처는 Claude Code 세션입니다. Codex 앱/CLI 세션도
@@ -275,9 +280,9 @@ Codex-as-orchestrator 프롬프트는 [`AGENTS.md`](../AGENTS.md)로 제공됩�
 
 | 명령 | 하는 일 |
 |---|---|
-| `meight start <name> --mode design\|review\|delegate [opts]` | 세션을 시작하고 thread id와 함께 즉시 반환. 감독형 워크플로우의 진입점. |
+| `meight start <name> --mode design\|review\|worker\|delegate [opts]` | 세션을 시작하고 thread id 및 mode/contract 자세와 함께 즉시 반환. 감독형 워크플로우의 진입점. |
 | `meight wait <name> --timeout SEC` | 체크포인트 대기: 터미널 상태, 답변 가능한 QUESTION, 데몬 사망, 타임아웃에 반환. 타임아웃은 워커를 살려둡니다. |
-| `meight dispatch <name> --mode design\|review\|delegate [opts]` | 원샷: 데몬 자동 시작 -> capability 확인 -> start -> wait -> 선호 결과 출력. 짧고 단순하고 위험 낮은 작업 전용. |
+| `meight dispatch <name> --mode design\|review\|worker\|delegate [opts]` | 원샷: 데몬 자동 시작 -> capability 확인 -> start -> wait -> 선호 결과 출력. 짧고 단순하고 위험 낮은 작업 전용. |
 | `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | 답변 가능한 질문에 원샷 응답. 모드/보고와 생략한 턴 설정을 상속하고, 명시한 설정은 새 턴부터 적용한 뒤 최신 결과를 출력. |
 | `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | 저수준: 같은 라이브 스레드에 새 턴. 모드/보고와 생략한 턴 설정을 상속하며, 명시한 설정은 이후 턴의 상속값이 됨. |
 | `meight result <name> [--raw]` | `decision.md`가 있으면 그것을, `--raw`는 원본 `result.md`를 출력. |
@@ -288,11 +293,11 @@ Codex-as-orchestrator 프롬프트는 [`AGENTS.md`](../AGENTS.md)로 제공됩�
 
 공통 옵션:
 
-- `--mode design|review|delegate`는 `start`/`dispatch`에 필수입니다.
+- `--mode design|review|worker|delegate`는 `start`/`dispatch`에 필수입니다.
   `collab`, `collaborative`, `delegated`는 허용되는 별칭입니다. Design과
-  review는 메이트 계약을 쓰는 두 협업 모드이고, delegate는 워커 계약을 쓰는
-  위임 모드입니다. Design은 blind/anchored design, review는 verdict-first
-  plan/diff 리뷰, delegate는 구현에 씁니다.
+  review는 메이트 계약, worker는 디스패처가 리뷰 체인을 유지하는 참여형 구현,
+  delegate는 내부 독립 리뷰까지 맡기는 전권 위임입니다. 금지 라우트는 worker로
+  fail-closed 합니다.
 - `--report text|decision` 기본은 `text`; `decision`은
   `decision.json`/`decision.md`를 씁니다.
 - `--cwd`는 워커 작업 디렉토리. 파일 스코프가 겹치면 별도 git worktree를
@@ -332,24 +337,31 @@ repo 경로를 믿지 않고 repo key/state home을 직접 다시 계산해 검�
 증거를 보존한 채 `failed`/`runtime_lost_detail`로 바뀌며 숨김 ephemeral turn은
 재개하지 않습니다.
 
-## 구 데몬을 mode3 지원으로 업그레이드
+## 구 데몬을 mode4 지원으로 업그레이드
 
-새 CLI는 `meight ping`이 `capabilities=mode3`을 광고하지 않으면 `start` 전에
-fail-closed로 멈춥니다 — 그리고 start/follow 응답의 정규화된 mode echo까지
-검증하므로, 핸드셰이크 중간에 데몬이 바뀌어도 잘못된 세션 계약을 조용히
-사용하지 않습니다. 수동으로 드레인 후 재시작하세요:
+새 CLI는 `meight ping`이 `capabilities=mode4`를 광고하지 않으면 `start` 전에
+fail-closed로 멈춥니다. 모든 start/follow 요청은 epoch `mode4`를 싣고, 성공
+응답은 정규화된 mode와 epoch를 원자적으로 함께 에코합니다. 그래서 같은
+`delegate` 문자열을 쓰는 구 데몬으로 중간 교체되어도 침묵 다운그레이드는
+불가능합니다. 수동으로 드레인 후 재시작하세요:
 
 1. `meight list --all-repos --json` 확인; 어느 레포에도 `starting`, `running`,
    `needs_input` 세션이 없을 때까지 기다립니다.
 2. non-force `meight shutdown` 실행. 거부되면 드레인을 마저 하세요; 이
    마이그레이션에 `--force`를 쓰면 안 됩니다.
-3. 데몬을 정상 시작하고 `meight ping`이 `capabilities=mode3`을 보이는지
-   확인합니다.
-4. 읽기 전용 throwaway `--mode review` 세션을 하나 띄웁니다. status에
-   `mode=review`가 기록되고 저장된 프리앰블이
-   `skills/meight-mate/SKILL.md`와 `skills/meight-common/CONTRACT.md`를 모두
-   참조하는지 확인합니다.
-5. 그 스모크가 통과한 뒤에만 실제 디스패치를 재개합니다.
+3. LaunchAgent 로드 여부로 분기합니다. 로드됐으면 `meight launchd install
+   --load`로 bounded `bootout --wait` 소유권 이전을 수행하고, 미로드면 데몬을
+   정상 기동합니다.
+4. `meight ping`이 `capabilities=mode4`를 보이는지, 새 PID와 socket identity가
+   일치하는지 확인합니다.
+5. 읽기 전용 throwaway `--mode worker` 스모크로 status mode와
+   `meight-worker`+common 프리앰블 경로를 확인합니다.
+6. 읽기 전용 delegate 스모크 두 개를 실행합니다. (a) 의도적으로 non-trivial한
+   brief는 fresh-context/read-only 내부 리뷰어 호출, verdict, round 수, 최종
+   decision surface를 evidence에 기록해야 합니다. (b) trivial brief는 리뷰
+   면제를 명시하고 면제 근거를 기록해야 합니다. 둘 다 status `mode=delegate`와
+   `meight-delegate`+common 프리앰블 경로를 확인합니다.
+7. 모든 스모크 통과 뒤에만 실제 디스패치를 재개합니다.
 
 ## 알아두면 좋은 것
 

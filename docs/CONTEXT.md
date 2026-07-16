@@ -5,26 +5,28 @@
 > 문서를 갱신할 것. (역사적 경위는 decisions/를, 운영 프로토콜은 skills/를
 > 신뢰 — 충돌 시 그쪽이 이긴다.)
 >
-> LAST UPDATED: 2026-07-15 (mode-axis collapse 직후)
+> LAST UPDATED: 2026-07-16 (mode4 worker/delegate split 구현)
 
 ## 현재 상태 스냅샷
 
-- **운영 모델 최종형**: 단일 필수 축 `--mode design|review|delegate`.
-  design/review 세션 = mate 계약(`skills/meight-mate/SKILL.md`), delegate
-  세션 = worker 계약(`skills/meight-worker/SKILL.md`), 공유 계약은
-  `skills/meight-common/CONTRACT.md`. 프리앰블이 모드별 스킬+공유 계약을
-  주입하고, review 모드에는 리뷰 프로토콜 가이던스가 추가로 붙는다.
+- **운영 모델 최종형**: 단일 필수 축
+  `--mode design|review|worker|delegate`. design/review 세션 = mate 계약,
+  worker = 디스패처 참여형 구현 계약, delegate = 디스패처가 기술 맥락에서
+  빠지고 내부 독립 리뷰까지 맡기는 전권 위임 계약. 각각
+  `skills/meight-mate`, `skills/meight-worker`, `skills/meight-delegate`를
+  사용하고 공유 계약은 `skills/meight-common/CONTRACT.md`다.
 - **파이프라인**: blind design(방향 fork) → plan-review 루프(최대 3라운드,
   PLAN.md 동결) → worker 구현(luna xhigh+fast 기본, failure-cost 하드게이트만
   sol) → 적대 리뷰(2라운드 캡) → dispatcher full-diff 사인오프. 게이트는
   작업 크기에 비례해 생략 가능하되 절대 조용히는 불가.
 - **effort 정책**: luna=xhigh(+fast), sol=high 기본(재량 medium, xhigh는
   진짜 어려운 것만 — dispatcher 판단).
-- **fail-closed 기계**: 데몬 경계 mode 검증(모든 부작용 앞), capability
-  토큰 `mode3`, start/follow 응답 mode echo 검증 + 불일치 시 interrupt
-  클린업. 레거시 status 행(구 role 필드/구 mode 값) 무충돌 렌더.
-- **테스트**: `tests/test_meight.py` 18개 (mode 라이프사이클 매트릭스 +
-  decision 라우팅 + echo/티칭에러 회귀).
+- **fail-closed 기계**: 데몬 경계 epoch `mode4` 검증이 모든 start/follow
+  부작용보다 앞선다. start/follow 성공 응답의 normalized mode+epoch를 CLI가
+  함께 검증하고 불일치 시 interrupt 클린업한다. 레거시 status 행은 계속
+  무충돌 렌더한다.
+- **테스트**: `tests/test_meight.py` 전체 unittest 진입점이 4모드, alias,
+  preamble, status/legacy, 상속, posture, epoch와 swapped-daemon 회귀를 커버.
 - **하루 만에 세 사이클을 돈 날**: v3 파이프라인 채택 → mate/worker
   `--role` 분리 → 반나절 만에 `--mode` 단일 축으로 통합. 경위 전체는
   decisions/ 참조.
@@ -34,7 +36,7 @@
 | 알고 싶은 것 | 문서 |
 |---|---|
 | 운영 프로토콜 (dispatcher가 따를 규칙 SSOT) | `skills/meight/SKILL.md` |
-| 세션 계약 (mate / worker / 공유) | `skills/meight-mate/SKILL.md`, `skills/meight-worker/SKILL.md`, `skills/meight-common/CONTRACT.md` |
+| 세션 계약 (mate / worker / delegate / 공유) | `skills/meight-mate/SKILL.md`, `skills/meight-worker/SKILL.md`, `skills/meight-delegate/SKILL.md`, `skills/meight-common/CONTRACT.md` |
 | 왜 이 파이프라인인가 — 설계 경위·리서치·검증 기록 | `docs/2026-07-14-v3-pipeline-retrospective.md` (v3 채택 시점 기준; 이후 델타는 decisions/) |
 | 외부 리서치 요약 (TRIP-workflow/jinn/codex-plugin-cc/aimee/clideck 채택·기각) | 회고 문서 §4 |
 | 개별 결정의 양쪽 입장과 근거 | `decisions/` — mode-flag-required(07-03), consensus-pipeline-luna-promotion(+사용자 AMENDMENT 2건), mate-worker-role-split, mode-axis-collapse |
@@ -53,8 +55,9 @@
 5. 게이트는 비례하되 생략은 절대 조용히 하지 않는다. 하드게이트·머니패스는
    생략 불가.
 6. 자동 학습보다 scorecard 먼저 — 지표 없이 규칙을 조이거나 풀지 않는다.
-7. mate/worker는 세션 계약명이지 모델 정체성이 아니다. 실무 정렬: mate≈sol,
-   worker≈luna, sol은 하드게이트 구현 시 worker로.
+7. mate/worker/delegate는 세션 계약명이지 모델 정체성이 아니다. 실무 정렬:
+   mate≈sol, worker≈luna, sol은 하드게이트 구현 시 worker로. delegate는 모델이
+   아니라 디스패처를 기술 루프에서 분리하는 운영 자세다.
 
 ## 미결 사항 (다음 의사결정 대기)
 
@@ -75,8 +78,10 @@
 
 ## 운영 메모
 
-- 데몬은 meight.py 수정 후 재시작해야 새 코드 반영. 재시작 절차(드레인 →
-  non-force shutdown → capability 확인 → 스모크)는 README "Upgrading" 섹션.
+- 데몬은 meight.py 수정 후 재시작해야 새 코드 반영. mode4 재시작 절차(전역
+  드레인 → non-force shutdown → LaunchAgent 로드 여부 분기 → 새 PID/socket 및
+  capability 확인 → worker와 delegate 2종 라이브 스모크)는 README
+  "Upgrading" 섹션.
   non-force 가드가 타 세션 워커를 두 번 실제로 보호했다 — `--force` 금지.
 - 스킬/독 파일은 프리앰블이 읽는 공유 자원 — 워커가 수정 중일 때 새 워커
   시작 금지.

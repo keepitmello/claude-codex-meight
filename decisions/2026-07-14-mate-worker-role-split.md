@@ -45,6 +45,6 @@ DECISION:
 다음 재시작 시(현 데몬은 role-aware, 신 CLI와 호환) — 재시작+스모크는
 운영자 pending gate.
 
-STATUS: adopted; flag mechanism superseded by 2026-07-14-mode-axis-collapse.md
-(--role 폐지, --mode design|review|delegate로 통합 — 계약 내용과 fail-closed
-설계는 존속)
+STATUS: adopted; flag mechanism superseded by 2026-07-14-mode-axis-collapse.md,
+then worker/delegate operating posture refined by
+2026-07-16-worker-delegate-split.md (계약/모델 직교와 shared SSOT 설계는 존속)

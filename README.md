@@ -18,19 +18,24 @@ answers structured questions, and keeps final reports small enough to make
 user-facing decisions without drowning in implementation detail.
 
 The core idea is that a frontier model wasted as a silent executor is capability
-left on the table. So meight offers two Codex session contracts:
+left on the table. So meight exposes four operating modes across three Codex
+session contracts:
 
 - A **mate** (`--mode design` or `--mode review`) is an independent challenger.
   It reviews plans with a real verdict, hunts defects adversarially, and joins blind design —
   its contract says *challenge the dispatcher, agreement is not the goal*.
-- A **worker** (`--mode delegate`) is a bounded implementer. It owns the
-  technical loop — code, tests, verification, runtime QA — and reports a
-  decision surface, escalating real ambiguity instead of guessing.
+- A **worker** (`--mode worker`) is a bounded participatory implementer. It owns
+  code, tests, verification, and runtime QA while the dispatcher retains the
+  external review chain.
+- A **delegate** (`--mode delegate`) owns implementation and fresh-context
+  independent review end to end while the dispatcher stays outside technical
+  context. Hard-gated, money-path, and frozen dispatcher-review-chain work
+  fails closed back to worker mode.
 
-Mate and worker name the session's contract, not the model; the mode picks the
+Mate, worker, and delegate name the session contract, not the model; the mode picks the
 contract, and `--model` picks the brain. The dispatcher keeps direction,
-arbitration, integration, and final sign-off; nothing merges on a mate's or
-worker's word alone.
+arbitration, integration, and final sign-off; nothing merges on a mate's,
+worker's, or delegate's word alone.
 
 ```text
    dispatcher agent   <->   Codex mate(s) / worker(s)
@@ -103,7 +108,7 @@ Compared with tmux/exec wrappers:
 | Two-way conversation | no | no | structured `QUESTION:` -> exit 3 -> `reply` |
 | Result delivery | scrape | tool return | exit-code contract + result files |
 | Machine-readable reports | no | wrapper-specific | `--report decision` via `output_schema` |
-| Session contracts | no | no | `--mode design\|review\|delegate`, harness-injected |
+| Session contracts | no | no | `--mode design\|review\|worker\|delegate`, harness-injected |
 
 And because every judgment lands on disk — digests, decisions, preferences,
 lessons — the pairing gets more personal over time: the dispatcher learns
@@ -126,7 +131,7 @@ daemon by default (`$MEIGHT_HOME`, `$XDG_STATE_HOME/meight`, or `~/.meight`)
 while isolating worker state per repo under `repos/<repo-key>/`.
 
 ```bash
-meight start impl-1 --mode delegate --report decision --model luna --effort xhigh --fast \
+meight start impl-1 --mode worker --report decision --model luna --effort xhigh --fast \
   --brief-file - --cwd ~/my-repo <<'EOF'
 Implement X in src/foo.py. Existing pattern: see src/bar.py:42.
 Verify with: pytest tests/test_foo.py.
@@ -184,7 +189,7 @@ EOF
 For trivial, short, low-risk tasks, one-shot dispatch is available:
 
 ```bash
-meight dispatch tiny-1 --mode delegate --report decision --sandbox ro \
+meight dispatch tiny-1 --mode worker --report decision --sandbox ro \
   --brief "Check whether README mentions LICENSE."
 ```
 
@@ -249,9 +254,11 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 A drop-in Claude orchestrator prompt ships as [`CLAUDE.md`](./CLAUDE.md). A
 Codex-as-orchestrator prompt ships as [`AGENTS.md`](./AGENTS.md). The full
 dispatcher-facing skill is [`skills/meight/`](./skills/meight/SKILL.md). The
-session contracts are [`skills/meight-mate/`](./skills/meight-mate/SKILL.md) and
-[`skills/meight-worker/`](./skills/meight-worker/SKILL.md), with their shared
-protocol in [`skills/meight-common/`](./skills/meight-common/CONTRACT.md).
+session contracts are [`skills/meight-mate/`](./skills/meight-mate/SKILL.md),
+[`skills/meight-worker/`](./skills/meight-worker/SKILL.md), and
+[`skills/meight-delegate/`](./skills/meight-delegate/SKILL.md), with their
+shared protocol in
+[`skills/meight-common/`](./skills/meight-common/CONTRACT.md).
 
 The default dispatcher is a Claude Code session. A Codex app/CLI session can
 dispatch through the same protocol via a thin `~/.codex/skills/meight` binding
@@ -281,9 +288,9 @@ protocol, two dispatcher runtimes.
 
 | Command | What it does |
 |---|---|
-| `meight start <name> --mode design\|review\|delegate [opts]` | Start a session and return immediately with the thread id. Supervised workflow entry point. |
+| `meight start <name> --mode design\|review\|worker\|delegate [opts]` | Start a session and return immediately with the thread id plus visible mode/contract posture. Supervised workflow entry point. |
 | `meight wait <name> --timeout SEC` | Checkpoint wait: return on terminal state, replyable QUESTION, daemon death, or timeout. Timeout leaves the worker running. |
-| `meight dispatch <name> --mode design\|review\|delegate [opts]` | One-shot: auto-start daemon -> capability check -> start -> wait -> print preferred result. Use only for trivial, short, low-risk work. |
+| `meight dispatch <name> --mode design\|review\|worker\|delegate [opts]` | One-shot: auto-start daemon -> capability check -> start -> wait -> print preferred result. Use only for trivial, short, low-risk work. |
 | `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | One-shot answer to a replyable question; inherits mode/report and omitted turn settings, applies explicit turn overrides, and prints the latest result. |
 | `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | Low-level: new turn on the same live thread; inherits mode/report and omitted turn settings, while explicit overrides become the defaults for later turns. |
 | `meight result <name> [--raw]` | Print `decision.md` when present; `--raw` prints raw `result.md`. |
@@ -294,11 +301,11 @@ protocol, two dispatcher runtimes.
 
 Common options:
 
-- `--mode design|review|delegate` is required on `start` and `dispatch`.
+- `--mode design|review|worker|delegate` is required on `start` and `dispatch`.
   `collab`, `collaborative`, and `delegated` are accepted aliases. Design and
-  review are the two collaborative modes (mate contract); delegate is the
-  delegation mode (worker contract). Design is for blind/anchored design,
-  review for verdict-first plan/diff review, and delegate for implementation.
+  review use the mate contract. Worker is participatory implementation with a
+  dispatcher-owned review chain. Delegate is full delegation with an internal
+  independent reviewer and strict forbidden-route fallback to worker.
 - `--report text|decision` defaults to `text`; `decision` writes
   `decision.json`/`decision.md`.
 - `--cwd` sets the worker workdir. Use separate git worktrees for overlapping
@@ -337,23 +344,31 @@ workers, and uses immutable `terminal_at` (`updated_at` only for legacy rows).
 After a daemon crash/restart, orphaned active rows become
 `failed`/`runtime_lost_detail`; hidden ephemeral turns are not resumed.
 
-## Upgrading An Old Daemon To Mode3 Support
+## Upgrading An Old Daemon To Mode4 Support
 
 The new CLI fails closed before `start` when `meight ping` does not advertise
-`capabilities=mode3` — and it verifies the normalized mode echo in start and
-follow responses, so even a daemon swapped mid-handshake cannot silently use
-the wrong contract. Drain and restart manually:
+`capabilities=mode4`. Every start/follow request carries epoch `mode4`, and
+every successful response atomically echoes normalized mode plus epoch. The CLI
+validates both, so even a same-token delegate daemon swapped mid-handshake
+cannot silently use the old contract. Drain and restart manually:
 
 1. Inspect `meight list --all-repos --json`; wait until no session across any
    repo is `starting`, `running`, or `needs_input`.
 2. Run non-force `meight shutdown`. If it refuses, finish draining; do not use
    `--force` for this migration.
-3. Start the daemon normally and confirm `meight ping` shows
-   `capabilities=mode3`.
-4. Start a throwaway read-only `--mode review` session. Confirm status records
-   `mode=review` and its saved preamble references both
-   `skills/meight-mate/SKILL.md` and `skills/meight-common/CONTRACT.md`.
-5. Resume real dispatches only after that smoke passes.
+3. Branch on LaunchAgent state. If loaded, run `meight launchd install --load`
+   and verify its bounded `bootout --wait` transfer selects the fresh daemon;
+   if not loaded, start the daemon normally.
+4. Confirm `meight ping` shows `capabilities=mode4`, then verify the new daemon
+   PID and socket identity.
+5. Run a throwaway read-only `--mode worker` smoke and verify status mode plus
+   `meight-worker` and common preamble paths.
+6. Run the two read-only delegate smokes: (a) an intentionally non-trivial
+   brief whose evidence records the fresh-context/read-only internal reviewer,
+   verdict, round count, and final decision surface; (b) a trivial brief that
+   explicitly waives review and records the exemption. Verify `mode=delegate`
+   and `meight-delegate` plus common preamble paths for both.
+7. Resume real dispatches only after every smoke passes.
 
 ## Good To Know
 

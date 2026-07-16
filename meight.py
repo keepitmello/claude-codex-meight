@@ -49,11 +49,13 @@ PRUNE_TOMBSTONE_PREFIX = ".meight-prune-"
 _SKILLS_ROOT = Path(__file__).resolve().parent / "skills"
 MODE_SKILL_PATHS = {
     "design": _SKILLS_ROOT / "meight-mate" / "SKILL.md",
-    "delegate": _SKILLS_ROOT / "meight-worker" / "SKILL.md",
+    "delegate": _SKILLS_ROOT / "meight-delegate" / "SKILL.md",
     "review": _SKILLS_ROOT / "meight-mate" / "SKILL.md",
+    "worker": _SKILLS_ROOT / "meight-worker" / "SKILL.md",
 }
 COMMON_CONTRACT_PATH = _SKILLS_ROOT / "meight-common" / "CONTRACT.md"
-DAEMON_CAPABILITIES = ["mode3"]
+PROTOCOL_EPOCH = "mode4"
+DAEMON_CAPABILITIES = [PROTOCOL_EPOCH]
 
 # Every session runs in an explicit mode; the CLI requires it so the contract cannot be skipped.
 MODE_MAP = {
@@ -63,6 +65,14 @@ MODE_MAP = {
     "delegate": "delegate",
     "delegated": "delegate",
     "review": "review",
+    "worker": "worker",
+}
+
+MODE_CONTRACT_POSTURES = {
+    "design": "collaborative-design",
+    "review": "adversarial-review",
+    "worker": "participatory",
+    "delegate": "full-delegation",
 }
 
 # Friendly names are a CLI contract, while the SDK requires ChatGPT-account model slugs.
@@ -128,7 +138,13 @@ def normalize_mode(mode: str | None) -> str | None:
 MODE_TEACHING_ERROR = """error: --mode is required. Pick one:
   --mode design    architect together: blind/anchored design, diagnosis, direction
   --mode review    verdict-first review of a plan/diff
-  --mode delegate  own the technical loop and report a decision surface"""
+  --mode worker    implement while the dispatcher owns the review chain
+  --mode delegate  own implementation and independent review end to end"""
+
+PROTOCOL_EPOCH_ERROR = (
+    f"protocol epoch mismatch: expected {PROTOCOL_EPOCH}; "
+    "restart or upgrade the CLI and daemon together"
+)
 
 # Initial turns receive runtime mode/report values plus mode/common SSOT paths.
 # All operating rules live in those files so the harness cannot drift into another contract.
@@ -174,6 +190,13 @@ def build_follow_reminder(mode: str, report: str = "text") -> str:
     return (f"[Harness reminder — mode: {normalized_mode}; report: {report} — continue following "
             f"the mode skill at `{MODE_SKILL_PATHS[normalized_mode]}` and shared contract at "
             f"`{COMMON_CONTRACT_PATH}`.{review_guidance}]\n")
+
+
+def contract_posture(mode: str) -> str:
+    normalized_mode = normalize_mode(mode)
+    if normalized_mode is None:
+        raise ValueError(f"invalid mode: {mode!r}")
+    return MODE_CONTRACT_POSTURES[normalized_mode]
 
 
 def install_computer_use_approval_bridge(codex, worker_name: str) -> None:
@@ -665,7 +688,7 @@ class Worker:
     def __init__(self, name: str, repo_home: Path, repo_root: str, repo_key: str, cwd: str, sandbox: str,
                  model: str | None, effort: str, service_tier: str | None = None,
                  thread_source: str = "subagent", thread_ephemeral: bool = True,
-                 mode: str = "delegate", report: str = "text"):
+                 mode: str = "worker", report: str = "text"):
         self.name = name
         self.repo_home = repo_home
         self.repo_root = repo_root
@@ -678,7 +701,7 @@ class Worker:
         self.service_tier = service_tier  # "default" unless --fast maps the worker to "priority"
         self.thread_source = thread_source
         self.thread_ephemeral = thread_ephemeral
-        self.mode = mode          # "design" | "review" | "delegate"; follow/reply turns inherit it
+        self.mode = mode          # canonical mode; follow/reply turns inherit it
         self.report = report      # "text" | "decision" (decision = output_schema-forced final report)
         self.thread = None       # openai_codex.Thread (kept while daemon lives -> reused for follow)
         self.handle = None       # TurnHandle
@@ -1581,6 +1604,11 @@ class Daemon:
 
     def _dispatch(self, req: dict) -> dict:
         cmd = req.get("cmd")
+        # The epoch gate is the first command-specific operation for start/follow.
+        # It must reject stale clients before imports, path resolution or creation,
+        # registry reservation, SDK startup, or turn start.
+        if cmd in {"start", "follow"} and req.get("protocol_epoch") != PROTOCOL_EPOCH:
+            return {"ok": False, "error": PROTOCOL_EPOCH_ERROR}
         try:
             if cmd == "ping":
                 return {
@@ -1805,7 +1833,12 @@ class Daemon:
             f"cwd={cwd} sandbox={sandbox_key} thread_source={thread_source_label} "
             f"ephemeral={thread_ephemeral} mode={mode}"
         )
-        return {"ok": True, "thread_id": thread.id, "mode": mode}
+        return {
+            "ok": True,
+            "thread_id": thread.id,
+            "mode": mode,
+            "protocol_epoch": PROTOCOL_EPOCH,
+        }
 
     def cmd_follow(self, req: dict) -> dict:
         name = req["name"]
@@ -1903,7 +1936,13 @@ class Daemon:
 
         self.touch_activity()
         self.log(f"follow worker={name} repo={repo_key} thread={thread_id} turn#{turns}")
-        return {"ok": True, "thread_id": thread_id, "turns": turns, "mode": w.mode}
+        return {
+            "ok": True,
+            "thread_id": thread_id,
+            "turns": turns,
+            "mode": w.mode,
+            "protocol_epoch": PROTOCOL_EPOCH,
+        }
 
     def cmd_steer(self, req: dict) -> dict:
         name = req["name"]
@@ -2162,21 +2201,39 @@ def require_mode(args) -> None:
         raise SystemExit(2)
 
 
-def require_mode3_capability(home: Path) -> dict:
-    """Fail closed when the live daemon predates the three-mode protocol."""
+def require_mode4_capability(home: Path) -> dict:
+    """Fail closed when the live daemon predates the four-mode protocol."""
     resp = send_request(home, {"cmd": "ping"}, timeout=10)
     if not resp.get("ok"):
         return resp
     capabilities = resp.get("capabilities")
-    if not isinstance(capabilities, list) or "mode3" not in capabilities:
-        return {"ok": False, "error": "daemon predates --mode review; restart required"}
+    if not isinstance(capabilities, list) or PROTOCOL_EPOCH not in capabilities:
+        return {"ok": False, "error": "daemon predates --mode worker; restart required"}
     return {"ok": True}
+
+
+def protocol_echo_matches(resp: dict, expected_mode: str | None) -> bool:
+    """Validate the atomic normalized-mode + epoch success response."""
+    return (
+        expected_mode is not None
+        and resp.get("mode") == expected_mode
+        and resp.get("protocol_epoch") == PROTOCOL_EPOCH
+    )
+
+
+def best_effort_interrupt(home: Path, req: dict, name: str) -> None:
+    cleanup = {"cmd": "interrupt", "name": name}
+    cleanup.update({key: req[key] for key in ("repo_root", "repo_key", "repo_home")})
+    try:
+        send_request(home, cleanup)
+    except (Exception, SystemExit):
+        pass
 
 
 def start_request(args, home: Path) -> dict:
     require_mode(args)
     validate_worker_name(args.name)
-    capability = require_mode3_capability(home)
+    capability = require_mode4_capability(home)
     if not capability.get("ok"):
         return capability
     # --fast/--no-fast is the user-facing knob; map it to a codex service tier.
@@ -2192,24 +2249,26 @@ def start_request(args, home: Path) -> dict:
         "main_thread": getattr(args, "main_thread", False),
         "mode": args.mode,
         "report": args.report,
+        "protocol_epoch": PROTOCOL_EPOCH,
     }
     req.update(request_repo_context(home))
     resp = send_request(home, req)
     expected_mode = normalize_mode(args.mode)
-    if resp.get("ok") and resp.get("mode") != expected_mode:
-        cleanup = {"cmd": "interrupt", "name": args.name}
-        cleanup.update({key: req[key] for key in ("repo_root", "repo_key", "repo_home")})
-        try:
-            send_request(home, cleanup)
-        except (Exception, SystemExit):
-            pass
-        return {"ok": False, "error": "legacy daemon accepted the start without mode3 support"}
+    if resp.get("ok") and not protocol_echo_matches(resp, expected_mode):
+        best_effort_interrupt(home, req, args.name)
+        return {"ok": False, "error": (
+            f"start protocol mismatch: expected mode={expected_mode} "
+            f"epoch={PROTOCOL_EPOCH}"
+        )}
     return resp
 
 
 def cmd_start(args, home: Path) -> int:
     resp = expect_ok(start_request(args, home))
-    print(f"started worker '{args.name}' thread={resp.get('thread_id')}")
+    print(
+        f"started worker '{args.name}' thread={resp.get('thread_id')} "
+        f"mode={resp.get('mode')} contract={contract_posture(resp.get('mode'))}"
+    )
     return 0
 
 
@@ -2227,6 +2286,7 @@ def follow_request(args, home: Path) -> dict:
     req = {
         "cmd": "follow", "name": args.name, "brief": read_brief(args),
         "no_preamble": args.no_preamble,
+        "protocol_epoch": PROTOCOL_EPOCH,
     }
     model = getattr(args, "model", INHERIT_TURN_SETTING)
     effort = getattr(args, "effort", INHERIT_TURN_SETTING)
@@ -2239,14 +2299,12 @@ def follow_request(args, home: Path) -> dict:
         req["service_tier"] = "priority" if fast else "default"
     req.update(request_repo_context(home))
     resp = send_request(home, req)
-    if resp.get("ok") and (expected_mode is None or resp.get("mode") != expected_mode):
-        cleanup = {"cmd": "interrupt", "name": args.name}
-        cleanup.update({key: req[key] for key in ("repo_root", "repo_key", "repo_home")})
-        try:
-            send_request(home, cleanup)
-        except (Exception, SystemExit):
-            pass
-        return {"ok": False, "error": "legacy daemon accepted the follow without mode3 support"}
+    if resp.get("ok") and not protocol_echo_matches(resp, expected_mode):
+        best_effort_interrupt(home, req, args.name)
+        return {"ok": False, "error": (
+            f"follow protocol mismatch: expected mode={expected_mode} "
+            f"epoch={PROTOCOL_EPOCH}"
+        )}
     return resp
 
 
@@ -2454,7 +2512,11 @@ def cmd_dispatch(args, home: Path) -> int:
     if not resp.get("ok"):
         print(f"error: {resp.get('error', 'unknown')}", file=sys.stderr)
         return 1
-    print(f"started worker '{args.name}' thread={resp.get('thread_id')}", flush=True)
+    print(
+        f"started worker '{args.name}' thread={resp.get('thread_id')} "
+        f"mode={resp.get('mode')} contract={contract_posture(resp.get('mode'))}",
+        flush=True,
+    )
     repo_home = repo_home_for_cli(home)
     code = wait_for_worker(home, repo_home, args.name, args.timeout, args.progress)
     worker_dir = repo_home / "workers" / args.name
@@ -2794,7 +2856,11 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--cwd")
         # No argparse `choices`: require_mode() is the single CLI validation source for
         # missing AND invalid values, so both cases print the same teaching error.
-        sp.add_argument("--mode", help="required: design|review|delegate (aliases: collab|collaborative|delegated)")
+        sp.add_argument(
+            "--mode",
+            help=("required: design|review|worker|delegate "
+                  "(aliases: collab|collaborative|delegated)"),
+        )
         sp.add_argument("--report", choices=["text", "decision"], default="text")
         sp.add_argument("--sandbox", default="full", choices=sorted(SANDBOX_MAP.keys()))
         sp.add_argument("--model")

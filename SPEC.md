@@ -1,7 +1,7 @@
 # claude-codex-meight SPEC
 
 `claude-codex-meight` is a harness that lets an orchestrator run multiple Codex
-mate and worker sessions in parallel.
+mate, worker, and delegate sessions in parallel.
 
 Core design goals:
 
@@ -119,7 +119,7 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   "daemon_pid": 12345,
   "cwd": "...",
   "sandbox": "workspace-write",
-  "mode": "design|review|delegate",
+  "mode": "design|review|worker|delegate",
   "report": "decision",
   "model": null,
   "effort": "medium",
@@ -151,9 +151,9 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   the worker is still attached to the live daemon and can accept `reply`;
   `"tool"` means an SDK tool or approval wait and is treated as active until
   stream-end cleanup.
-- `mode` is required on `start`/`dispatch`: canonical `design`, `review`, or
-  `delegate` after alias normalization. `collab`, `collaborative`, and
-  `delegated` are accepted aliases. `follow`/`reply` inherit mode.
+- `mode` is required on `start`/`dispatch`: canonical `design`, `review`,
+  `worker`, or `delegate` after alias normalization. `collab`, `collaborative`,
+  and `delegated` are accepted aliases. `follow`/`reply` inherit mode.
   Legacy rows with a `role` field or old long-form mode values must render
   without crashing.
 - `report` is `text` or `decision`.
@@ -173,10 +173,10 @@ The command table must match the `python3 meight.py --help` subcommand list exac
 | Command | Behavior |
 |---|---|
 | `daemon [--idle-timeout-sec SEC]` | Run the foreground global daemon. The orchestrator starts it in the background. If a live daemon already exists, return exit `1`. `0` disables idle shutdown. |
-| `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid, runtime `idle_timeout_sec`, `session_retention_sec`, and advertised `capabilities` including `mode3`. |
+| `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid, runtime `idle_timeout_sec`, `session_retention_sec`, and advertised `capabilities=["mode4"]`. |
 | `launchd install [--load]` / `launchd status` / `launchd uninstall` | Manage the optional macOS LaunchAgent. The plist uses `RunAtLoad=true` and crash-only `KeepAlive={SuccessfulExit=false}`. `install --load` non-force drains a live daemon, waits boundedly for its acknowledged PID/socket exit, runs `launchctl bootout --wait` with a subprocess timeout for a loaded job, writes/bootstraps the plist, and requires a fresh ping/PID. Active sessions or timeouts refuse transfer. |
-| `start <name> --mode design\|review\|delegate (--brief-file F\|- \| --brief TEXT) [--report text\|decision] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new hidden Codex session with `thread_start(ephemeral=True, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--mode` is required; `collab`, `collaborative`, and `delegated` are accepted aliases. Before sending `start`, the CLI pings the daemon and requires capability `mode3`; absence fails closed with `daemon predates --mode review; restart required`. Model aliases `sol`, `terra`, and `luna` normalize to `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`; other strings pass through. Defaults: `report=text`, `sandbox=full`, `effort=medium`, `cwd=current directory`, `thread_source=subagent`, `thread_ephemeral=true`, `service_tier=default`. `--report decision` supplies `output_schema`. `--main-thread` opts into a visible persistent user thread. `--fast` maps to service tier `priority`. Reject duplicate active names inside the same repo namespace. |
-| `dispatch <name> --mode design\|review\|delegate (--brief-file F\|- \| --brief TEXT) [start opts] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, capability-check, `start`, `wait`, then print `decision.md` or `result.md`. Mode is required. Default timeout is `1800` seconds. Exit code matches `wait`. |
+| `start <name> --mode design\|review\|worker\|delegate (--brief-file F\|- \| --brief TEXT) [--report text\|decision] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new hidden Codex session with `thread_start(ephemeral=True, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--mode` is required; `collab`, `collaborative`, and `delegated` are accepted aliases. Before sending `start`, the CLI requires capability `mode4`. The request carries `protocol_epoch=mode4`; success atomically echoes normalized mode plus epoch, both validated by the CLI. The visible start line includes `mode=<mode> contract=<posture>`. Model aliases `sol`, `terra`, and `luna` normalize to their current full slugs; other strings pass through. Defaults: `report=text`, `sandbox=full`, `effort=medium`, `cwd=current directory`, `thread_source=subagent`, `thread_ephemeral=true`, `service_tier=default`. `--report decision` supplies `output_schema`. `--main-thread` opts into a visible persistent user thread. `--fast` maps to service tier `priority`. Reject duplicate active names inside the same repo namespace. |
+| `dispatch <name> --mode design\|review\|worker\|delegate (--brief-file F\|- \| --brief TEXT) [start opts] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, capability-check, `start`, `wait`, then print `decision.md` or `result.md`. Mode is required. Default timeout is `1800` seconds. Exit code matches `wait`. |
 | `follow <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble]` | Start a new turn on the same thread only for a session waiting on a final `QUESTION:` while attached to the current daemon. It takes no mode flag; it inherits recorded `mode` and `report` and receives a one-line reminder. Omitted model/effort/Fast options inherit the current worker settings. Explicit options apply at the new-turn boundary and, after successful turn creation, replace the settings recorded in `status.json` for later turns. Terminal sessions release their SDK runtime, and hidden sessions are not resumed from disk after restart. |
 | `reply <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot answer path: `follow`, `wait`, then print the latest preferred result. It has the same mode/report inheritance and per-turn setting override semantics as `follow`. Default timeout is `1800` seconds. |
 | `steer <name> TEXT` | Inject mid-turn text into a running turn. Return an error unless the worker is currently running. |
@@ -197,14 +197,17 @@ selects the session contract and skill:
 
 - `design` (`collab` / `collaborative` aliases):
   `skills/meight-mate/SKILL.md` for blind or anchored design and diagnosis.
-- `delegate` / `delegated`: `skills/meight-worker/SKILL.md` for bounded
-  implementation and verification.
 - `review`: `skills/meight-mate/SKILL.md` for verdict-first plan, diff,
   adversarial, and doctrine review.
+- `worker`: `skills/meight-worker/SKILL.md` for participatory bounded
+  implementation with the dispatcher-owned external review chain.
+- `delegate` / `delegated`: `skills/meight-delegate/SKILL.md` for full
+  delegation with internal fresh-context independent review.
 
-Design and review are the two collaborative modes and create mate sessions;
-delegate is the delegation mode and creates a worker session, with the
-dispatcher acting as PM.
+Design and review create mate sessions. Worker keeps the dispatcher in the
+technical/review chain. Delegate removes the dispatcher from technical context
+and fails closed to worker for hard gates, money paths, or frozen dispatcher
+review chains.
 
 Both preambles also inject `skills/meight-common/CONTRACT.md`, the sole shared
 source for decision fields, question routing, evidence artifacts, sandbox, and
@@ -309,16 +312,16 @@ the worker's report mode.
 - Socket protocol: one JSON request line (maximum 1 MiB) and one JSON response line.
   Example: `{"cmd":"start",...}` -> `{"ok":true}` or
   `{"ok":false,"error":"..."}`.
-- `ping` and `runtime_status` responses advertise
-  `"capabilities": ["mode3"]`. The CLI must observe that capability before it
-  sends a three-mode start request.
-- Successful `start` and `follow` responses echo the canonical selected mode.
-  The CLI validates the echo and fails closed with a best-effort interrupt if
-  a swapped legacy daemon accepts the request without the expected mode.
-- The daemon validates missing or unknown mode before imports, directory
-  creation, registry reservation, SDK startup, or any other start side effect.
-  Direct socket clients cannot bypass this boundary or receive an implicit
-  default contract.
+- `ping` and `runtime_status` responses advertise only
+  `"capabilities": ["mode4"]`. Start/follow requests carry
+  `"protocol_epoch": "mode4"`.
+- The daemon validates epoch before imports, path resolution or creation,
+  registry reservation, SDK startup, turn start, or any other start/follow
+  side effect. It then validates start mode before start side effects.
+- Successful `start` and `follow` responses atomically echo canonical mode and
+  epoch. The CLI validates both and fails closed with a best-effort interrupt
+  if a swapped daemon accepts the request under another contract, including a
+  same-token `delegate` downgrade.
 - Every name-bearing CLI/socket command accepts only a 1-128 character worker
   name made from ASCII letters/digits/`._-`, starting with a letter or digit.
   The daemon derives and verifies repo context before selecting state and
@@ -417,23 +420,24 @@ The automated suite is:
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-It covers all three mode-to-skill mappings, missing/invalid mode rejection at
-the CLI and daemon boundaries before side effects, follow/reply mode
-inheritance, the `MODE` status cell, legacy rows with role or old mode values,
-negative capability handshake with no start request or state creation, mode
-echo fail-closed cleanup, positive handshake with canonical mode in status,
+It covers all four mode-to-skill mappings, aliases, missing/invalid mode and
+missing/stale epoch rejection before side effects, follow/reply mode
+inheritance, start posture output, the `MODE` status cell, legacy rows with role
+or old mode values, negative capability handshake with no start request or
+state creation, mode+epoch fail-closed cleanup (including swapped same-token
+delegate), positive handshake with canonical mode in status,
 private state/socket permissions, path/name/symlink rejection, request bounds,
 immutable terminal timestamps, orphan reconciliation, retention safety/races,
 launchd payload/routing/ownership transfer, and accept-loop exit classification.
 
 1. Start `daemon` in the background with a temporary `MEIGHT_HOME`, then confirm
-   `ping` returns capability `mode3` and the socket lives under that global home.
+   `ping` returns capability `mode4` and the socket lives under that global home.
 2. Run:
-   `start t1 --mode delegate --brief "create /tmp/fleet-test/hello.txt with content 'hi', then reply DONE" --cwd /tmp/fleet-test --sandbox ws`
+   `start t1 --mode worker --brief "create /tmp/fleet-test/hello.txt with content 'hi', then reply DONE" --cwd /tmp/fleet-test --sandbox ws`
    Then `wait t1` must exit `0`; the file must exist; repo-scoped `status.json`,
    `events.log`, and `result.md` must agree.
 3. Steering test:
-   `start t2 --mode delegate --brief "Count from 1 to 50 slowly, one number per line, pausing to think between each"`
+   `start t2 --mode worker --brief "Count from 1 to 50 slowly, one number per line, pausing to think between each"`
    While running, send `steer t2 "Stop counting, just reply STEERED"` and
    confirm the result reflects the steer.
 4. Interrupt test: interrupt a long-running task and confirm
@@ -479,7 +483,7 @@ launchd payload/routing/ownership transfer, and accept-loop exit classification.
 17. Accept-loop unit test: intentional close returns zero; unexpected accept
     failure returns nonzero for crash supervision.
 
-### Safe Mode3 Migration Checklist
+### Safe Mode4 Migration Checklist
 
 This is operator-run after the old daemon finishes serving current sessions;
 implementation must not restart it.
@@ -488,12 +492,18 @@ implementation must not restart it.
    and `needs_input` row across all repo namespaces.
 2. Run non-force `meight shutdown`. Its daemon-wide active-session guard is the
    enforcement backstop; do not use `--force` for migration.
-3. Start the new daemon normally and require `meight ping` to advertise
-   `capabilities=mode3`.
-4. Start a throwaway `--mode review --sandbox ro` session.
-5. Verify its status records `"mode": "review"` and its saved `brief.md`
-   preamble names `skills/meight-mate/SKILL.md` and
-   `skills/meight-common/CONTRACT.md` before real dispatches resume.
+3. Branch on LaunchAgent state. Loaded uses `meight launchd install --load` and
+   verifies bounded `bootout --wait` ownership transfer; unloaded uses normal
+   daemon startup.
+4. Require `meight ping` to advertise `capabilities=mode4` and verify the fresh
+   daemon PID and socket identity.
+5. Run a throwaway read-only worker smoke and verify status mode plus
+   `meight-worker` and common preamble paths.
+6. Run two read-only delegate smokes: an intentionally non-trivial brief whose
+   evidence records fresh-context/read-only internal review, verdict, round
+   count, and final decision surface; and a trivial brief with explicit review
+   exemption whose evidence records the waiver. Verify delegate/common
+   preamble paths and `mode=delegate` before real dispatches resume.
 
 ## Scope-Outs
 

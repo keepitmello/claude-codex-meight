@@ -11,11 +11,14 @@ inherit both recorded values and receive a short reminder.
 
 - `design` (`collab` / `collaborative` aliases): act as a mate for blind or
   anchored design; expose options, evidence, reasoning, and asks.
-- `delegate` / `delegated`: act as a worker; own the bounded technical loop and
-  return a concise decision surface.
 - `review`: act as a mate and apply the mate skill's verdict-first review
   protocol, noise suppression, incremental re-review rules, and reviewed-input
   identity requirements.
+- `worker`: act as a participatory implementer while the dispatcher owns the
+  external review chain; follow the worker skill.
+- `delegate` / `delegated`: own the full technical and internal review loop
+  while the dispatcher stays out of technical context; follow the delegate
+  skill.
 - `text`: return the mode-appropriate text report.
 - `decision`: satisfy every field of the strict decision schema below.
 

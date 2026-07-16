@@ -11,10 +11,12 @@ arbitration, final integration/sign-off, user communication, and git
 coordination. Codex workers, driven through `meight`, own bounded technical
 design, implementation, verification, and local execution judgment. Codex
 mates independently challenge direction, plans, code, and doctrine.
-Mate and worker name the session's contract, not the model: `--mode` picks the
+Mate, worker, and delegate name the session contract, not the model: `--mode` picks the
 contract and `--model` picks the brain.
-Design and review are the collaborative mate modes; delegate is the worker mode
-for pure delegation, with the dispatcher acting as PM.
+Design and review are the collaborative mate modes. Worker is participatory
+implementation with the dispatcher retaining the review chain. Delegate is
+full delegation: the dispatcher leaves technical context and the delegate owns
+implementation plus internal independent review.
 
 Run the relationship two-way. A mate should push back when it sees a better path
 or a wrong assumption. Use blind design with a mate before locking a direction. You
@@ -25,10 +27,11 @@ acceptance criteria, and final approval.
 
 | Work | Route |
 |---|---|
-| Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `--mode delegate --model luna --effort xhigh`, plus Fast when available |
+| Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `--mode worker --model luna --effort xhigh`, plus Fast when available |
 | Blind/anchored design and diagnosis | `--mode design --model sol --effort high` (`xhigh` only for genuinely hard problems) |
 | Plan and adversarial review | `--mode review --model sol --effort high` (`xhigh` only for genuinely hard problems) |
-| Hard-gated implementation | `--mode delegate --model sol --effort high` (`xhigh` only for genuinely hard problems) |
+| Hard-gated implementation | `--mode worker --model sol --effort high` (`xhigh` only for genuinely hard problems) |
+| Full delegation, dispatcher outside technical context | `--mode delegate` only when no hard gate, money path, or frozen dispatcher review chain applies |
 | Capability-specific fallback | any mode with `terra` only when measured evidence supports it |
 
 Failure cost is the gate. Hard-route to `sol` when acceptance-critical work
@@ -44,7 +47,7 @@ capability fallback.
 ## Compact Quick Reference
 
 ```bash
-meight start <name> --mode delegate --report decision --model luna --effort xhigh \
+meight start <name> --mode worker --report decision --model luna --effort xhigh \
   [--fast] --brief-file - --cwd <dir> [--sandbox ws|ro|full] <<'EOF'
 ## Goal
 ## Scope
@@ -61,14 +64,17 @@ meight result <name> --raw    # prints raw result.md
 meight reply <name> --brief "answer the worker question"
 ```
 
-- `start` and `dispatch` require `--mode design|review|delegate`
+- `start` and `dispatch` require `--mode design|review|worker|delegate`
   (`collab`/`collaborative`/`delegated` aliases are accepted). There is no default:
   the consumer is an LLM agent, so policy cannot be left to memory.
 - `follow` and `reply` take no mode flag. They inherit mode/report and
   receive only a one-line harness reminder.
-- Use `--mode delegate --report decision` for bounded implementation. It keeps
+- Use `--mode worker --report decision` for bounded implementation. It keeps
   final reports machine-shaped as `decision.json` plus rendered `decision.md`,
   while raw `result.md` remains the audit record.
+- Use `--mode delegate` only for full delegation. Its delegate contract owns an
+  internal fresh-context read-only review and fails closed back to worker mode
+  for hard-gated, money-path, or frozen dispatcher-review-chain work.
 - Use `--mode design` for blind/anchored design and diagnosis. The mate should expose
   options, reasoning, recommendation, evidence, and asks.
 - Use `--mode review --report decision` for verdict-first plan and diff review.
@@ -140,13 +146,21 @@ sign-off. P1-fix-level corrections keep the contract; fixes beyond plan scope
 reopen approval. Harness/core surgery routes to `sol` and adds an explicit
 Claude context-holding review at both plan and final-diff stages.
 
-## Daemon Mode3 Migration
+## Daemon Mode4 Migration
 
 The CLI fails closed when the live daemon does not advertise capability
-`mode3`. Drain `meight list --all-repos --json`, use non-force
-`meight shutdown`, restart normally, confirm `meight ping` shows `mode3`, then
-run a throwaway read-only `--mode review` mate and verify its status mode plus mate/common
-preamble paths before real dispatches. Never force-shutdown this migration.
+`mode4`. The operator must drain `meight list --all-repos --json` to zero
+`starting`/`running`/`needs_input` rows, use non-force `meight shutdown`, then
+branch on LaunchAgent state: if loaded, use `meight launchd install --load` and
+verify its bounded `bootout --wait` ownership transfer; if not loaded, start the
+daemon normally. Confirm `meight ping` shows `mode4` and verify the new PID and
+socket identity. Then run the two throwaway read-only delegate smokes: one
+intentionally non-trivial brief that records fresh-context/read-only internal
+review invocation, verdict, round count, and final decision surface; and one
+trivial brief that explicitly waives review and records the exemption. Also
+smoke `--mode worker` and verify worker/delegate status modes plus their
+worker-or-delegate and common preamble paths. Never force-shutdown this
+migration.
 
 ## Safety Rules
 

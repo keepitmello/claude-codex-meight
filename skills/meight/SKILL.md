@@ -1,6 +1,6 @@
 ---
 name: meight
-description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-meight). Route blind and anchored design to design, verdict-first plan/diff review to review, and bounded implementation and verification to delegate; require explicit --mode, supervise with start/status/result, and use one-shot dispatch only for trivial safe work. Use whenever a dispatcher delegates work to Codex. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임"
+description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-meight). Route blind and anchored design to design, verdict-first plan/diff review to review, participatory bounded implementation to worker, and dispatcher-free full delegation to delegate; require explicit --mode, supervise with start/status/result, and use one-shot dispatch only for trivial safe work. Use whenever a dispatcher routes work to Codex. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임"
 ---
 
 # meight (claude-codex-meight)
@@ -16,9 +16,9 @@ points back to this file. Prefer the Claude dispatcher for long multi-phase or
 direction-sensitive work: a cross-model dispatcher decorrelates blind spots
 with the Codex workers it supervises.
 
-Contract details live in [`skills/meight-mate/SKILL.md`](../meight-mate/SKILL.md)
-and [`skills/meight-worker/SKILL.md`](../meight-worker/SKILL.md). Their shared
-protocol lives in
+Contract details live in [`skills/meight-mate/SKILL.md`](../meight-mate/SKILL.md),
+[`skills/meight-worker/SKILL.md`](../meight-worker/SKILL.md), and
+[`skills/meight-delegate/SKILL.md`](../meight-delegate/SKILL.md). Their shared protocol lives in
 [`skills/meight-common/CONTRACT.md`](../meight-common/CONTRACT.md). The harness
 preamble injects the mode-selected skill plus the common contract. This skill
 is the dispatcher-facing SSOT for routing and supervision.
@@ -28,12 +28,14 @@ is the dispatcher-facing SSOT for routing and supervision.
 - The dispatcher owns WHAT, WHY, priority, scope, UX, user-visible behavior,
   risk appetite, acceptance criteria, final approval, user communication,
   integration, and git coordination.
-- A Codex worker owns bounded technical design, implementation, verification,
-  and local execution choices. A Codex mate independently challenges plans,
-  direction, code, and doctrine.
-- Mate and worker name the session's contract, not the model: `--mode` picks
+- A Codex worker owns participatory bounded technical design, implementation,
+  verification, and local execution choices while the dispatcher owns the
+  external review chain. A delegate owns implementation and internal review
+  end to end while the dispatcher stays outside technical context. A Codex
+  mate independently challenges plans, direction, code, and doctrine.
+- Mate, worker, and delegate name the session contract, not the model: `--mode` picks
   the contract and `--model` picks the brain.
-- Both contracts are teammate contracts, not silent executors. They can push back with a
+- All three contracts are teammate contracts, not silent executors. They can push back with a
   structured `QUESTION:` when they see a better direction, a wrong assumption,
   or a decision outside their ownership.
 - Verification owns the outcome. A worker's "done" is a claim; relevant tests
@@ -46,7 +48,7 @@ is the dispatcher-facing SSOT for routing and supervision.
 
 ## Modes Are Required
 
-`start` and `dispatch` require `--mode design|review|delegate`. `collab`,
+`start` and `dispatch` require `--mode design|review|worker|delegate`. `collab`,
 `collaborative`, and `delegated` are accepted aliases. There is no default; omitting the
 flag is an error with a teaching message. The consumer is an LLM agent, so
 policy cannot be forgotten or left to memory.
@@ -54,23 +56,28 @@ policy cannot be forgotten or left to memory.
 - `--mode design`: use for blind or anchored design,
   diagnosis, architecture, alternatives, tradeoffs, planning, and direction
   setting. The session is a mate and exposes options and reasoning.
-- `--mode delegate`: use for bounded implementation, fixes, tests,
-  verification, runtime/browser QA, computer use, and exploration. The session
-  is a worker and owns the technical loop.
 - `--mode review`: use for verdict-first plan, diff, adversarial, and doctrine
   review. The session is a mate with explicit review duties.
+- `--mode worker`: use for bounded implementation, fixes, tests, verification,
+  runtime/browser QA, computer use, and exploration while the dispatcher owns
+  the external review chain.
+- `--mode delegate`: use only for full delegation when the dispatcher should
+  leave technical context. The delegate owns internal fresh-context read-only
+  review and fails closed to worker for hard gates, money paths, or frozen
+  dispatcher review chains.
 - `follow` and `reply` take no mode flag. They inherit the session's recorded
   mode/report and receive only a one-line harness reminder instead of the full
   preamble. They also inherit model, effort, and Fast tier when those flags are
   omitted. Explicit `--model`, `--effort`, or `--fast`/`--no-fast` values apply
   to the new turn and become the values inherited by later turns.
 
-Design and review are the two collaborative modes and use the mate contract;
-delegate is the delegation mode and uses the worker contract. Canonical mode is
-recorded in `status.json` and shown in the `MODE` column.
+Design and review use the mate contract; worker is participatory implementation;
+delegate is full delegation. Canonical mode is recorded in `status.json` and
+shown in the `MODE` column.
 The CLI performs a capability handshake before sending `start`. If the live
-daemon does not advertise capability `mode3`, start fails closed with
-`daemon predates --mode review; restart required`.
+daemon does not advertise capability `mode4`, start fails closed. Every
+start/follow carries epoch `mode4`; success must atomically echo normalized mode
+and epoch or the CLI best-effort interrupts and exits nonzero.
 
 ## Default: Start, Then Check Status
 
@@ -81,7 +88,7 @@ background work. Do not keep a long-running background checkpoint shell as the
 normal supervision loop.
 
 ```bash
-meight start <name> --mode delegate --report decision --brief-file - --cwd <dir> \
+meight start <name> --mode worker --report decision --brief-file - --cwd <dir> \
   [--sandbox ws|ro|full, default full] [--effort low|medium|high|xhigh|ultra|max, default medium] <<'EOF'
 ## Goal       <what this enables + success criteria>
 ## Scope      <file/dir boundary; do not exceed>
@@ -104,8 +111,8 @@ and service make Fast available.
 
 | Model | Use for | Typical effort |
 |-------|---------|----------------|
-| `luna` | Default model for delegate-mode implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `xhigh` + `--fast` when available |
-| `sol` | Default model for design/review direction and verdict work, plus hard-gated delegate-mode implementation | `high`; reserve `xhigh` for genuinely hard problems — the dispatcher judges what qualifies |
+| `luna` | Default model for worker-mode implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `xhigh` + `--fast` when available |
+| `sol` | Default model for design/review direction and verdict work, plus hard-gated worker-mode implementation | `high`; reserve `xhigh` for genuinely hard problems — the dispatcher judges what qualifies |
 | `terra` | No default ownership; capability-specific fallback when measured evidence supports it | task-specific |
 
 `high` is the sol default, not a floor: `high` can overthink, so the dispatcher
@@ -153,7 +160,7 @@ stopped background shell as a shell lifecycle event, not a worker failure.
 Use one-shot dispatch only when supervision is not worth it.
 
 ```bash
-meight dispatch tiny-1 --mode delegate --report decision --sandbox ro \
+meight dispatch tiny-1 --mode worker --report decision --sandbox ro \
   --brief "Check whether README mentions LICENSE."
 ```
 
@@ -167,7 +174,7 @@ and no other workers are active.
 Default report mode is `--report text`: the final message is written to
 `result.md`.
 
-Use `--report decision` for bounded delegated work:
+Use `--report decision` for bounded worker or delegate work:
 
 - The SDK turn uses `output_schema`.
 - The daemon writes `decision.json` and rendered `decision.md` for each turn.
@@ -179,8 +186,9 @@ The exact schema and field semantics live only in the
 [shared contract](../meight-common/CONTRACT.md). `outcome=needs_decision`
 routes to `needs_input` / exit `3`, prioritizing the first user-targeted entry.
 
-Recommended pairing: `--mode delegate --report decision` for bounded
-implementation, so dispatcher context stays clean for user communication.
+Recommended pairing: `--mode worker --report decision` for bounded
+implementation. Use `--mode delegate --report decision` only when intentionally
+removing the dispatcher from technical context under the delegate contract.
 
 ## Structured QUESTION Routing
 
@@ -356,7 +364,7 @@ skill. Repo-specific code patterns belong in that repo's own docs, not here.
 For this operating model, record enough structured data to measure:
 
 - plan-review round count and the cause of each `REVISE`;
-- mode (`design`, `review`, or `delegate`) for every run record;
+- mode (`design`, `review`, `worker`, or `delegate`) for every run record;
 - escalation rate as rerouted tasks divided by `luna`-started tasks, with
   ordinary `QUESTION:` events tracked separately;
 - the escalation axis (`luna→sol` or `luna→terra`) and the hard-gate clause
@@ -424,7 +432,7 @@ When a frontend worker reports `IMPLEMENTED, FRESH-EYES PENDING`, dispatch an
 independent comprehension reviewer before accepting `VERIFIED`. Protocol and
 verbatim reviewer prompt: `~/.codex/skills/frontend-ux-router/references/fresh-eyes-review.md`.
 
-- One-shot `--mode delegate --model luna` (a comprehension check, not a verdict
+- One-shot `--mode worker --model luna` (a comprehension check, not a verdict
   review) with only: the persona line, screenshot paths (or route),
   and the reviewer prompt. Zero implementation context — no brief, no diff,
   no explanations. Contamination invalidates the review.
@@ -479,7 +487,7 @@ used:
 Meight runtime code is loaded into the long-lived daemon process. After changing
 `meight.py`, restart the daemon before trusting behavior from new workers.
 
-### Mode3 Migration And Post-Restart Smoke
+### Mode4 Migration And Post-Restart Smoke
 
 Do not restart while any repo namespace has an active or `needs_input` session.
 The operator performs this checklist manually:
@@ -489,17 +497,24 @@ The operator performs this checklist manually:
 2. Run non-force `meight shutdown`. Its daemon-wide active-session guard must
    refuse shutdown if the drain check missed anything; do not use `--force` for
    this migration.
-3. Start the new daemon by the installation's normal mechanism and run
-   `meight ping`. Confirm `capabilities=mode3`.
-4. Start a throwaway read-only session with `--mode review`.
-5. Confirm `meight status <name> --json` records `"mode": "review"` and inspect
-   its `brief.md` to verify the preamble names
-   `skills/meight-mate/SKILL.md` plus `skills/meight-common/CONTRACT.md`.
-6. Only then dispatch real work. Remove or retain the throwaway disk artifacts
+3. Branch on LaunchAgent state. When loaded, use `meight launchd install
+   --load` and verify its bounded `bootout --wait` ownership transfer. When not
+   loaded, start the daemon normally.
+4. Run `meight ping`, confirm `capabilities=mode4`, and verify the new daemon PID
+   plus socket identity.
+5. Run a throwaway read-only `--mode worker` smoke. Confirm status mode and the
+   `meight-worker` plus common preamble paths.
+6. Run two throwaway read-only delegate smokes: (a) an intentionally
+   non-trivial brief whose evidence records the internal reviewer invocation,
+   fresh-context/read-only posture, verdict, round count, and final decision
+   surface; (b) a trivial brief that explicitly waives review and records the
+   exemption. Confirm both status modes and `meight-delegate` plus common
+   preamble paths.
+7. Only then dispatch real work. Remove or retain the throwaway disk artifacts
    according to the normal operator policy; no forced cleanup is required.
 
 The implementation worker must document this procedure but must not execute it
-against the old daemon during the mode3 rollout.
+against the old daemon during the mode4 rollout.
 
 Useful checks:
 

@@ -20,7 +20,7 @@ artifacts, sandbox rules, and git discipline.
 - Keep design and review work read-only unless the brief explicitly grants a
   bounded write scope.
 - Do not implement under this contract. Hard-gated implementation by `sol`
-  still uses `--mode delegate`; model selection is independent of the session
+  still uses `--mode worker`; model selection is independent of the session
   contract.
 - Name what is known, unknown, inferred, and what evidence would close a
   material gap.

@@ -10,10 +10,11 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
 2. **Exit codes are the API.** `0` done, `2` failed/interrupted, `3` worker has a question, `4` daemon dead, `1` timeout. An agent branches on these without parsing prose.
 3. **One call per intent (one-shot), or a supervised loop.** `dispatch` = (ensure daemon → start → wait → print result) and `reply` = (follow → wait → print last-turn result) are symmetric single background calls — one-shot driving costs the same tool calls as a native subagent, which suits trivial work. For substantial work the orchestrator instead uses `start` plus `wait`, so the door to `status`/`steer` stays open mid-run; how often it actually checks is its judgment, not a fixed cadence. Same pull/push primitives — just sampled when it matters instead of a single fire-and-forget.
 4. **Mode is harness policy, not memory.** `start` and `dispatch` require
-   `--mode design|review|delegate`. Design and review are the two collaborative
-   modes and select the independent
-   challenger (`mate`) contract; delegate selects the implementer (`worker`)
-   contract. The preamble injects the mode-selected skill plus
+   `--mode design|review|worker|delegate`. Design and review select the
+   independent challenger (`mate`) contract. Worker selects participatory
+   implementation with a dispatcher-owned review chain. Delegate selects full
+   delegation with internal independent review. The preamble injects the
+   mode-selected skill plus
    `meight-common/CONTRACT.md`. `follow`/`reply` inherit mode and report; they
    also inherit model/effort/service tier unless the caller overrides them at
    the new-turn boundary. Model stays independent: in practice mate work runs
@@ -54,14 +55,16 @@ meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  g
 
 - **Daemon home** = `$MEIGHT_HOME` if set, otherwise `$XDG_STATE_HOME/meight` or `~/.meight` → one daemon shared across repos.
 - **Repo state home** = `<daemon-home>/repos/<repo-key>/`, where `<repo-key>` is a stable slug plus hash of the invoking repo root. `--cwd` still controls the worker execution directory; it does not change the repo namespace for status/result lookup.
-- **Mode3 capability boundary** = `ping` and `runtime_status` advertise
-  `capabilities=["mode3"]`. A new CLI checks this before sending `start`; an old
-  daemon therefore fails closed instead of silently loading the wrong skill.
-  The daemon independently rejects missing or unknown mode before imports,
-  directory creation, registry reservation, or SDK startup.
+- **Mode4 protocol boundary** = `ping` and `runtime_status` advertise only
+  `capabilities=["mode4"]`. Every start/follow request carries epoch `mode4`;
+  the daemon validates it before imports, path resolution or creation,
+  registry reservation, SDK startup, or turn start. Successful responses echo
+  normalized mode plus epoch atomically, and the CLI interrupts and fails on
+  either mismatch.
 - **Mode contract path** = `design` and `review` map to
-  `skills/meight-mate/SKILL.md`; `delegate` maps to
-  `skills/meight-worker/SKILL.md`; all load `skills/meight-common/CONTRACT.md`.
+  `skills/meight-mate/SKILL.md`; `worker` maps to
+  `skills/meight-worker/SKILL.md`; `delegate` maps to
+  `skills/meight-delegate/SKILL.md`; all load `skills/meight-common/CONTRACT.md`.
   Status persists only the canonical mode. Legacy rows with a role field or
   long-form mode values remain renderable.
 - The SDK spawns `codex app-server --listen stdio://` and speaks JSON-RPC. Meight owns one SDK runtime per active worker so terminal workers can close their app-server, MCP subprocesses, and stdio file descriptors without waiting for daemon shutdown.
@@ -133,10 +136,11 @@ main orchestrator.
 
 | Work | Route |
 |---|---|
-| Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `--mode delegate --model luna --effort xhigh`, plus Fast when available |
+| Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `--mode worker --model luna --effort xhigh`, plus Fast when available |
 | Blind/anchored design and diagnosis | `--mode design --model sol --effort high` (`xhigh` only for genuinely hard problems) |
 | Plan and adversarial review | `--mode review --model sol --effort high` (`xhigh` only for genuinely hard problems) |
-| Hard-gated implementation | `--mode delegate --model sol --effort xhigh` |
+| Hard-gated implementation | `--mode worker --model sol --effort xhigh` |
+| Full delegation outside dispatcher technical context | `--mode delegate` only outside hard gates, money paths, and frozen dispatcher review chains |
 | Capability-specific fallback | any mode with `terra`; no default ownership, re-promotable on measured evidence |
 
 - **Failure cost is the hard gate**: route to `sol` when acceptance-critical
@@ -195,14 +199,17 @@ State-machine changes should re-run the fake-event scenarios (tool-wait→stream
 
 ## Operational notes
 
-- **Editing `meight.py` does not affect a running daemon.** For the mode3
+- **Editing `meight.py` does not affect a running daemon.** For the mode4
   migration, first inspect `meight list --all-repos --json` and drain all
   active/`needs_input` sessions across every namespace. Then use non-force
-  `meight shutdown`; its daemon-wide guard is the enforcement backstop. After
-  restart, require `meight ping` capability `mode3`, then run a throwaway
-  read-only `--mode review` start and verify both its status mode and saved
-  mate/common preamble paths before real work. Do not use forced shutdown for
-  this migration.
+  `meight shutdown`; its daemon-wide guard is the enforcement backstop. Branch
+  on LaunchAgent state: loaded uses `meight launchd install --load` and its
+  bounded `bootout --wait` transfer, unloaded uses normal startup. Require a
+  fresh PID/socket identity and `meight ping` capability `mode4`. Then run a
+  read-only worker smoke plus both delegate smokes: non-trivial internal
+  fresh-context/read-only review with verdict/round evidence, and trivial
+  explicit review exemption. Verify saved mode-specific/common preamble paths
+  before real work. Do not use forced shutdown for this migration.
 - Optional LaunchAgent support lives behind `meight launchd install --load`. It uses `RunAtLoad=true` plus crash-only `KeepAlive={SuccessfulExit=false}`: unexpected accept/socket failure exits nonzero and restarts, while acknowledged shutdown exits zero and stays stopped. The daemon also exits nonzero if the published socket pathname is deleted or replaced. Loaded-job auto-start uses `launchctl kickstart` without `-k`; direct detached startup is only used after the explicit service-not-found result proves no job is loaded. Other `launchctl` failures are unknown and fail closed. Install/reload shares one bounded ownership-transfer path: non-force drain (active sessions refuse), wait for the acknowledged old PID and socket to disappear, run `launchctl bootout --wait` with a subprocess timeout for an already-loaded job, write/bootstrap the plist, then require a fresh ping/PID and socket identity whose PID matches launchd's running job PID. This provenance check rejects a detached contender started during the transfer window. A ping failure is stale only when the recorded PID is dead (if present) and the singleton lock can be acquired; a held or unprobeable lock refuses transfer. No bootout occurs before drain completion.
 - Beta SDK (`openai-codex==0.1.0b3`, pinned): meight deliberately supplies the current system `codex` executable instead of the SDK's older bundled runtime. `MEIGHT_CODEX_BIN` is the explicit override. Before bumping the SDK or Codex CLI, re-introspect the API surface (`inspect.signature`), dump real event payloads (`MEIGHT_DEBUG=1` → per-worker `debug-events.log`), and re-run the verification suite.
 - Approval requests arrive as SDK server-requests (auto-accepted by the SDK's default handler), not stream notifications — the `needs_input` tool path is defensive.

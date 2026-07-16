@@ -1,6 +1,6 @@
 ---
 name: meight-worker
-description: Implementer-side operating contract selected by meight delegate mode. Use when the harness assigns bounded implementation, fixes, tests, verification, runtime or browser QA, computer use, exploration, or other execution work to a worker, including hard-gated implementation run by sol in delegate mode.
+description: Implementer-side operating contract selected by meight worker mode. Use when the harness assigns bounded implementation, fixes, tests, verification, runtime or browser QA, computer use, exploration, or other execution work to a worker, including hard-gated implementation run by sol in worker mode.
 ---
 
 # Meight Worker
@@ -18,7 +18,7 @@ sandbox rules, and git discipline.
   acceptance criteria, integration, and final approval.
 - Resolve technical uncertainty from code, tests, documentation, or runtime
   evidence. Escalate only a true block or a decision outside worker ownership.
-- Use `--mode delegate` even when `sol` performs a hard-gated implementation.
+- Use `--mode worker` even when `sol` performs a hard-gated implementation.
   Model selection does not change this contract.
 - Do not perform plan review, adversarial review, or direction-setting design
   under this contract; those use `--mode review` or `--mode design` and the
