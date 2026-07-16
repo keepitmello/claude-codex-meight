@@ -85,6 +85,31 @@ MODEL_ALIASES = {
 
 EFFORT_CHOICES = ["low", "medium", "high", "xhigh", "ultra", "max"]
 
+# Start/dispatch defaults are deliberately code-only operator policy. Omitted
+# flags select the mode row; explicit flags always win.
+MODE_START_DEFAULTS = {
+    "design": {
+        "model": "sol", "effort": "high", "fast": False,
+        "report": "text", "sandbox": "ro",
+    },
+    "review": {
+        "model": "sol", "effort": "high", "fast": False,
+        "report": "decision", "sandbox": "ro",
+    },
+    "worker": {
+        "model": "luna", "effort": "xhigh", "fast": True,
+        "report": "decision", "sandbox": "full",
+    },
+    "delegate": {
+        "model": "sol", "effort": "high", "fast": False,
+        "report": "decision", "sandbox": "full",
+    },
+}
+
+# start/dispatch must distinguish omission from explicit false-y values so
+# --no-fast and every other explicit override retain provenance.
+OMITTED_START_SETTING = object()
+
 # follow/reply must distinguish an omitted option from an explicit false-y value
 # such as --no-fast. argparse keeps this process-local sentinel out of the socket
 # request; missing request keys are the daemon protocol's inheritance signal.
@@ -2230,25 +2255,60 @@ def best_effort_interrupt(home: Path, req: dict, name: str) -> None:
         pass
 
 
+def resolve_start_options(args) -> tuple[dict, dict]:
+    """Resolve mode-derived start settings and retain their CLI provenance."""
+    mode = normalize_mode(getattr(args, "mode", None))
+    if mode is None:
+        raise ValueError("start options require a valid mode")
+    defaults = MODE_START_DEFAULTS[mode]
+    values = {}
+    provenance = {}
+    for key, default in defaults.items():
+        raw = getattr(args, key, OMITTED_START_SETTING)
+        if raw is OMITTED_START_SETTING:
+            values[key] = default
+            provenance[key] = "default"
+        else:
+            values[key] = raw
+            provenance[key] = "set"
+    return values, provenance
+
+
+def start_resolution_echo(args, mode: str | None = None) -> str:
+    values, provenance = resolve_start_options(args)
+    canonical_mode = normalize_mode(mode) or normalize_mode(args.mode)
+    fast = "on" if values["fast"] else "off"
+    return (
+        f"mode={canonical_mode} contract={contract_posture(canonical_mode)} "
+        f"model={values['model']}({provenance['model']}) "
+        f"effort={values['effort']}({provenance['effort']}) "
+        f"fast={fast}({provenance['fast']}) "
+        f"report={values['report']}({provenance['report']}) "
+        f"sandbox={values['sandbox']}({provenance['sandbox']})"
+    )
+
+
 def start_request(args, home: Path) -> dict:
     require_mode(args)
     validate_worker_name(args.name)
     capability = require_mode4_capability(home)
     if not capability.get("ok"):
         return capability
+    resolved, _provenance = resolve_start_options(args)
     # --fast/--no-fast is the user-facing knob; map it to a codex service tier.
-    # priority = Fast; default = a non-priority tier. The default is deliberately non-Fast.
-    fast = bool(getattr(args, "fast", False))
+    # priority = Fast; default = a non-priority tier.
+    fast = resolved["fast"]
     service_tier = "priority" if fast else "default"
     req = {
         "cmd": "start", "name": args.name, "brief": read_brief(args),
         "cwd": str(Path(args.cwd).resolve()) if args.cwd else os.getcwd(),
-        "sandbox": args.sandbox, "model": normalize_model(args.model), "effort": args.effort,
+        "sandbox": resolved["sandbox"], "model": normalize_model(resolved["model"]),
+        "effort": resolved["effort"],
         "service_tier": service_tier,
         "no_preamble": args.no_preamble,
         "main_thread": getattr(args, "main_thread", False),
-        "mode": args.mode,
-        "report": args.report,
+        "mode": normalize_mode(args.mode),
+        "report": resolved["report"],
         "protocol_epoch": PROTOCOL_EPOCH,
     }
     req.update(request_repo_context(home))
@@ -2267,7 +2327,7 @@ def cmd_start(args, home: Path) -> int:
     resp = expect_ok(start_request(args, home))
     print(
         f"started worker '{args.name}' thread={resp.get('thread_id')} "
-        f"mode={resp.get('mode')} contract={contract_posture(resp.get('mode'))}"
+        f"{start_resolution_echo(args, resp.get('mode'))}"
     )
     return 0
 
@@ -2514,7 +2574,7 @@ def cmd_dispatch(args, home: Path) -> int:
         return 1
     print(
         f"started worker '{args.name}' thread={resp.get('thread_id')} "
-        f"mode={resp.get('mode')} contract={contract_posture(resp.get('mode'))}",
+        f"{start_resolution_echo(args, resp.get('mode'))}",
         flush=True,
     )
     repo_home = repo_home_for_cli(home)
@@ -2861,12 +2921,20 @@ def build_parser() -> argparse.ArgumentParser:
             help=("required: design|review|worker|delegate "
                   "(aliases: collab|collaborative|delegated)"),
         )
-        sp.add_argument("--report", choices=["text", "decision"], default="text")
-        sp.add_argument("--sandbox", default="full", choices=sorted(SANDBOX_MAP.keys()))
-        sp.add_argument("--model")
-        sp.add_argument("--effort", default="medium", choices=EFFORT_CHOICES)
-        sp.add_argument("--fast", action=argparse.BooleanOptionalAction, default=False,
-                        help="use the priority service tier (codex 'Fast'); omitted or --no-fast uses the non-priority default tier")
+        sp.add_argument("--report", choices=["text", "decision"],
+                        default=OMITTED_START_SETTING,
+                        help="report format; omitted uses the mode default")
+        sp.add_argument("--sandbox", choices=sorted(SANDBOX_MAP.keys()),
+                        default=OMITTED_START_SETTING,
+                        help="sandbox posture; omitted uses the mode default")
+        sp.add_argument("--model", default=OMITTED_START_SETTING,
+                        help="model or alias; omitted uses the mode default")
+        sp.add_argument("--effort", choices=EFFORT_CHOICES,
+                        default=OMITTED_START_SETTING,
+                        help="reasoning effort; omitted uses the mode default")
+        sp.add_argument("--fast", action=argparse.BooleanOptionalAction,
+                        default=OMITTED_START_SETTING,
+                        help="select or disable Fast; omitted uses the mode default")
         sp.add_argument("--no-preamble", action="store_true", help="disable prepending the harness protocol preamble")
         sp.add_argument("--main-thread", action="store_true",
                         help="use ThreadSource.user instead of the default hidden ThreadSource.subagent — only for tools that require a visible/main Codex Desktop thread")

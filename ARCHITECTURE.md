@@ -135,9 +135,9 @@ main orchestrator.
 
 | Work | Route |
 |---|---|
-| Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `--mode worker --model luna --effort xhigh`, plus Fast when available |
-| Blind/anchored design and diagnosis | `--mode design --model sol --effort high` (`xhigh` only for genuinely hard problems) |
-| Plan and adversarial review | `--mode review --model sol --effort high` (`xhigh` only for genuinely hard problems) |
+| Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `--mode worker` |
+| Blind/anchored design and diagnosis | `--mode design` (`--effort xhigh` only for genuinely hard problems) |
+| Plan and adversarial review | `--mode review` (`--effort xhigh` only for genuinely hard problems) |
 | Hard-gated implementation | `--mode worker --model sol --effort high` (`xhigh` only for genuinely hard problems) |
 | Full delegation outside dispatcher technical context | `--mode delegate` only outside hard gates, money paths, and frozen dispatcher review chains |
 | Capability-specific fallback | any mode with `terra`; no default ownership, re-promotable on measured evidence |
@@ -168,10 +168,20 @@ main orchestrator.
   Reading the entire diff is never a sign-off gate.
 - Sessions may commit/push completed verified work; the orchestrator still owns integration and final sign-off.
 - Briefs must point at *existing patterns* relevant to the task — detail-oriented reviewers flag absent context as defects otherwise.
-- The CLI retains `medium` as a compatibility default, but doctrine selects
-  `luna xhigh` for bounded work and `sol high` for its ownership areas (`xhigh`
-  reserved for genuinely hard problems). These selections, the failure-cost
-  clauses, and money-path sign-off are adjustable operator policy.
+- The CLI resolves omitted start/dispatch settings from the selected mode
+  before building the wire request. Explicit flags always win:
+
+  | Mode | Model | Effort | Fast | Report | Sandbox |
+  |---|---|---|---|---|---|
+  | `design` | `sol` | `high` | off | `text` | `ro` |
+  | `review` | `sol` | `high` | off | `decision` | `ro` |
+  | `worker` | `luna` | `xhigh` | on | `decision` | `full` |
+  | `delegate` | `sol` | `high` | off | `decision` | `full` |
+
+  Standard is silent and deviation is explicit. The table is deliberately
+  code-only operator policy in `meight.py`; there is no config-file or
+  environment override layer. Start output echoes each resolved value with
+  `(default)` or `(set)` provenance.
 
 ## Hardening history
 

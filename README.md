@@ -117,7 +117,7 @@ daemon by default (`$MEIGHT_HOME`, `$XDG_STATE_HOME/meight`, or `~/.meight`)
 while isolating worker state per repo under `repos/<repo-key>/`.
 
 ```bash
-meight start impl-1 --mode worker --report decision --model luna --effort xhigh --fast \
+meight start impl-1 --mode worker \
   --brief-file - --cwd ~/my-repo <<'EOF'
 Implement X in src/foo.py. Existing pattern: see src/bar.py:42.
 Verify with: pytest tests/test_foo.py.
@@ -155,7 +155,7 @@ meight reply impl-1 --brief "Use config-a.json and keep the legacy field."
 Blind design goes to a mate instead — read-only and collaborative:
 
 ```bash
-meight start design-auth --mode design --sandbox ro --model sol --effort high \
+meight start design-auth --mode design \
   --cwd ~/my-repo --brief-file - <<'EOF'
 We need to choose an auth-token refresh design.
 
@@ -176,7 +176,7 @@ One-shot dispatch is available when a separately supervised session adds no
 value:
 
 ```bash
-meight dispatch tiny-1 --mode worker --report decision --sandbox ro \
+meight dispatch tiny-1 --mode worker --sandbox ro \
   --brief "Check whether README mentions LICENSE."
 ```
 
@@ -230,7 +230,7 @@ For real work, run `wait --timeout` as the background shell call. The agent
 wakes at completion, question, failure, daemon death, or checkpoint timeout.
 
 ```text
-Bash(command: "meight start review-1 --mode review --report decision --sandbox ro --model sol --effort high --brief-file - <<'EOF' ... EOF")
+Bash(command: "meight start review-1 --mode review --brief-file - <<'EOF' ... EOF")
 Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 -> checkpoint exit 1
 -> meight status review-1
@@ -274,7 +274,7 @@ protocol, two dispatcher runtimes.
 
 | Command | What it does |
 |---|---|
-| `meight start <name> --mode design\|review\|worker\|delegate [opts]` | Start a session and return immediately with the thread id plus visible mode/contract posture. Supervised workflow entry point. |
+| `meight start <name> --mode design\|review\|worker\|delegate [opts]` | Start a session and return immediately with the thread id plus resolved mode/contract/model/effort/Fast/report/sandbox values and their default/set provenance. Supervised workflow entry point. |
 | `meight wait <name> --timeout SEC` | Checkpoint wait: return on terminal state, replyable QUESTION, daemon death, or timeout. Timeout leaves the worker running. |
 | `meight dispatch <name> --mode design\|review\|worker\|delegate [opts]` | One-shot: auto-start daemon -> capability check -> start -> wait -> print preferred result. |
 | `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | One-shot answer to a replyable question; inherits mode/report and omitted turn settings, applies explicit turn overrides, and prints the latest result. |
@@ -292,21 +292,35 @@ Common options:
   review use the mate contract. Worker is participatory implementation with a
   dispatcher-owned review choice. Delegate is full delegation with an internal
   independent reviewer and strict forbidden-route fallback to worker.
-- `--report text|decision` defaults to `text`; `decision` writes
-  `decision.json`/`decision.md`.
+- `--report text|decision` uses the mode default below; `decision` writes
+  `decision.json`/`decision.md`. Explicit flags always override.
 - `--cwd` sets the worker workdir. Use separate git worktrees for overlapping
   file scopes.
-- `--sandbox ws|ro|full` defaults to `full`; reads and reviews usually use
-  `ro`.
+- `--sandbox ws|ro|full` uses the mode default below.
 - `--model luna|sol|terra` accepts the short aliases; full model strings pass
   through unchanged.
-- `--effort low|medium|high|xhigh|ultra|max` defaults to `medium` at start.
-- `--fast` selects priority service tier and `--no-fast` selects default.
+- `--effort low|medium|high|xhigh|ultra|max` uses the mode default below.
+- `--fast` selects priority service tier and `--no-fast` disables it.
   On `follow`/`reply`, omitting `--model`, `--effort`, and Fast flags inherits
   the worker's current values; an explicit override applies to that new turn
   and becomes the value inherited by later turns.
 - `--main-thread` opts out of hidden ephemeral subagent threads for tools that
   need a visible main thread.
+
+Omitted `start`/`dispatch` settings resolve in the CLI before the request is
+sent:
+
+| Mode | Model | Effort | Fast | Report | Sandbox |
+|---|---|---|---|---|---|
+| `design` | `sol` | `high` | off | `text` | `ro` |
+| `review` | `sol` | `high` | off | `decision` | `ro` |
+| `worker` | `luna` | `xhigh` | on | `decision` | `full` |
+| `delegate` | `sol` | `high` | off | `decision` | `full` |
+
+Standard is silent: specify only deviations. The table lives in `meight.py` as
+deliberately simple code-only operator policy; there is no config-file or
+environment override layer. Start output echoes every resolved value with
+`(default)` or `(set)` provenance.
 
 Worker state lives in
 `<daemon-home>/repos/<repo-key>/workers/<name>/`: `brief.md`, `status.json`,

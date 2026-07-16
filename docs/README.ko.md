@@ -114,7 +114,7 @@ cd claude-codex-meight
 `~/.meight`), 워커 상태는 `repos/<repo-key>/` 아래에 레포별로 격리합니다.
 
 ```bash
-meight start impl-1 --mode worker --report decision --model luna --effort xhigh --fast \
+meight start impl-1 --mode worker \
   --brief-file - --cwd ~/my-repo <<'EOF'
 Implement X in src/foo.py. Existing pattern: see src/bar.py:42.
 Verify with: pytest tests/test_foo.py.
@@ -152,7 +152,7 @@ meight reply impl-1 --brief "Use config-a.json and keep the legacy field."
 Blind design은 메이트에게 갑니다 — 읽기 전용, 협업 모드:
 
 ```bash
-meight start design-auth --mode design --sandbox ro --model sol --effort high \
+meight start design-auth --mode design \
   --cwd ~/my-repo --brief-file - <<'EOF'
 We need to choose an auth-token refresh design.
 
@@ -172,7 +172,7 @@ EOF
 별도 감독 세션이 가치를 더하지 않을 때는 원샷 디스패치도 쓸 수 있습니다:
 
 ```bash
-meight dispatch tiny-1 --mode worker --report decision --sandbox ro \
+meight dispatch tiny-1 --mode worker --sandbox ro \
   --brief "Check whether README mentions LICENSE."
 ```
 
@@ -226,7 +226,7 @@ plain file 원장 세 개가 디스패치 루프를 쓸수록 좋게 만듭니�
 에이전트는 완료·질문·실패·데몬 사망·체크포인트 타임아웃에 깨어납니다.
 
 ```text
-Bash(command: "meight start review-1 --mode review --report decision --sandbox ro --model sol --effort high --brief-file - <<'EOF' ... EOF")
+Bash(command: "meight start review-1 --mode review --brief-file - <<'EOF' ... EOF")
 Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 -> 체크포인트 exit 1
 -> meight status review-1
@@ -269,7 +269,7 @@ Codex-as-orchestrator 프롬프트는 [`AGENTS.md`](../AGENTS.md)로 제공됩�
 
 | 명령 | 하는 일 |
 |---|---|
-| `meight start <name> --mode design\|review\|worker\|delegate [opts]` | 세션을 시작하고 thread id 및 mode/contract 자세와 함께 즉시 반환. 감독형 워크플로우의 진입점. |
+| `meight start <name> --mode design\|review\|worker\|delegate [opts]` | 세션을 시작하고 thread id와 해석된 mode/contract/model/effort/Fast/report/sandbox 값 및 default/set 출처를 출력한 뒤 즉시 반환. 감독형 워크플로우의 진입점. |
 | `meight wait <name> --timeout SEC` | 체크포인트 대기: 터미널 상태, 답변 가능한 QUESTION, 데몬 사망, 타임아웃에 반환. 타임아웃은 워커를 살려둡니다. |
 | `meight dispatch <name> --mode design\|review\|worker\|delegate [opts]` | 원샷: 데몬 자동 시작 -> capability 확인 -> start -> wait -> 선호 결과 출력. |
 | `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | 답변 가능한 질문에 원샷 응답. 모드/보고와 생략한 턴 설정을 상속하고, 명시한 설정은 새 턴부터 적용한 뒤 최신 결과를 출력. |
@@ -287,20 +287,34 @@ Codex-as-orchestrator 프롬프트는 [`AGENTS.md`](../AGENTS.md)로 제공됩�
   review는 메이트 계약, worker는 디스패처가 리뷰 여부를 판단하는 참여형 구현,
   delegate는 내부 독립 리뷰까지 맡기는 전권 위임입니다. 금지 라우트는 worker로
   fail-closed 합니다.
-- `--report text|decision` 기본은 `text`; `decision`은
-  `decision.json`/`decision.md`를 씁니다.
+- `--report text|decision`은 아래 모드 기본값을 사용하며, `decision`은
+  `decision.json`/`decision.md`를 씁니다. 명시한 플래그는 항상 우선합니다.
 - `--cwd`는 워커 작업 디렉토리. 파일 스코프가 겹치면 별도 git worktree를
   쓰세요.
-- `--sandbox ws|ro|full` 기본은 `full`; 읽기와 리뷰는 보통 `ro`.
+- `--sandbox ws|ro|full`은 아래 모드 기본값을 사용합니다.
 - `--model luna|sol|terra`는 짧은 별칭을 받고, 전체 모델 문자열은 그대로
   통과합니다.
-- `--effort low|medium|high|xhigh|ultra|max`의 시작 기본값은 `medium`.
-- `--fast`는 priority service tier, `--no-fast`는 default를 선택합니다.
+- `--effort low|medium|high|xhigh|ultra|max`는 아래 모드 기본값을 사용합니다.
+- `--fast`는 priority service tier를 선택하고, `--no-fast`는 끕니다.
   `follow`/`reply`에서 `--model`, `--effort`, Fast 플래그를 생략하면 현재
   워커 값을 상속합니다. 명시한 override는 그 새 턴부터 적용되고 이후 턴이
   상속할 값으로 기록됩니다.
 - `--main-thread`는 보이는 메인 스레드가 필요한 도구를 위해 숨김 ephemeral
   subagent 스레드를 끕니다.
+
+생략한 `start`/`dispatch` 설정은 요청을 보내기 전에 CLI에서 해석됩니다:
+
+| 모드 | 모델 | Effort | Fast | Report | Sandbox |
+|---|---|---|---|---|---|
+| `design` | `sol` | `high` | 끔 | `text` | `ro` |
+| `review` | `sol` | `high` | 끔 | `decision` | `ro` |
+| `worker` | `luna` | `xhigh` | 켬 | `decision` | `full` |
+| `delegate` | `sol` | `high` | 끔 | `decision` | `full` |
+
+표준값은 조용히 쓰고, 편차만 명시합니다. 이 표는 단순성을 위해
+`meight.py` 코드에만 있는 운영자 정책이며 config 파일이나 환경변수 override
+계층은 없습니다. 시작 출력은 해석된 모든 값에 `(default)` 또는 `(set)`
+출처를 붙여 보여 줍니다.
 
 워커 상태는
 `<daemon-home>/repos/<repo-key>/workers/<name>/`에 있습니다: `brief.md`,

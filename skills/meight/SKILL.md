@@ -74,6 +74,21 @@ policy cannot be forgotten or left to memory.
 Design and review use the mate contract; worker is participatory implementation;
 delegate is full delegation. Canonical mode is recorded in `status.json` and
 shown in the `MODE` column.
+
+Omitted start/dispatch settings resolve from the mode in the CLI before the
+wire request is built:
+
+| Mode | Model | Effort | Fast | Report | Sandbox |
+|---|---|---|---|---|---|
+| `design` | `sol` | `high` | off | `text` | `ro` |
+| `review` | `sol` | `high` | off | `decision` | `ro` |
+| `worker` | `luna` | `xhigh` | on | `decision` | `full` |
+| `delegate` | `sol` | `high` | off | `decision` | `full` |
+
+Standard is silent: only deviations need explicit flags, and every explicit
+flag wins over its mode default. This table is deliberately code-only operator
+policy in `meight.py`; there is no config-file or environment override layer.
+The start echo shows every resolved value with `(default)` or `(set)` provenance.
 The CLI performs a capability handshake before sending `start`. If the live
 daemon does not advertise capability `mode4`, start fails closed. Every
 start/follow carries epoch `mode4`; success must atomically echo normalized mode
@@ -85,8 +100,7 @@ and epoch or the CLI best-effort interrupts and exits nonzero.
 let the dispatcher revisit it without prescribing how often it must do so.
 
 ```bash
-meight start <name> --mode worker --report decision --brief-file - --cwd <dir> \
-  [--sandbox ws|ro|full, default full] [--effort low|medium|high|xhigh|ultra|max, default medium] <<'EOF'
+meight start <name> --mode worker --brief-file - --cwd <dir> <<'EOF'
 ## Goal       <what this enables + success criteria>
 ## Scope      <file/dir boundary; do not exceed>
 ## Existing patterns  <file:line pointers; required for good review>
@@ -98,9 +112,9 @@ EOF
 
 ## Model Selection (GPT-5.6: sol / terra / luna)
 
-Pass `--model` explicitly; the flag already exists on `start` and `dispatch`.
-The short names are real aliases: `sol`, `terra`, and `luna` resolve to the
-current ChatGPT-account slugs `gpt-5.6-sol`, `gpt-5.6-terra`, and
+Omit `--model` for the mode default above; pass it explicitly only for a
+deviation. The short names are real aliases: `sol`, `terra`, and `luna` resolve
+to the current ChatGPT-account slugs `gpt-5.6-sol`, `gpt-5.6-terra`, and
 `gpt-5.6-luna`. Full or custom model strings pass through unchanged.
 Routing principle: **failure cost picks the model.** The default is broad on
 purpose: bounded work goes to `luna` at `xhigh`, with `--fast` when the account
@@ -158,7 +172,7 @@ stopped background shell as a shell lifecycle event, not a worker failure.
 separately supervised session.
 
 ```bash
-meight dispatch tiny-1 --mode worker --report decision --sandbox ro \
+meight dispatch tiny-1 --mode worker --sandbox ro \
   --brief "Check whether README mentions LICENSE."
 ```
 
@@ -169,8 +183,9 @@ and no other workers are active.
 
 ## Report Modes
 
-Default report mode is `--report text`: the final message is written to
-`result.md`.
+Report mode defaults by session mode: design uses `text`; review, worker, and
+delegate use `decision`. Explicit `--report` always overrides that default.
+Text reports write the final message to `result.md`.
 
 Use `--report decision` for bounded worker or delegate work:
 
@@ -184,8 +199,8 @@ The exact schema and field semantics live only in the
 [shared contract](../meight-common/CONTRACT.md). `outcome=needs_decision`
 routes to `needs_input` / exit `3`, prioritizing the first user-targeted entry.
 
-Recommended pairing: `--mode worker --report decision` for bounded
-implementation. Use `--mode delegate --report decision` only when intentionally
+Recommended pairing: `--mode worker` for bounded implementation. Use
+`--mode delegate` only when intentionally
 removing the dispatcher from technical context under the delegate contract.
 
 ## Structured QUESTION Routing
@@ -222,7 +237,7 @@ problem, constraints, relevant files, and neutral option labels. Ask for the
 best-supported design and the strongest case against it, not agreement.
 
 ```bash
-meight start design-auth --mode design --sandbox ro --model sol --effort high --cwd <repo root> --brief-file - <<'EOF'
+meight start design-auth --mode design --cwd <repo root> --brief-file - <<'EOF'
 We need to choose an auth-token refresh design.
 
 Constraints:
@@ -244,7 +259,7 @@ EOF
 Use anchored design to refine an already-set direction:
 
 ```bash
-meight start design-refine --mode design --sandbox ro --model sol --effort high --cwd <repo root> \
+meight start design-refine --mode design --cwd <repo root> \
   --brief "Direction is Option B. Pressure-test it: what am I missing, and what edge cases should the implementation cover?"
 ```
 
@@ -256,7 +271,7 @@ dispatcher decides whether to use it, records that choice in one line, and may
 keep the review thread alive with `reply` while new evidence is still changing
 the decision.
 
-Use `--mode review --report decision` when a schema-validated verdict is useful.
+Use `--mode review` for a schema-validated decision report by default.
 The reviewer leads with `APPROVE` or `REVISE`. The strict decision schema has no
 literal APPROVE/REVISE values, so the interface encoding is:
 
@@ -344,7 +359,7 @@ owns its internal fresh-context reviewer. Review is an independent evidence
 source, not a fixed implementation stage.
 
 ```bash
-meight start review-X --mode review --report decision --sandbox ro --model sol --effort high --cwd <repo root> --brief-file - <<'EOF'
+meight start review-X --mode review --cwd <repo root> --brief-file - <<'EOF'
 Adversarial review. Target: <files>. Contract: <versioned PLAN.md>.
 Hunt for real defects: correctness, regressions, missing verification,
 security/data risk, edge cases, races. For each finding: severity P1/P2/P3,
@@ -382,7 +397,7 @@ When a frontend worker reports `IMPLEMENTED, FRESH-EYES PENDING`, dispatch an
 independent comprehension reviewer before accepting `VERIFIED`. Protocol and
 verbatim reviewer prompt: `~/.codex/skills/frontend-ux-router/references/fresh-eyes-review.md`.
 
-- One-shot `--mode worker --model luna` (a comprehension check, not a verdict
+- One-shot `--mode worker` (a comprehension check, not a verdict
   review) with only: the persona line, screenshot paths (or route),
   and the reviewer prompt. Zero implementation context — no brief, no diff,
   no explanations. Contamination invalidates the review.

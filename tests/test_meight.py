@@ -25,6 +25,85 @@ class ModelAliasTests(unittest.TestCase):
         self.assertIsNone(meight.normalize_model(None))
 
 
+class StartDefaultsTests(unittest.TestCase):
+    EXPECTED = {
+        "design": ("gpt-5.6-sol", "high", "default", "text", "ro"),
+        "review": ("gpt-5.6-sol", "high", "default", "decision", "ro"),
+        "worker": ("gpt-5.6-luna", "xhigh", "priority", "decision", "full"),
+        "delegate": ("gpt-5.6-sol", "high", "default", "decision", "full"),
+    }
+
+    def _args(self, command: str, mode: str, *options: str):
+        return meight.build_parser().parse_args([
+            command, f"defaults-{mode}", "--mode", mode,
+            "--brief", "Exercise start defaults.", *options,
+        ])
+
+    def _start_request(self, args):
+        responses = (
+            {"ok": True, "capabilities": [meight.PROTOCOL_EPOCH]},
+            {"ok": True, "thread_id": "thread-defaults", "mode": args.mode,
+             "protocol_epoch": meight.PROTOCOL_EPOCH},
+        )
+        with patch.object(meight, "send_request", side_effect=responses) as send:
+            response = meight.start_request(args, Path("/tmp/meight-defaults"))
+        self.assertTrue(response["ok"])
+        return send.call_args_list[1].args[1]
+
+    def test_each_mode_resolves_omitted_start_flags_on_the_cli_wire(self):
+        for mode, expected in self.EXPECTED.items():
+            with self.subTest(mode=mode):
+                request = self._start_request(self._args("start", mode))
+                model, effort, tier, report, sandbox = expected
+                self.assertEqual(
+                    (request["model"], request["effort"], request["service_tier"],
+                     request["report"], request["sandbox"]),
+                    (model, effort, tier, report, sandbox),
+                )
+                self.assertEqual(request["mode"], mode)
+
+    def test_explicit_flags_override_every_mode_default(self):
+        args = self._args(
+            "start", "design", "--model", "terra", "--effort", "max",
+            "--fast", "--report", "decision", "--sandbox", "full",
+        )
+        request = self._start_request(args)
+        self.assertEqual(
+            (request["model"], request["effort"], request["service_tier"],
+             request["report"], request["sandbox"]),
+            ("gpt-5.6-terra", "max", "priority", "decision", "full"),
+        )
+
+    def test_no_fast_overrides_worker_fast_default(self):
+        request = self._start_request(self._args("start", "worker", "--no-fast"))
+        self.assertEqual(request["service_tier"], "default")
+
+    def test_dispatch_uses_the_same_resolution_and_start_path(self):
+        start_args = self._args("start", "worker", "--model", "sol", "--no-fast")
+        dispatch_args = self._args("dispatch", "worker", "--model", "sol", "--no-fast")
+        self.assertEqual(meight.resolve_start_options(start_args),
+                         meight.resolve_start_options(dispatch_args))
+        response = {
+            "ok": True, "thread_id": "thread-dispatch", "mode": "worker",
+            "protocol_epoch": meight.PROTOCOL_EPOCH,
+        }
+        output = io.StringIO()
+        with (
+            patch.object(meight, "ensure_daemon", return_value=True),
+            patch.object(meight, "start_request", return_value=response) as start,
+            patch.object(meight, "wait_for_worker", return_value=1),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(meight.cmd_dispatch(dispatch_args, Path("/tmp/meight-defaults")), 1)
+        start.assert_called_once_with(dispatch_args, Path("/tmp/meight-defaults"))
+        self.assertIn(
+            "mode=worker contract=participatory model=sol(set) "
+            "effort=xhigh(default) fast=off(set) report=decision(default) "
+            "sandbox=full(default)",
+            output.getvalue(),
+        )
+
+
 class EffortTests(unittest.TestCase):
     def test_ultra_and_max_parse_and_reach_start_request(self):
         parser = meight.build_parser()
@@ -1202,9 +1281,16 @@ class ModeLifecycleTests(unittest.TestCase):
                     self.assertEqual(saved["mode"], mode)
                     self.assertIn(mode, meight.summary_line(saved))
 
-    def test_start_output_names_mode_and_contract_posture(self):
-        for mode, posture in (("worker", "participatory"),
-                              ("delegate", "full-delegation")):
+    def test_start_output_echoes_resolved_defaults_and_provenance(self):
+        cases = (
+            ("worker", "participatory",
+             "model=luna(default) effort=xhigh(default) fast=on(default) "
+             "report=decision(default) sandbox=full(default)"),
+            ("delegate", "full-delegation",
+             "model=sol(default) effort=high(default) fast=off(default) "
+             "report=decision(default) sandbox=full(default)"),
+        )
+        for mode, posture, settings in cases:
             with self.subTest(mode=mode):
                 args = self._start_args("/repo", mode=mode)
                 output = io.StringIO()
@@ -1220,6 +1306,29 @@ class ModeLifecycleTests(unittest.TestCase):
                 ):
                     self.assertEqual(meight.cmd_start(args, Path("/tmp/meight-output")), 0)
                 self.assertIn(f"mode={mode} contract={posture}", output.getvalue())
+                self.assertIn(settings, output.getvalue())
+
+    def test_start_output_marks_explicit_flags_as_set(self):
+        args = meight.build_parser().parse_args([
+            "start", "mode-test", "--mode", "worker", "--brief", "Implement.",
+            "--model", "sol", "--effort", "high", "--no-fast",
+            "--report", "text", "--sandbox", "ro",
+        ])
+        response = {
+            "ok": True, "thread_id": "thread-worker", "mode": "worker",
+            "protocol_epoch": meight.PROTOCOL_EPOCH,
+        }
+        output = io.StringIO()
+        with (
+            patch.object(meight, "start_request", return_value=response),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(meight.cmd_start(args, Path("/tmp/meight-output")), 0)
+        self.assertIn(
+            "model=sol(set) effort=high(set) fast=off(set) "
+            "report=text(set) sandbox=ro(set)",
+            output.getvalue(),
+        )
 
     def test_legacy_rows_with_role_and_old_modes_render_without_crash(self):
         for old_mode, expected in (("collaborative", "design"), ("delegated", "delegate")):
