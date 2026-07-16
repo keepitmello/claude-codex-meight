@@ -77,6 +77,11 @@ Each CLI invocation also resolves a repository namespace from the invoking cwd:
 `git -C <cwd> rev-parse --show-toplevel` when available, otherwise `<cwd>`.
 The repo key is a stable slug plus hash of that root. `--cwd` controls the
 worker execution directory only; it does not change the status/result namespace.
+The daemon recomputes the repo root/key/home and verifies the client fields;
+request-controlled paths never select a state directory. The daemon home and
+state directories are real owner-only directories (`0700`), worker-state
+symlinks are rejected, and `meight.sock` is `0600`. Do not set a daemon or
+LaunchAgent umask: worker subprocess repository file modes must not change.
 
 ```text
 ~/.meight/
@@ -108,6 +113,7 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   "state": "starting|running|needs_input|completed|failed|interrupted",
   "started_at": "ISO8601 KST",
   "updated_at": "ISO8601 KST",
+  "terminal_at": "ISO8601 KST|null",
   "repo_root": "/abs/path/to/repo",
   "repo_key": "repo-0123456789abcdef",
   "daemon_pid": 12345,
@@ -135,6 +141,9 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
 ```
 
 - Write `status.json` atomically with a temporary file followed by `os.replace`.
+- Set `terminal_at` once on each new terminal transition; later status writes
+  must not move it. A follow turn resets it for the next transition. Legacy
+  terminal rows without the field may use `updated_at` for retention.
 - Update status at event granularity, but throttle high-volume delta updates to
   once every two seconds.
 - `needs_input_source` is the public source of truth for `needs_input`:
@@ -164,12 +173,12 @@ The command table must match the `python3 meight.py --help` subcommand list exac
 | Command | Behavior |
 |---|---|
 | `daemon [--idle-timeout-sec SEC]` | Run the foreground global daemon. The orchestrator starts it in the background. If a live daemon already exists, return exit `1`. `0` disables idle shutdown. |
-| `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid, runtime `idle_timeout_sec`, and advertised `capabilities` including `mode3`. |
-| `launchd install [--load]` / `launchd status` / `launchd uninstall` | Manage an optional macOS LaunchAgent for the global daemon. The plist uses `RunAtLoad` and `KeepAlive=false`; CLI auto-start remains the on-demand path. |
+| `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid, runtime `idle_timeout_sec`, `session_retention_sec`, and advertised `capabilities` including `mode3`. |
+| `launchd install [--load]` / `launchd status` / `launchd uninstall` | Manage the optional macOS LaunchAgent. The plist uses `RunAtLoad=true` and crash-only `KeepAlive={SuccessfulExit=false}`. `install --load` non-force drains a live daemon, waits boundedly for its acknowledged PID/socket exit, runs `launchctl bootout --wait` with a subprocess timeout for a loaded job, writes/bootstraps the plist, and requires a fresh ping/PID. Active sessions or timeouts refuse transfer. |
 | `start <name> --mode design\|review\|delegate (--brief-file F\|- \| --brief TEXT) [--report text\|decision] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new hidden Codex session with `thread_start(ephemeral=True, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--mode` is required; `collab`, `collaborative`, and `delegated` are accepted aliases. Before sending `start`, the CLI pings the daemon and requires capability `mode3`; absence fails closed with `daemon predates --mode review; restart required`. Model aliases `sol`, `terra`, and `luna` normalize to `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`; other strings pass through. Defaults: `report=text`, `sandbox=full`, `effort=medium`, `cwd=current directory`, `thread_source=subagent`, `thread_ephemeral=true`, `service_tier=default`. `--report decision` supplies `output_schema`. `--main-thread` opts into a visible persistent user thread. `--fast` maps to service tier `priority`. Reject duplicate active names inside the same repo namespace. |
 | `dispatch <name> --mode design\|review\|delegate (--brief-file F\|- \| --brief TEXT) [start opts] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, capability-check, `start`, `wait`, then print `decision.md` or `result.md`. Mode is required. Default timeout is `1800` seconds. Exit code matches `wait`. |
-| `follow <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble]` | Start a new turn on the same thread only for a session waiting on a final `QUESTION:` while attached to the current daemon. It takes no mode flag; it inherits recorded `mode` and `report` and receives a one-line reminder. Terminal sessions release their SDK runtime, and hidden sessions are not resumed from disk after restart. |
-| `reply <name> (--brief-file F\|- \| --brief TEXT) [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot answer path: `follow`, `wait`, then print the latest preferred result. It inherits `mode`/`report`. Default timeout is `1800` seconds. |
+| `follow <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble]` | Start a new turn on the same thread only for a session waiting on a final `QUESTION:` while attached to the current daemon. It takes no mode flag; it inherits recorded `mode` and `report` and receives a one-line reminder. Omitted model/effort/Fast options inherit the current worker settings. Explicit options apply at the new-turn boundary and, after successful turn creation, replace the settings recorded in `status.json` for later turns. Terminal sessions release their SDK runtime, and hidden sessions are not resumed from disk after restart. |
+| `reply <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot answer path: `follow`, `wait`, then print the latest preferred result. It has the same mode/report inheritance and per-turn setting override semantics as `follow`. Default timeout is `1800` seconds. |
 | `steer <name> TEXT` | Inject mid-turn text into a running turn. Return an error unless the worker is currently running. |
 | `interrupt <name>` | Interrupt the active turn. For `ACTIVE` workers without a live `TurnHandle` yet, including the initial starting/SDK phase and follow/reply SDK phase, set `interrupt_requested`, return ok with a recorded-interrupt note, and let the atomic post-SDK commit abort the turn. |
 | `status [name] [--json] [--all-repos]` | Does not require the daemon. Read repo-scoped `status.json` directly. With no name, print a table including `MODE`; `--all-repos` reads every repo namespace. Legacy rows with a role field or long-form mode values remain readable. |
@@ -207,7 +216,11 @@ The preamble includes normalized mode and report type. All skill paths
 resolve relative to `meight.py`, not the invoking cwd.
 
 `follow` and `reply` do not accept a mode flag. They inherit the existing
-session's mode and report and use a one-line reminder.
+session's mode and report and use a one-line reminder. Their model, effort, and
+service tier are inherited only when the corresponding CLI option is omitted.
+The CLI omits those request keys rather than sending defaults. The daemon
+validates any raw override before resetting the worker, passes the selected
+values to `Thread.turn()`, and records them only after successful turn creation.
 
 Structured final questions use this exact format:
 
@@ -293,7 +306,7 @@ the worker's report mode.
 - Post-SDK commit is atomic under the per-worker `ctl_lock`: re-check guards,
   generation, and consumer start happen as one success tail. SDK calls run
   outside `reg_lock` with a name-reserving `starting` placeholder.
-- Socket protocol: one JSON request line and one JSON response line.
+- Socket protocol: one JSON request line (maximum 1 MiB) and one JSON response line.
   Example: `{"cmd":"start",...}` -> `{"ok":true}` or
   `{"ok":false,"error":"..."}`.
 - `ping` and `runtime_status` responses advertise
@@ -306,6 +319,10 @@ the worker's report mode.
   creation, registry reservation, SDK startup, or any other start side effect.
   Direct socket clients cannot bypass this boundary or receive an implicit
   default contract.
+- Every name-bearing CLI/socket command accepts only a 1-128 character worker
+  name made from ASCII letters/digits/`._-`, starting with a letter or digit.
+  The daemon derives and verifies repo context before selecting state and
+  refuses symlink worker directories.
 - Socket-dispatched commands: `start`, `follow`, `steer`, `interrupt`,
   `shutdown`, `ping`, `runtime_status`.
 - Worker registry: `(repo_key, name) -> {thread, handle, state}`.
@@ -327,7 +344,21 @@ the worker's report mode.
   `MEIGHT_IDLE_TIMEOUT_SEC=0` and `daemon --idle-timeout-sec 0`; LaunchAgent
   jobs also infer managed mode from `XPC_SERVICE_NAME=com.keepitmello.meight`
   if an older loaded job is missing the env override. `meight ping` exposes the
-  runtime `idle_timeout_sec` for process-level verification.
+  runtime `idle_timeout_sec` and `session_retention_sec` for verification.
+- Terminal disk artifacts are pruned after `MEIGHT_SESSION_RETENTION_SEC`
+  (default 30 days; `0` disables). Cleanup is off the accept loop and scheduled
+  at most hourly. Only real non-symlink terminal directories with a valid
+  expired immutable `terminal_at` are eligible; legacy rows may use
+  `updated_at`. Invalid/missing timestamps, active states, symlinks, and
+  registry-owned names are skipped. Under `reg_lock`, eligibility/ownership is
+  rechecked and the directory is atomically renamed to a tombstone; recursive
+  deletion is outside the lock, and later passes recover leftover tombstones
+  only after revalidating terminal state, expiry, and registry non-ownership.
+  The internal prefix alone is never deletion authority because legacy worker
+  names could collide with it.
+- After singleton ownership is secured and before accepting requests, startup
+  reconciliation preserves evidence but marks orphaned `starting`, `running`,
+  and `needs_input` rows `failed` with `runtime_lost_detail` and `terminal_at`.
 - `follow` does not rehydrate hidden ephemeral workers after daemon restart.
   Same-daemon follow is the supported path for final `QUESTION:` replies only;
   low-level follow-up work after a terminal result should start a new worker.
@@ -348,6 +379,17 @@ the worker's report mode.
   A later `turn/completed` does not duplicate or overwrite that result.
 - `SIGTERM` and `SIGINT` attempt to interrupt all handles, close the Codex
   client, and clean up pid/socket files.
+- Intentional acknowledged shutdown is the only zero-exit accept-loop close.
+  Unexpected accept/socket ownership failure, including published pathname
+  deletion or replacement, exits nonzero. Loaded LaunchAgent
+  auto-start uses `launchctl kickstart` without `-k`; detached direct startup is
+  permitted only when the explicit service-not-found result proves no job is
+  loaded. If `launchctl print` otherwise cannot determine
+  ownership, auto-start/install fails closed instead of spawning a competing
+  unmanaged daemon. An unhealthy owner is stale only when its recorded PID is
+  dead (if present) and the singleton lock can be acquired; bootstrap readiness
+  requires a fresh PID/socket identity and that the ping PID equals launchd's
+  running job PID.
 - Agent-message deltas are accumulated in memory and finalized on
   `item/completed`.
 - `result.md` is written once per turn with the last agent message, or with a
@@ -379,7 +421,10 @@ It covers all three mode-to-skill mappings, missing/invalid mode rejection at
 the CLI and daemon boundaries before side effects, follow/reply mode
 inheritance, the `MODE` status cell, legacy rows with role or old mode values,
 negative capability handshake with no start request or state creation, mode
-echo fail-closed cleanup, and positive handshake with canonical mode in status.
+echo fail-closed cleanup, positive handshake with canonical mode in status,
+private state/socket permissions, path/name/symlink rejection, request bounds,
+immutable terminal timestamps, orphan reconciliation, retention safety/races,
+launchd payload/routing/ownership transfer, and accept-loop exit classification.
 
 1. Start `daemon` in the background with a temporary `MEIGHT_HOME`, then confirm
    `ping` returns capability `mode3` and the socket lives under that global home.
@@ -420,6 +465,19 @@ echo fail-closed cleanup, and positive handshake with canonical mode in status.
     `mcpServer/elicitation/request` for `connector_id="computer-use"` accepts,
     while a different connector, method, or malformed metadata reaches the
     original handler.
+14. Trust-boundary tests: verify `0700` state, `0600` socket, CLI+daemon name
+    rejection, daemon-derived repo context, symlink refusal, and 1 MiB request
+    rejection.
+15. Retention tests: cover exact threshold, disabled mode, invalid/missing and
+    legacy timestamps, active/registered/symlink skips, immutable
+    `terminal_at`, startup orphan conversion, atomic tombstone rename/recovery,
+    deletion outside `reg_lock`, and off-loop hourly scheduling.
+16. Launchd unit tests: assert `SuccessfulExit=false`, launchd-owned kickstart
+    without `-k`, detached fallback only when unloaded, drain acknowledgement
+    before waits, active refusal/timeouts before bootout/bootstrap, bounded
+    first-load/reload order, and fresh-PID requirement.
+17. Accept-loop unit test: intentional close returns zero; unexpected accept
+    failure returns nonzero for crash supervision.
 
 ### Safe Mode3 Migration Checklist
 
@@ -446,3 +504,4 @@ implementation must not restart it.
 - Automatic worktree creation. The orchestrator controls worktrees through
   `cwd`.
 - Active-turn recovery after daemon process death.
+- Count/size-based artifact eviction or deletion of malformed/unknown state.

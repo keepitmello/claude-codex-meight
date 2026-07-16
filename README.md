@@ -263,7 +263,8 @@ protocol, two dispatcher runtimes.
 - **Exit codes are the API.** `0` done, `2` failed/interrupted/runtime-lost, `3`
   question, `4` daemon gone, `1` checkpoint timeout.
 - **Names, not session IDs.** Sessions are addressed as `review-1`, including
-  follow-ups.
+  follow-ups. Names are 1-128 ASCII letters/digits/`._-`, starting with a
+  letter or digit; the CLI and daemon both reject path syntax.
 - **Sparse checkpoints, not busy polling.** `wait --timeout` is a wake-up dial;
   it does not kill the worker.
 - **Status is pre-digested.** `status` returns mode, report type, current
@@ -283,8 +284,8 @@ protocol, two dispatcher runtimes.
 | `meight start <name> --mode design\|review\|delegate [opts]` | Start a session and return immediately with the thread id. Supervised workflow entry point. |
 | `meight wait <name> --timeout SEC` | Checkpoint wait: return on terminal state, replyable QUESTION, daemon death, or timeout. Timeout leaves the worker running. |
 | `meight dispatch <name> --mode design\|review\|delegate [opts]` | One-shot: auto-start daemon -> capability check -> start -> wait -> print preferred result. Use only for trivial, short, low-risk work. |
-| `meight reply <name> --brief ...` | One-shot answer to a replyable question; inherits mode/report and prints the latest result. |
-| `meight follow <name> --brief ...` | Low-level: new turn on the same live thread; inherits mode/report. |
+| `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | One-shot answer to a replyable question; inherits mode/report and omitted turn settings, applies explicit turn overrides, and prints the latest result. |
+| `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | Low-level: new turn on the same live thread; inherits mode/report and omitted turn settings, while explicit overrides become the defaults for later turns. |
 | `meight result <name> [--raw]` | Print `decision.md` when present; `--raw` prints raw `result.md`. |
 | `meight status [name] [--json] [--all-repos]` | Pull digest. Table includes `MODE`; legacy rows with old role or long-form mode values remain readable. Reads disk. |
 | `meight steer <name> "text"` | Inject instruction into the running turn. |
@@ -306,9 +307,11 @@ Common options:
   `ro`.
 - `--model luna|sol|terra` accepts the short aliases; full model strings pass
   through unchanged.
-- `--effort low|medium|high|xhigh` defaults to `medium`.
-- `--fast` opts a specific worker into priority service tier; omitted or
-  `--no-fast` stays non-Fast.
+- `--effort low|medium|high|xhigh|ultra|max` defaults to `medium` at start.
+- `--fast` selects priority service tier and `--no-fast` selects default.
+  On `follow`/`reply`, omitting `--model`, `--effort`, and Fast flags inherits
+  the worker's current values; an explicit override applies to that new turn
+  and becomes the value inherited by later turns.
 - `--main-thread` opts out of hidden ephemeral subagent threads for tools that
   need a visible main thread.
 
@@ -319,6 +322,20 @@ Worker state lives in
 runtime immediately. A final structured `QUESTION:` remains attached to the live
 daemon so `reply` can answer on the same thread. After daemon restart, disk
 artifacts remain but same-thread reply is expired; start a fresh worker.
+
+The daemon derives and verifies the repo key and state home instead of trusting
+socket request paths. Its home, `repos/`, and repo/worker state directories are
+owner-only (`0700`), worker state paths may not be symlinks, and `meight.sock`
+is `0600`. Socket requests are bounded to 1 MiB. No process-wide umask is set,
+so worker-created repository files keep the worker process's normal modes.
+
+Terminal artifacts are retained for 30 days by default. Set
+`MEIGHT_SESSION_RETENTION_SEC` to another non-negative number of seconds, or
+`0` to disable disk pruning. Cleanup runs off the accept loop at most hourly,
+never removes active, replyable, malformed, symlinked, or currently registered
+workers, and uses immutable `terminal_at` (`updated_at` only for legacy rows).
+After a daemon crash/restart, orphaned active rows become
+`failed`/`runtime_lost_detail`; hidden ephemeral turns are not resumed.
 
 ## Upgrading An Old Daemon To Mode3 Support
 
@@ -349,7 +366,19 @@ the wrong contract. Drain and restart manually:
   `thread_source=subagent`, `thread_ephemeral=true`.
 - Foreground `meight daemon` exits after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with
   no active workers by default. Managed `dispatch` auto-start and LaunchAgent
-  starts disable idle shutdown; verify the live value with `meight ping`.
+  starts disable idle shutdown; verify idle and retention values with
+  `meight ping`.
+- The LaunchAgent uses crash-only supervision (`SuccessfulExit=false`). A clean
+  shutdown stays stopped. Auto-start uses `launchctl kickstart` when the job is
+  loaded and never `kickstart -k`; direct detached startup is only the fallback
+  when no job is loaded. `launchd install --load` drains the old daemon without
+  force, waits for its acknowledged PID/socket exit, runs bounded
+  `launchctl bootout --wait` on a loaded job,
+  bootstraps the plist, and requires a fresh daemon PID/socket identity whose
+  PID also matches the running job reported by launchd.
+  Ambiguous `launchctl` results or an unhealthy daemon that still holds the
+  singleton lock fail closed. If the published socket is deleted or replaced,
+  the daemon exits nonzero so launchd can recreate it.
 - `openai-codex` is pinned (`0.1.0b3`, beta). When bumping the SDK or Codex
   CLI, re-run the verification suite in [`SPEC.md`](./SPEC.md).
 - Design details, state machine, hardening history, and lifecycle caveats live

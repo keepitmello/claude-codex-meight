@@ -60,8 +60,10 @@ policy cannot be forgotten or left to memory.
 - `--mode review`: use for verdict-first plan, diff, adversarial, and doctrine
   review. The session is a mate with explicit review duties.
 - `follow` and `reply` take no mode flag. They inherit the session's recorded
-  mode and receive only a one-line harness reminder instead of the full
-  preamble.
+  mode/report and receive only a one-line harness reminder instead of the full
+  preamble. They also inherit model, effort, and Fast tier when those flags are
+  omitted. Explicit `--model`, `--effort`, or `--fast`/`--no-fast` values apply
+  to the new turn and become the values inherited by later turns.
 
 Design and review are the two collaborative modes and use the mate contract;
 delegate is the delegation mode and uses the worker contract. Canonical mode is
@@ -139,6 +141,8 @@ When the worker reaches a terminal or question state:
 meight result <name>        # prefers decision.md when present
 meight result <name> --raw  # raw result.md audit record
 meight reply <name> --brief "Use config-a.json and keep the legacy field."
+meight follow <name> --effort xhigh --fast --brief "Continue with more reasoning."
+meight reply <name> --effort high --no-fast --brief "Use the approved option."
 ```
 
 Long-running checkpoint shells are not the default orchestration path. Treat a
@@ -506,6 +510,26 @@ launchctl print "gui/$(id -u)/com.keepitmello.meight"  # if LaunchAgent is insta
 meight list --all-repos --json
 ```
 
+`meight ping` also exposes `session_retention_sec`. Worker names are restricted
+at both CLI and daemon boundaries to 1-128 ASCII letters/digits/`._-`, starting
+with a letter or digit. The daemon independently derives/verifies repo state,
+uses owner-only state directories plus a `0600` socket, rejects worker-state
+symlinks, and bounds one socket request to 1 MiB. It intentionally does not set
+a process-wide umask because that would change repository file modes created by
+Codex workers.
+
+When the LaunchAgent is loaded, on-demand start uses `launchctl kickstart`
+without `-k`; direct detached start is only the unloaded-job fallback.
+`meight launchd install --load` owns the safe transfer: it requests non-force
+drain, refuses active sessions, waits boundedly for the acknowledged old
+PID/socket to disappear, runs `launchctl bootout --wait` with a subprocess
+timeout for a loaded job, bootstraps the new
+plist, and requires a fresh ping/PID plus socket identity with a PID matching
+launchd's running job. Ambiguous
+`launchctl` ownership or an unhealthy owner that still holds the singleton
+lock fails closed. Published socket deletion/replacement makes the daemon exit
+nonzero for launchd recovery. Do not manually bootout before drain.
+
 Hidden-session invariant:
 
 - Default workers must have `"thread_source": "subagent"` and
@@ -527,9 +551,19 @@ Hidden-session invariant:
   infer managed mode from `XPC_SERVICE_NAME=com.keepitmello.meight` if an older
   loaded job lacks the env. Trust `meight ping`/startup log for the running
   value.
+- LaunchAgent supervision is crash-only (`RunAtLoad=true`,
+  `KeepAlive={SuccessfulExit=false}`): unexpected accept failure exits nonzero
+  and restarts; acknowledged clean shutdown exits zero and stays stopped.
 - Terminal workers release their SDK runtime immediately after stream end.
   `MEIGHT_WORKER_GC_TTL_SEC` (default 3600s) only removes terminal worker
-  status from daemon memory while keeping disk artifacts.
+  status from daemon memory. Disk artifacts use
+  `MEIGHT_SESSION_RETENTION_SEC` (default 30 days; `0` disables). Off-loop
+  hourly cleanup prunes only valid expired terminal rows using immutable
+  `terminal_at` (legacy fallback `updated_at`), atomically tombstones under the
+  registry lock, and deletes outside it. Recovery never trusts the tombstone
+  prefix alone; it rechecks terminal state, expiry, and registry ownership.
+  Active/replyable, malformed, symlinked, or registered sessions are skipped. Startup converts orphaned
+  active rows to `failed`/`runtime_lost_detail`; hidden turns are not resumed.
 - Beta SDK (`openai-codex==0.1.0b3`, pinned): re-run the SPEC.md verification
   suite when upgrading.
 - Source and docs: README.md, SPEC.md, ARCHITECTURE.md.

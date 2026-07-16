@@ -14,10 +14,11 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
    modes and select the independent
    challenger (`mate`) contract; delegate selects the implementer (`worker`)
    contract. The preamble injects the mode-selected skill plus
-   `meight-common/CONTRACT.md`. `follow`/`reply` inherit mode and report. Model
-   stays independent: in practice mate work runs on `sol` and worker work on
-   `luna`, and `sol` drops to the worker contract for hard-gated
-   implementation.
+   `meight-common/CONTRACT.md`. `follow`/`reply` inherit mode and report; they
+   also inherit model/effort/service tier unless the caller overrides them at
+   the new-turn boundary. Model stays independent: in practice mate work runs
+   on `sol` and worker work on `luna`, and `sol` drops to the worker contract
+   for hard-gated implementation.
 5. **Two-way by protocol, not plumbing.** A preamble frames either contract as a
    teammate: sessions may commit/push completed verified work while the
    orchestrator owns integration and final sign-off; and rather than guessing or
@@ -66,7 +67,8 @@ meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  g
 - The SDK spawns `codex app-server --listen stdio://` and speaks JSON-RPC. Meight owns one SDK runtime per active worker so terminal workers can close their app-server, MCP subprocesses, and stdio file descriptors without waiting for daemon shutdown.
 - The daemon holds `Thread` objects in a registry keyed by `(repo_key, worker_name)` only while that worker is active or waiting on a final `QUESTION:`. It keeps a `TurnHandle` only while a stream is live. `steer` and `interrupt` require the live handle; terminal workers release the whole SDK runtime after stream end, while a final `QUESTION:` keeps the worker-owned thread so `reply` can start the next turn.
 - Workers start with `ephemeral=True` and `thread_source=ThreadSource.subagent` by default so they stay out of Codex Desktop's main user-thread list. `--main-thread` is the explicit opt-in to `ephemeral=False` plus `ThreadSource.user` for tools that need a visible/main thread. Hidden ephemeral worker `thread_id`s are audit pointers, not daemon-restart recovery handles.
-- Lifecycle is explicit: `MEIGHT_IDLE_TIMEOUT_SEC` controls daemon idle shutdown (foreground default 1800s, `0` disables; `daemon --idle-timeout-sec` overrides). Managed `dispatch`/LaunchAgent starts pass idle disable through both env and daemon args; LaunchAgent jobs also infer managed mode from `XPC_SERVICE_NAME` if an older loaded job lacks the env. `MEIGHT_WORKER_GC_TTL_SEC` controls how long terminal worker status remains in daemon memory for visibility (default 3600s, disk artifacts remain); terminal SDK runtimes are already released.
+- Lifecycle is explicit: `MEIGHT_IDLE_TIMEOUT_SEC` controls daemon idle shutdown (foreground default 1800s, `0` disables; `daemon --idle-timeout-sec` overrides). Managed `dispatch`/LaunchAgent starts pass idle disable through both env and daemon args; LaunchAgent jobs also infer managed mode from `XPC_SERVICE_NAME` if an older loaded job lacks the env. `MEIGHT_WORKER_GC_TTL_SEC` controls how long terminal worker status remains in daemon memory (default 3600s). Disk artifacts use a separate `MEIGHT_SESSION_RETENTION_SEC` window (default 30 days, `0` disables); pruning runs off the accept loop no more than hourly.
+- The daemon home and every state directory leaf are real owner-only directories (`0700`); worker state symlinks are rejected and the socket is `0600`. The daemon recomputes repo root/key/home and validates raw request fields, validates worker names at CLI and socket boundaries, and bounds one JSON request to 1 MiB. Privacy comes from parent/socket permissions, not a process-wide umask that would leak into Codex worker subprocesses.
 
 ## State machine
 
@@ -119,6 +121,8 @@ Three locks, one direction — **adding any reverse acquisition is a deadlock**:
 - **Liveness**: never trust `pid_alive` alone (pid reuse); socket ping is the primary signal, with a 2-strike policy in `wait`.
 - **FD hygiene**: terminal workers close their worker-owned SDK runtime immediately after stream end. Final `QUESTION:` is not a live stream; it keeps the same-daemon `Thread` and SDK runtime for reply, but must not keep the completed turn's `TurnHandle`.
 - **Runtime ownership**: daemon registry, not disk `thread_id`, is the source of truth for live/followable sessions. `wait` asks the daemon for `runtime_status`; if a disk-active worker is not attached to the live daemon, it is marked failed/lost instead of being polled forever.
+- **Crash reconciliation**: only after the daemon wins the singleton flock, prior `starting`, `running`, and `needs_input` rows are atomically marked `failed` with `runtime_lost_detail` and immutable `terminal_at`; their existing evidence remains. Active hidden threads are deliberately not resumed.
+- **Disk retention**: only real, non-symlink terminal worker directories with a valid expired `terminal_at` are eligible (`updated_at` is a legacy-only fallback). Invalid/missing timestamps, active states, symlinks, and registry-owned names fail safe. Under `reg_lock`, the daemon rechecks eligibility/ownership and atomically renames to a cleanup tombstone; recursive deletion happens after releasing the lock. Later passes recover leftover tombstones only after the same terminal/expiry/registry checks—the prefix alone is not trusted because legacy worker names could collide with it.
 - `status.json` writes: temp name includes pid+thread-id, then `os.replace` (a fixed temp name lets concurrent writers steal each other's files).
 - **Namespace isolation**: worker names only need to be unique inside the invoking repo namespace. `list --all-repos` reads every repo namespace when a global view is needed.
 
@@ -199,14 +203,17 @@ State-machine changes should re-run the fake-event scenarios (tool-wait→stream
   read-only `--mode review` start and verify both its status mode and saved
   mate/common preamble paths before real work. Do not use forced shutdown for
   this migration.
-- Optional LaunchAgent support lives behind `meight launchd install --load`; `KeepAlive` stays off, and the LaunchAgent sets both `MEIGHT_IDLE_TIMEOUT_SEC=0` and `daemon --idle-timeout-sec 0` so live control channels stay attached until explicit shutdown. Verify the loaded job with `launchctl print`, not only the plist file.
+- Optional LaunchAgent support lives behind `meight launchd install --load`. It uses `RunAtLoad=true` plus crash-only `KeepAlive={SuccessfulExit=false}`: unexpected accept/socket failure exits nonzero and restarts, while acknowledged shutdown exits zero and stays stopped. The daemon also exits nonzero if the published socket pathname is deleted or replaced. Loaded-job auto-start uses `launchctl kickstart` without `-k`; direct detached startup is only used after the explicit service-not-found result proves no job is loaded. Other `launchctl` failures are unknown and fail closed. Install/reload shares one bounded ownership-transfer path: non-force drain (active sessions refuse), wait for the acknowledged old PID and socket to disappear, run `launchctl bootout --wait` with a subprocess timeout for an already-loaded job, write/bootstrap the plist, then require a fresh ping/PID and socket identity whose PID matches launchd's running job PID. This provenance check rejects a detached contender started during the transfer window. A ping failure is stale only when the recorded PID is dead (if present) and the singleton lock can be acquired; a held or unprobeable lock refuses transfer. No bootout occurs before drain completion.
 - Beta SDK (`openai-codex==0.1.0b3`, pinned): meight deliberately supplies the current system `codex` executable instead of the SDK's older bundled runtime. `MEIGHT_CODEX_BIN` is the explicit override. Before bumping the SDK or Codex CLI, re-introspect the API surface (`inspect.signature`), dump real event payloads (`MEIGHT_DEBUG=1` → per-worker `debug-events.log`), and re-run the verification suite.
 - Approval requests arrive as SDK server-requests (auto-accepted by the SDK's default handler), not stream notifications — the `needs_input` tool path is defensive.
 - Per-turn `cwd`/`sandbox`/`model`/`effort`/`service_tier` come from the SDK's
   `Thread.turn()`. `--fast` maps to `service_tier="priority"`; it is not a
-  separate model slug. Worktree isolation is just `--cwd`.
+  separate model slug. Follow/reply omit inherited setting keys on the wire;
+  raw overrides are validated before reset, and a successfully created turn
+  atomically makes its selected settings the worker/status defaults for the
+  next turn. Worktree isolation is just `--cwd`.
 
 ## Deliberate non-features (v1)
 
-Custom approval handling; automatic worktree creation; launchd KeepAlive
-supervision; active-turn recovery across daemon crashes.
+Custom approval handling; automatic worktree creation; active-turn recovery
+across daemon crashes; count/size-based artifact eviction.

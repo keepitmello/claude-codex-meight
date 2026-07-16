@@ -17,6 +17,7 @@ import re
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -35,8 +36,14 @@ STATUS_THROTTLE_SEC = 2.0
 EVENT_LINE_MAX = 300
 DEFAULT_IDLE_TIMEOUT_SEC = 30 * 60
 DEFAULT_WORKER_GC_TTL_SEC = 60 * 60
+DEFAULT_SESSION_RETENTION_SEC = 30 * 24 * 60 * 60
+RETENTION_CLEANUP_INTERVAL_SEC = 60 * 60
+MAX_SOCKET_REQUEST_BYTES = 1024 * 1024
 LAUNCHD_LABEL = "com.keepitmello.meight"
 MANAGED_DAEMON_IDLE_TIMEOUT_SEC = "0"
+LAUNCHD_TRANSFER_TIMEOUT_SEC = 15.0
+WORKER_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
+PRUNE_TOMBSTONE_PREFIX = ".meight-prune-"
 
 # Mode contracts resolve relative to this file so any clone location works.
 _SKILLS_ROOT = Path(__file__).resolve().parent / "skills"
@@ -67,6 +74,11 @@ MODEL_ALIASES = {
 }
 
 EFFORT_CHOICES = ["low", "medium", "high", "xhigh", "ultra", "max"]
+
+# follow/reply must distinguish an omitted option from an explicit false-y value
+# such as --no-fast. argparse keeps this process-local sentinel out of the socket
+# request; missing request keys are the daemon protocol's inheritance signal.
+INHERIT_TURN_SETTING = object()
 
 
 def allow_dynamic_sdk_effort(effort: str) -> None:
@@ -318,6 +330,26 @@ def now_iso() -> str:
     return now_kst().isoformat(timespec="seconds")
 
 
+def parse_aware_timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed
+
+
+def is_real_directory(path: Path) -> bool:
+    try:
+        mode = os.lstat(path).st_mode
+    except OSError:
+        return False
+    return stat.S_ISDIR(mode) and not stat.S_ISLNK(mode)
+
+
 def _env_float(name: str, default: float) -> float:
     raw = os.environ.get(name)
     if raw is None:
@@ -333,6 +365,49 @@ def _clamp_nonnegative_float(value: float | str) -> float:
         return max(0.0, float(value))
     except (TypeError, ValueError):
         return DEFAULT_IDLE_TIMEOUT_SEC
+
+
+def validate_worker_name(name: object) -> str:
+    """Return a filesystem-safe worker name or reject it at the trust boundary."""
+    if not isinstance(name, str) or not WORKER_NAME_RE.fullmatch(name):
+        raise ValueError(
+            "invalid worker name: use 1-128 ASCII letters, digits, '.', '_' or '-', "
+            "starting with a letter or digit"
+        )
+    return name
+
+
+def worker_name_arg(value: str) -> str:
+    try:
+        return validate_worker_name(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
+
+
+def ensure_private_dir(path: Path) -> Path:
+    """Create/repair an owner-only directory without ever following its leaf as a symlink."""
+    try:
+        before = os.lstat(path)
+    except FileNotFoundError:
+        path.mkdir(parents=True, mode=0o700, exist_ok=True)
+        before = os.lstat(path)
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISDIR(before.st_mode):
+        raise RuntimeError(f"unsafe state directory (must be a real directory): {path}")
+    os.chmod(path, 0o700)
+    return path
+
+
+def ensure_worker_state_dir(home: Path, repo_home: Path, name: str) -> Path:
+    """Create the derived worker path, rejecting every mutable state leaf symlink."""
+    name = validate_worker_name(name)
+    home = ensure_private_dir(home)
+    repos = ensure_private_dir(home / "repos")
+    expected_parent = repos.resolve()
+    if repo_home.parent.resolve() != expected_parent:
+        raise ValueError("repo home escapes daemon repos directory")
+    ensure_private_dir(repo_home)
+    workers = ensure_private_dir(repo_home / "workers")
+    return ensure_private_dir(workers / name)
 
 
 def default_daemon_idle_timeout_sec() -> float:
@@ -409,6 +484,25 @@ def repo_context(home: Path, cwd: str | Path | None = None) -> dict:
     return {"repo_root": str(root), "repo_key": key, "repo_home": str(repo_home)}
 
 
+def verified_repo_context(home: Path, req: dict) -> dict:
+    """Derive repo state inside the daemon and reject forged client context fields."""
+    raw_root = req.get("repo_root")
+    raw_key = req.get("repo_key")
+    raw_home = req.get("repo_home")
+    if not all(isinstance(value, str) and value for value in (raw_root, raw_key, raw_home)):
+        raise ValueError("missing repo context")
+    derived = repo_context(home, raw_root)
+    supplied_root = str(Path(raw_root).expanduser().resolve())
+    supplied_home = str(Path(raw_home).expanduser().resolve())
+    if supplied_root != derived["repo_root"]:
+        raise ValueError("repo_root does not match daemon-derived repository root")
+    if raw_key != derived["repo_key"]:
+        raise ValueError("repo_key does not match daemon-derived repository key")
+    if supplied_home != str(Path(derived["repo_home"]).resolve()):
+        raise ValueError("repo_home does not match daemon-derived state path")
+    return derived
+
+
 def registry_key(repo_key: str, name: str) -> str:
     return f"{repo_key}\0{name}"
 
@@ -418,6 +512,15 @@ def atomic_write_json(path: Path, obj: dict) -> None:
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, path)
+
+
+def read_bounded_json(path: Path, limit: int = MAX_SOCKET_REQUEST_BYTES) -> object:
+    """Read a small state record with a hard byte bound, including under reg_lock rechecks."""
+    with open(path, "rb") as source:
+        payload = source.read(limit + 1)
+    if len(payload) > limit:
+        raise ValueError(f"JSON state exceeds {limit} byte limit")
+    return json.loads(payload.decode("utf-8"))
 
 
 def pid_alive(pid: int) -> bool:
@@ -611,6 +714,7 @@ class Worker:
             "state": "starting",
             "started_at": now_iso(),
             "updated_at": now_iso(),
+            "terminal_at": None,
             "repo_root": self.repo_root,
             "repo_key": self.repo_key,
             "daemon_pid": os.getpid(),
@@ -643,13 +747,16 @@ class Worker:
         if not force and now - self._last_status_write < STATUS_THROTTLE_SEC:
             return
         self._last_status_write = now
-        self.status["updated_at"] = now_iso()
+        timestamp = now_iso()
+        self.status["updated_at"] = timestamp
         if self._current_item_label and self._current_item_since is not None:
             elapsed = int(time.monotonic() - self._current_item_since)
             self.status["current_item"] = f"{self._current_item_label} ({elapsed}s)"
         else:
             self.status["current_item"] = None
         state = self.status.get("state")
+        if state in TERMINAL_STATES and not self.status.get("terminal_at"):
+            self.status["terminal_at"] = timestamp
         if state in TERMINAL_STATES and self.terminal_since is None:
             self.terminal_since = time.monotonic()
         elif state not in TERMINAL_STATES:
@@ -983,6 +1090,7 @@ class Worker:
                 "turn_id": None,
                 "state": "starting",
                 "started_at": now_iso(),
+                "terminal_at": None,
                 "daemon_pid": os.getpid(),
                 "current_item": None,
                 "plan": [],
@@ -1001,6 +1109,20 @@ class Worker:
                     (self.dir / fname).unlink()
                 except FileNotFoundError:
                     pass
+            self.write_status(force=True)
+
+    def record_turn_settings(self, model: str | None, effort: str,
+                             service_tier: str | None) -> None:
+        """Persist settings only after a follow turn has been created successfully."""
+        with self.lock:
+            self.model = model
+            self.effort = effort
+            self.service_tier = service_tier
+            self.status.update({
+                "model": model,
+                "effort": effort,
+                "service_tier": service_tier,
+            })
             self.write_status(force=True)
 
     def current_state(self) -> str:
@@ -1083,10 +1205,27 @@ class Daemon:
             else default_daemon_idle_timeout_sec()
         )
         self.worker_gc_ttl_sec = _env_float("MEIGHT_WORKER_GC_TTL_SEC", DEFAULT_WORKER_GC_TTL_SEC)
+        self.session_retention_sec = _env_float(
+            "MEIGHT_SESSION_RETENTION_SEC", DEFAULT_SESSION_RETENTION_SEC
+        )
         self.last_activity = time.monotonic()
+        self.last_retention_cleanup = -RETENTION_CLEANUP_INTERVAL_SEC
+        self.retention_lock = threading.Lock()
+        self.retention_thread: threading.Thread | None = None
+        self.socket_identity: tuple[int, int] | None = None
 
     def touch_activity(self) -> None:
         self.last_activity = time.monotonic()
+
+    def _owns_socket_path(self) -> bool:
+        """Confirm the published socket pathname still names this daemon's socket."""
+        if self.socket_identity is None:
+            return False
+        try:
+            current = os.lstat(self.sock_path)
+        except OSError:
+            return False
+        return self.socket_identity == (current.st_dev, current.st_ino)
 
     def log(self, msg: str) -> None:
         try:
@@ -1098,14 +1237,16 @@ class Daemon:
     # ── Startup/Cleanup ──
 
     def run(self) -> int:
-        self.home.mkdir(parents=True, exist_ok=True)
-        (self.home / "repos").mkdir(exist_ok=True)
+        ensure_private_dir(self.home)
+        ensure_private_dir(self.home / "repos")
 
         # Singleton guard 1: flock blocks concurrent startup regardless of pid file presence/reuse.
         self.lock_file = open(self.home / "daemon.lock", "w")
         try:
             fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
+            self.lock_file.close()
+            self.lock_file = None
             print("daemon already running (daemon.lock held)", file=sys.stderr)
             return 1
         # Singleton guard 2: never unlink an existing socket if it is alive.
@@ -1119,8 +1260,15 @@ class Daemon:
             except FileNotFoundError:
                 pass
 
+        # Ownership is now exclusive. Active rows from the previous daemon cannot
+        # be resumed because hidden ephemeral SDK threads live only in that process.
+        self._reconcile_startup_orphans()
+
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.server.bind(str(self.sock_path))
+        os.chmod(self.sock_path, 0o600)
+        sock_stat = os.lstat(self.sock_path)
+        self.socket_identity = (sock_stat.st_dev, sock_stat.st_ino)
         self.server.listen(16)
         self.server.settimeout(1.0)
         self.pid_path.write_text(str(os.getpid()) + "\n")
@@ -1130,23 +1278,189 @@ class Daemon:
 
         self.log(
             f"daemon started pid={os.getpid()} home={self.home} "
-            f"idle_timeout_sec={self.idle_timeout_sec:g}"
+            f"idle_timeout_sec={self.idle_timeout_sec:g} "
+            f"session_retention_sec={self.session_retention_sec:g}"
         )
         print(f"claude-codex-meight daemon listening on {self.sock_path} (pid {os.getpid()})", flush=True)
 
+        exit_code = 0
+        self._schedule_retention_cleanup()
         try:
             while not self.shutting_down.is_set():
+                if not self._owns_socket_path():
+                    self.log("daemon socket pathname ownership lost")
+                    exit_code = 1
+                    break
                 try:
                     conn, _ = self.server.accept()
                 except socket.timeout:
                     self._maintenance()
                     continue
-                except OSError:
-                    break  # socket closed = shutdown
+                except OSError as e:
+                    if self.shutting_down.is_set():
+                        break  # intentional close after shutdown acknowledgement
+                    self.log(f"unexpected accept failure: {type(e).__name__}: {e}")
+                    exit_code = 1
+                    break
                 threading.Thread(target=self._handle_conn, args=(conn,), daemon=True).start()
         finally:
             self._cleanup()
-        return 0
+        return exit_code
+
+    def _reconcile_startup_orphans(self) -> None:
+        """Preserve prior evidence while making non-resumable active rows terminal."""
+        repos_dir = self.home / "repos"
+        if not is_real_directory(repos_dir):
+            return
+        for repo_dir in repos_dir.iterdir():
+            workers_dir = repo_dir / "workers"
+            if not is_real_directory(repo_dir) or not is_real_directory(workers_dir):
+                continue
+            for worker_dir in workers_dir.iterdir():
+                status_path = worker_dir / "status.json"
+                if (not is_real_directory(worker_dir) or status_path.is_symlink()
+                        or not status_path.is_file()):
+                    continue
+                try:
+                    status_obj = read_bounded_json(status_path)
+                except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+                    continue
+                if not isinstance(status_obj, dict) or status_obj.get("state") not in ACTIVE_STATES:
+                    continue
+                timestamp = now_iso()
+                prior_state = status_obj.get("state")
+                status_obj["state"] = "failed"
+                status_obj["needs_input_detail"] = None
+                status_obj["needs_input_source"] = None
+                status_obj["needs_input_target"] = None
+                status_obj["needs_input_kind"] = None
+                status_obj["runtime_lost_detail"] = (
+                    f"daemon restarted; orphaned {prior_state} runtime from daemon pid "
+                    f"{status_obj.get('daemon_pid')} cannot be resumed"
+                )
+                status_obj["updated_at"] = timestamp
+                if not status_obj.get("terminal_at"):
+                    status_obj["terminal_at"] = timestamp
+                try:
+                    atomic_write_json(status_path, status_obj)
+                    with open(worker_dir / "events.log", "a", encoding="utf-8") as event_file:
+                        event_file.write(
+                            f"{timestamp} [runtime/lost] {status_obj['runtime_lost_detail']}\n"
+                        )
+                except OSError as e:
+                    self.log(f"orphan reconciliation failed path={worker_dir}: {e!r}")
+
+    def _retention_timestamp(self, status_obj: dict) -> datetime | None:
+        if "terminal_at" in status_obj:
+            return parse_aware_timestamp(status_obj.get("terminal_at"))
+        return parse_aware_timestamp(status_obj.get("updated_at"))
+
+    def _expired_worker_status(self, worker_dir: Path, cutoff_now: datetime) -> bool:
+        status_path = worker_dir / "status.json"
+        if (not is_real_directory(worker_dir) or status_path.is_symlink()
+                or not status_path.is_file()):
+            return False
+        try:
+            status_obj = read_bounded_json(status_path)
+        except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+            return False
+        if not isinstance(status_obj, dict) or status_obj.get("state") not in TERMINAL_STATES:
+            return False
+        terminal_at = self._retention_timestamp(status_obj)
+        if terminal_at is None:
+            return False
+        return (cutoff_now - terminal_at).total_seconds() >= self.session_retention_sec
+
+    def _prune_expired_sessions(self, cutoff_now: datetime | None = None) -> None:
+        """Rename eligible state under reg_lock; perform recursive deletion after releasing it."""
+        if self.session_retention_sec <= 0:
+            return
+        cutoff_now = cutoff_now or now_kst()
+        repos_dir = self.home / "repos"
+        if not is_real_directory(repos_dir):
+            return
+        tombstone_candidates: list[tuple[str, str, Path]] = []
+        candidates: list[tuple[str, str, Path]] = []
+        for repo_dir in repos_dir.iterdir():
+            workers_dir = repo_dir / "workers"
+            if not is_real_directory(repo_dir) or not is_real_directory(workers_dir):
+                continue
+            for entry in workers_dir.iterdir():
+                if entry.name.startswith(PRUNE_TOMBSTONE_PREFIX):
+                    if self._expired_worker_status(entry, cutoff_now):
+                        tombstone_candidates.append((repo_dir.name, entry.name, entry))
+                    continue
+                try:
+                    validate_worker_name(entry.name)
+                except ValueError:
+                    continue
+                if self._expired_worker_status(entry, cutoff_now):
+                    candidates.append((repo_dir.name, entry.name, entry))
+
+        renamed: list[Path] = []
+        recovered: list[Path] = []
+        rename_errors: list[tuple[Path, OSError]] = []
+        with self.reg_lock:
+            # Prefix alone is not proof of an internal tombstone: older meight
+            # versions allowed worker names beginning with it. Reapply the same
+            # terminal/expiry/registry gates before recovering an interrupted delete.
+            for repo_key, name, tombstone in tombstone_candidates:
+                if self._worker_key(repo_key, name) in self.workers:
+                    continue
+                if self._expired_worker_status(tombstone, cutoff_now):
+                    recovered.append(tombstone)
+            for repo_key, name, worker_dir in candidates:
+                if self._worker_key(repo_key, name) in self.workers:
+                    continue
+                if not self._expired_worker_status(worker_dir, cutoff_now):
+                    continue
+                tombstone = worker_dir.with_name(
+                    f"{PRUNE_TOMBSTONE_PREFIX}{name}-{os.getpid()}-{time.time_ns()}"
+                )
+                try:
+                    os.replace(worker_dir, tombstone)
+                except OSError as e:
+                    rename_errors.append((worker_dir, e))
+                    continue
+                renamed.append(tombstone)
+
+        for worker_dir, error in rename_errors:
+            self.log(f"retention rename skipped path={worker_dir}: {error!r}")
+        for tombstone in recovered + renamed:
+            if not is_real_directory(tombstone):
+                continue
+            try:
+                shutil.rmtree(tombstone)
+                self.log(f"retention pruned path={tombstone}")
+            except OSError as e:
+                self.log(f"retention delete deferred path={tombstone}: {e!r}")
+
+    def _retention_cleanup_runner(self) -> None:
+        try:
+            self._prune_expired_sessions()
+        except Exception as e:
+            self.log(f"retention cleanup error: {type(e).__name__}: {e}")
+        finally:
+            with self.retention_lock:
+                self.retention_thread = None
+
+    def _schedule_retention_cleanup(self, now: float | None = None) -> bool:
+        if self.session_retention_sec <= 0:
+            return False
+        now = time.monotonic() if now is None else now
+        with self.retention_lock:
+            if self.retention_thread is not None:
+                return False
+            if now - self.last_retention_cleanup < RETENTION_CLEANUP_INTERVAL_SEC:
+                return False
+            self.last_retention_cleanup = now
+            self.retention_thread = threading.Thread(
+                target=self._retention_cleanup_runner,
+                daemon=True,
+                name="meight-retention",
+            )
+            self.retention_thread.start()
+        return True
 
     def _on_signal(self, signum, frame) -> None:
         self.log(f"signal {signum} received → shutdown")
@@ -1199,6 +1513,7 @@ class Daemon:
                     self.log(f"gc worker={w.name} repo={w.repo_key} state={w.current_state()}")
                     del self.workers[key]
             active = self._active_workers_locked()
+        self._schedule_retention_cleanup(now)
         if active:
             return
         if self.idle_timeout_sec and now - self.last_activity >= self.idle_timeout_sec:
@@ -1210,11 +1525,17 @@ class Daemon:
             workers = list(self.workers.values())
         for w in workers:
             w.detach_runtime_refs_if_idle(self, w.generation, "daemon cleanup", keep_thread=False)
-        for p in (self.sock_path, self.pid_path):
-            try:
-                p.unlink()
-            except FileNotFoundError:
-                pass
+        try:
+            current = os.lstat(self.sock_path)
+            if self.socket_identity == (current.st_dev, current.st_ino):
+                self.sock_path.unlink()
+        except FileNotFoundError:
+            pass
+        try:
+            if int(self.pid_path.read_text().strip()) == os.getpid():
+                self.pid_path.unlink()
+        except (FileNotFoundError, OSError, ValueError):
+            pass
         if self.lock_file is not None:
             try:
                 self.lock_file.close()  # release flock
@@ -1233,10 +1554,18 @@ class Daemon:
                 if not chunk:
                     return
                 buf += chunk
-            req = json.loads(buf.split(b"\n", 1)[0].decode("utf-8"))
+                if len(buf) > MAX_SOCKET_REQUEST_BYTES:
+                    raise ValueError(f"request exceeds {MAX_SOCKET_REQUEST_BYTES} byte limit")
+            request_line = buf.split(b"\n", 1)[0]
+            if len(request_line) > MAX_SOCKET_REQUEST_BYTES:
+                raise ValueError(f"request exceeds {MAX_SOCKET_REQUEST_BYTES} byte limit")
+            req = json.loads(request_line.decode("utf-8"))
+            if not isinstance(req, dict):
+                raise ValueError("request must be a JSON object")
             resp = self._dispatch(req)
+            shutdown = resp.pop("_shutdown", False)
             conn.sendall((json.dumps(resp, ensure_ascii=False) + "\n").encode("utf-8"))
-            if resp.pop("_shutdown", False):
+            if shutdown:
                 threading.Thread(target=self._shutdown_now, daemon=True).start()
         except Exception as e:
             self.log(f"conn error: {e!r}")
@@ -1258,19 +1587,24 @@ class Daemon:
                     "ok": True,
                     "pid": os.getpid(),
                     "idle_timeout_sec": self.idle_timeout_sec,
+                    "session_retention_sec": self.session_retention_sec,
                     "capabilities": DAEMON_CAPABILITIES,
                 }
             if cmd == "start":
                 return self.cmd_start(req)
             if cmd == "follow":
+                validate_worker_name(req.get("name"))
                 return self.cmd_follow(req)
             if cmd == "steer":
+                validate_worker_name(req.get("name"))
                 return self.cmd_steer(req)
             if cmd == "interrupt":
+                validate_worker_name(req.get("name"))
                 return self.cmd_interrupt(req)
             if cmd == "shutdown":
                 return self.cmd_shutdown(req)
             if cmd == "runtime_status":
+                validate_worker_name(req.get("name"))
                 return self.cmd_runtime_status(req)
             return {"ok": False, "error": f"unknown cmd: {cmd}"}
         except Exception as e:
@@ -1280,23 +1614,20 @@ class Daemon:
     # ── Command Implementations ──
 
     def _repo_from_req(self, req: dict) -> tuple[str, str, Path]:
-        repo_key = req.get("repo_key")
-        repo_root = req.get("repo_root")
-        repo_home_raw = req.get("repo_home")
-        if not repo_key or not repo_root or not repo_home_raw:
-            raise ValueError("missing repo context")
-        return str(repo_key), str(repo_root), Path(repo_home_raw)
+        context = verified_repo_context(self.home, req)
+        return context["repo_key"], context["repo_root"], Path(context["repo_home"])
 
     def _worker_key(self, repo_key: str, name: str) -> str:
         return registry_key(repo_key, name)
 
     def _load_worker_status(self, repo_home: Path, name: str) -> dict | None:
         sj = repo_home / "workers" / name / "status.json"
-        if not sj.is_file():
+        if sj.is_symlink() or not sj.is_file():
             return None
         try:
-            return json.loads(sj.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            value = read_bounded_json(sj)
+            return value if isinstance(value, dict) else None
+        except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
             return None
 
     def cmd_runtime_status(self, req: dict) -> dict:
@@ -1347,7 +1678,7 @@ class Daemon:
         except ImportError:
             ThreadSource = None
 
-        name = req["name"]
+        name = validate_worker_name(req["name"])
         repo_key, repo_root, repo_home = self._repo_from_req(req)
         wid = self._worker_key(repo_key, name)
         brief = req["brief"]
@@ -1396,7 +1727,7 @@ class Daemon:
                 mode=mode,
                 report=report,
             )
-            w.dir.mkdir(parents=True, exist_ok=True)
+            ensure_worker_state_dir(self.home, repo_home, name)
             # Restarting the same name creates a new worker, so reset prior outputs.
             for fname in ("events.log", "result.md", "debug-events.log", "decision.json", "decision.md"):
                 try:
@@ -1478,6 +1809,19 @@ class Daemon:
 
     def cmd_follow(self, req: dict) -> dict:
         name = req["name"]
+        raw_model = req.get("model", INHERIT_TURN_SETTING)
+        raw_effort = req.get("effort", INHERIT_TURN_SETTING)
+        raw_service_tier = req.get("service_tier", INHERIT_TURN_SETTING)
+        if raw_model is not INHERIT_TURN_SETTING and (
+                not isinstance(raw_model, str) or not raw_model.strip()):
+            return {"ok": False, "error": "model override must be a non-empty string"}
+        if raw_effort is not INHERIT_TURN_SETTING and raw_effort not in EFFORT_CHOICES:
+            return {"ok": False, "error": f"invalid effort override: {raw_effort!r}"}
+        if (raw_service_tier is not INHERIT_TURN_SETTING
+                and raw_service_tier not in ("default", "priority")):
+            return {"ok": False,
+                    "error": f"invalid service_tier override: {raw_service_tier!r}"}
+
         repo_key, repo_root, repo_home = self._repo_from_req(req)
         wid = self._worker_key(repo_key, name)
         brief = req["brief"]
@@ -1504,6 +1848,12 @@ class Daemon:
                 return {"ok": False,
                         "error": f"worker '{name}' previous stream is still finishing — retry shortly"}
 
+            model = (w.model if raw_model is INHERIT_TURN_SETTING
+                     else normalize_model(raw_model))
+            effort = w.effort if raw_effort is INHERIT_TURN_SETTING else raw_effort
+            service_tier = (w.service_tier if raw_service_tier is INHERIT_TURN_SETTING
+                            else raw_service_tier)
+
             reminder = build_follow_reminder(w.mode, w.report)
             turn_input = f"{reminder}{brief}" if use_preamble else brief
             file_brief = f"{reminder}---\n\n{brief}" if use_preamble else brief
@@ -1515,9 +1865,10 @@ class Daemon:
         # Data-plane phase — outside reg_lock for the same reason as cmd_start.
         try:
             extra = {"output_schema": REPORT_SCHEMA} if w.report == "decision" else {}
+            allow_dynamic_sdk_effort(effort)
             w.handle = w.thread.turn(
                 turn_input,
-                model=w.model, effort=w.effort, service_tier=w.service_tier,
+                model=model, effort=effort, service_tier=service_tier,
                 **extra,
             )
         except Exception as e:
@@ -1535,6 +1886,7 @@ class Daemon:
                 except Exception:
                     pass
             else:
+                w.record_turn_settings(model, effort, service_tier)
                 with w.lock:
                     gen = w.generation
                     turns = w.status["turns"]
@@ -1693,7 +2045,10 @@ def mark_worker_runtime_lost(repo_home: Path, name: str, st: dict, reason: str) 
     lost["needs_input_target"] = None
     lost["needs_input_kind"] = None
     lost["runtime_lost_detail"] = reason
-    lost["updated_at"] = now_iso()
+    timestamp = now_iso()
+    lost["updated_at"] = timestamp
+    if not lost.get("terminal_at"):
+        lost["terminal_at"] = timestamp
     worker_dir = repo_home / "workers" / name
     try:
         atomic_write_json(worker_dir / "status.json", lost)
@@ -1727,8 +2082,8 @@ def repo_home_for_cli(home: Path) -> Path:
     return Path(repo_context(home)["repo_home"])
 
 
-def request_repo_context(home: Path) -> dict:
-    return repo_context(home)
+def request_repo_context(home: Path, cwd: str | Path | None = None) -> dict:
+    return repo_context(home, cwd)
 
 
 def load_statuses(repo_home: Path) -> list[dict]:
@@ -1820,6 +2175,7 @@ def require_mode3_capability(home: Path) -> dict:
 
 def start_request(args, home: Path) -> dict:
     require_mode(args)
+    validate_worker_name(args.name)
     capability = require_mode3_capability(home)
     if not capability.get("ok"):
         return capability
@@ -1859,6 +2215,7 @@ def cmd_start(args, home: Path) -> int:
 
 def follow_request(args, home: Path) -> dict:
     """Send follow and fail closed if the daemon does not echo inherited mode."""
+    validate_worker_name(args.name)
     repo_home = repo_home_for_cli(home)
     status_path = repo_home / "workers" / args.name / "status.json"
     expected_mode = None
@@ -1871,6 +2228,15 @@ def follow_request(args, home: Path) -> dict:
         "cmd": "follow", "name": args.name, "brief": read_brief(args),
         "no_preamble": args.no_preamble,
     }
+    model = getattr(args, "model", INHERIT_TURN_SETTING)
+    effort = getattr(args, "effort", INHERIT_TURN_SETTING)
+    fast = getattr(args, "fast", INHERIT_TURN_SETTING)
+    if model is not INHERIT_TURN_SETTING:
+        req["model"] = normalize_model(model)
+    if effort is not INHERIT_TURN_SETTING:
+        req["effort"] = effort
+    if fast is not INHERIT_TURN_SETTING:
+        req["service_tier"] = "priority" if fast else "default"
     req.update(request_repo_context(home))
     resp = send_request(home, req)
     if resp.get("ok") and (expected_mode is None or resp.get("mode") != expected_mode):
@@ -1923,7 +2289,7 @@ def cmd_status(args, home: Path) -> int:
             for key in ("thread_id", "turn_id", "repo_root", "repo_key", "cwd",
                         "sandbox", "model", "effort", "service_tier", "thread_source",
                         "thread_ephemeral", "daemon_pid", "started_at", "updated_at",
-                        "turns", "mode", "report", "needs_input_source",
+                        "terminal_at", "turns", "mode", "report", "needs_input_source",
                         "needs_input_target", "needs_input_kind", "needs_input_detail",
                         "runtime_lost_detail", "error_detail"):
                 print(f"  {key}: {st.get(key)}")
@@ -2039,23 +2405,37 @@ def cmd_wait(args, home: Path) -> int:
 
 
 def ensure_daemon(home: Path) -> bool:
-    """Auto-start the daemon detached after ping failure and poll until it responds."""
+    """Auto-start through launchd when loaded; detach only with no installed job."""
     if probe_daemon_socket(home / "meight.sock"):
         return True
-    home.mkdir(parents=True, exist_ok=True)
-    with open(home / "daemon.log", "a", encoding="utf-8") as log_f:
-        subprocess.Popen(
-            [
-                sys.executable,
-                str(Path(__file__).resolve()),
-                "daemon",
-                "--idle-timeout-sec",
-                MANAGED_DAEMON_IDLE_TIMEOUT_SEC,
-            ],
-            stdout=log_f, stderr=log_f, stdin=subprocess.DEVNULL,
-            start_new_session=True,
-            env=managed_daemon_env(home),
+    ensure_private_dir(home)
+    ensure_private_dir(home / "repos")
+    launchd_loaded = launchd_service_loaded()
+    if launchd_loaded is None:
+        return False
+    if launchd_loaded:
+        proc = subprocess.run(
+            ["launchctl", "kickstart", f"{launchctl_domain()}/{LAUNCHD_LABEL}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=LAUNCHD_TRANSFER_TIMEOUT_SEC,
         )
+        if proc.returncode != 0:
+            return False
+    else:
+        with open(home / "daemon.log", "a", encoding="utf-8") as log_f:
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "daemon",
+                    "--idle-timeout-sec",
+                    MANAGED_DAEMON_IDLE_TIMEOUT_SEC,
+                ],
+                stdout=log_f, stderr=log_f, stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                env=managed_daemon_env(home),
+            )
     deadline = time.monotonic() + 6
     while time.monotonic() < deadline:
         if probe_daemon_socket(home / "meight.sock"):
@@ -2132,7 +2512,7 @@ def cmd_ping(args, home: Path) -> int:
     resp = expect_ok(send_request(home, {"cmd": "ping"}, timeout=10))
     capabilities = ",".join(resp.get("capabilities") or []) or "none"
     print(f"pong (daemon pid {resp.get('pid')}, idle_timeout_sec={resp.get('idle_timeout_sec')}, "
-          f"capabilities={capabilities})")
+          f"session_retention_sec={resp.get('session_retention_sec')}, capabilities={capabilities})")
     return 0
 
 
@@ -2141,7 +2521,8 @@ def launchd_plist_path() -> Path:
 
 
 def launchd_payload(home: Path) -> dict:
-    home.mkdir(parents=True, exist_ok=True)
+    ensure_private_dir(home)
+    ensure_private_dir(home / "repos")
     return {
         "Label": LAUNCHD_LABEL,
         "ProgramArguments": [
@@ -2152,9 +2533,9 @@ def launchd_payload(home: Path) -> dict:
             MANAGED_DAEMON_IDLE_TIMEOUT_SEC,
         ],
         "RunAtLoad": True,
-        # KeepAlive stays off; managed daemon launches disable idle shutdown so live
-        # steer/follow/interrupt channels remain attached until explicit shutdown.
-        "KeepAlive": False,
+        # Restart only after an abnormal exit. Intentional shutdown exits zero and
+        # remains stopped until the next explicit kickstart/ownership transfer.
+        "KeepAlive": {"SuccessfulExit": False},
         "EnvironmentVariables": {
             **({"PATH": os.environ["PATH"]} if os.environ.get("PATH") else {}),
             **({"MEIGHT_CODEX_BIN": os.environ["MEIGHT_CODEX_BIN"]}
@@ -2171,17 +2552,193 @@ def launchctl_domain() -> str:
     return f"gui/{os.getuid()}"
 
 
+def launchd_service_loaded() -> bool | None:
+    """Return loaded state, or None when launchctl cannot establish ownership safely."""
+    try:
+        proc = subprocess.run(
+            ["launchctl", "print", f"{launchctl_domain()}/{LAUNCHD_LABEL}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode == 0:
+        return True
+    # macOS launchctl uses EX_NOTFOUND (113) plus this diagnostic when the
+    # service is definitively absent. Every other failure is ambiguous and must
+    # not authorize an unmanaged fallback daemon or ownership transfer.
+    if proc.returncode == 113 and "Could not find service" in (proc.stderr or ""):
+        return False
+    return None
+
+
+def daemon_ping(home: Path, timeout: float = 3.0) -> dict | None:
+    try:
+        response = send_request(home, {"cmd": "ping"}, timeout=timeout)
+    except SystemExit:
+        return None
+    return response if response.get("ok") else None
+
+
+def wait_for_daemon_departure(home: Path, old_pid: int, timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        socket_gone = not (home / "meight.sock").exists()
+        if socket_gone and not pid_alive(old_pid):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def socket_path_identity(path: Path) -> tuple[int, int] | None:
+    try:
+        current = os.lstat(path)
+    except OSError:
+        return None
+    return current.st_dev, current.st_ino
+
+
+def daemon_singleton_lock_available(home: Path) -> bool | None:
+    """Probe singleton ownership without trusting a missing or corrupt pid file."""
+    try:
+        lock_file = open(home / "daemon.lock", "a+")
+    except OSError:
+        return None
+    try:
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        except OSError:
+            return None
+        return True
+    finally:
+        lock_file.close()
+
+
+def launchd_running_pid(timeout: float = 5.0) -> int | None:
+    """Return the PID launchd currently attributes to the managed job."""
+    try:
+        proc = subprocess.run(
+            ["launchctl", "print", f"{launchctl_domain()}/{LAUNCHD_LABEL}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    match = re.search(r"^\s*pid = ([0-9]+)\s*$", proc.stdout or "", re.MULTILINE)
+    return int(match.group(1)) if match else None
+
+
+def wait_for_fresh_daemon(home: Path, old_pid: int | None,
+                          old_socket_identity: tuple[int, int] | None,
+                          timeout: float) -> dict | None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        response = daemon_ping(home, timeout=min(1.0, max(0.1, deadline - time.monotonic())))
+        pid = response.get("pid") if response else None
+        current_socket_identity = socket_path_identity(home / "meight.sock")
+        pid_is_fresh = old_pid is None or pid != old_pid
+        socket_is_fresh = (
+            current_socket_identity is not None
+            and (old_socket_identity is None or current_socket_identity != old_socket_identity)
+        )
+        if isinstance(pid, int) and pid_is_fresh and socket_is_fresh:
+            remaining = max(0.1, deadline - time.monotonic())
+            if launchd_running_pid(timeout=min(1.0, remaining)) == pid:
+                return response
+        time.sleep(0.05)
+    return None
+
+
+def drain_existing_daemon(home: Path, timeout: float) -> tuple[int | None, str | None]:
+    """Acknowledge non-force shutdown, then wait for both old PID and socket ownership to end."""
+    response = daemon_ping(home)
+    if response is None:
+        stale_pid = read_daemon_pid(home)
+        if stale_pid is not None and pid_alive(stale_pid):
+            return stale_pid, "daemon ownership is present but not healthy enough to drain safely"
+        lock_available = daemon_singleton_lock_available(home)
+        if lock_available is False:
+            return stale_pid, "daemon singleton lock is held but its socket is not healthy enough to drain safely"
+        if lock_available is None:
+            return stale_pid, "could not establish daemon singleton ownership safely"
+        return stale_pid, None
+    old_pid = response.get("pid")
+    if not isinstance(old_pid, int):
+        return None, "live daemon ping did not return a valid pid"
+    shutdown = send_request(home, {"cmd": "shutdown", "force": False}, timeout=timeout)
+    if not shutdown.get("ok"):
+        return old_pid, shutdown.get("error") or "daemon refused non-force shutdown"
+    if not wait_for_daemon_departure(home, old_pid, timeout):
+        return old_pid, f"timed out waiting for acknowledged daemon pid {old_pid} and socket to disappear"
+    return old_pid, None
+
+
+def load_launchagent_with_ownership_transfer(home: Path, path: Path, payload: dict,
+                                             timeout: float = LAUNCHD_TRANSFER_TIMEOUT_SEC) -> int:
+    loaded = launchd_service_loaded()
+    if loaded is None:
+        print("error: could not determine LaunchAgent ownership", file=sys.stderr)
+        return 1
+    old_socket_identity = socket_path_identity(home / "meight.sock")
+    old_pid, error = drain_existing_daemon(home, timeout)
+    if error:
+        print(f"refused: {error}", file=sys.stderr)
+        return 1
+    if loaded:
+        try:
+            bootout = subprocess.run(
+                ["launchctl", "bootout", "--wait", f"{launchctl_domain()}/{LAUNCHD_LABEL}"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired:
+            print("error: launchctl bootout timed out", file=sys.stderr)
+            return 1
+        if bootout.returncode != 0:
+            print(f"error: launchctl bootout failed ({bootout.returncode})", file=sys.stderr)
+            return 1
+    path.write_bytes(plistlib.dumps(payload, sort_keys=False))
+    try:
+        subprocess.run(
+            ["launchctl", "bootstrap", launchctl_domain(), str(path)],
+            check=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        print("error: launchctl bootstrap timed out", file=sys.stderr)
+        return 1
+    except subprocess.CalledProcessError as e:
+        print(f"error: launchctl bootstrap failed ({e.returncode})", file=sys.stderr)
+        return 1
+    fresh = wait_for_fresh_daemon(home, old_pid, old_socket_identity, timeout)
+    if fresh is None:
+        print("error: LaunchAgent loaded but no fresh daemon pid became ready", file=sys.stderr)
+        return 1
+    print(f"loaded {LAUNCHD_LABEL} (daemon pid {fresh['pid']})")
+    return 0
+
+
 def cmd_launchd_install(args, home: Path) -> int:
     path = launchd_plist_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(plistlib.dumps(launchd_payload(home), sort_keys=False))
-    print(f"wrote {path}")
-    if args.load:
-        subprocess.run(["launchctl", "bootout", launchctl_domain(), str(path)],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["launchctl", "bootstrap", launchctl_domain(), str(path)], check=True)
-        print(f"loaded {LAUNCHD_LABEL}")
-    return 0
+    payload = launchd_payload(home)
+    if not args.load:
+        path.write_bytes(plistlib.dumps(payload, sort_keys=False))
+        print(f"wrote {path}")
+        return 0
+    result = load_launchagent_with_ownership_transfer(home, path, payload)
+    if result == 0:
+        print(f"wrote {path}")
+    return result
 
 
 def cmd_launchd_uninstall(args, home: Path) -> int:
@@ -2249,12 +2806,12 @@ def build_parser() -> argparse.ArgumentParser:
                         help="use ThreadSource.user instead of the default hidden ThreadSource.subagent — only for tools that require a visible/main Codex Desktop thread")
 
     sp = sub.add_parser("start", help="start a new worker")
-    sp.add_argument("name")
+    sp.add_argument("name", type=worker_name_arg)
     add_start_options(sp)
     sp.set_defaults(fn=cmd_start)
 
     sp = sub.add_parser("dispatch", help="one-shot: auto-start daemon + start + wait + print result")
-    sp.add_argument("name")
+    sp.add_argument("name", type=worker_name_arg)
     add_start_options(sp)
     sp.add_argument("--timeout", type=float, default=1800)
     sp.add_argument("--progress", type=float, default=300.0,
@@ -2264,16 +2821,30 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(fn=cmd_dispatch)
 
     sp = sub.add_parser("follow", help="new turn on the same thread for a terminal/QUESTION worker")
-    sp.add_argument("name")
+    sp.add_argument("name", type=worker_name_arg)
     sp.add_argument("--brief-file", help="read from stdin when '-'")
     sp.add_argument("--brief")
+    sp.add_argument("--model", default=INHERIT_TURN_SETTING,
+                    help="override the model for this and later turns; omitted inherits")
+    sp.add_argument("--effort", choices=EFFORT_CHOICES, default=INHERIT_TURN_SETTING,
+                    help="override reasoning effort for this and later turns; omitted inherits")
+    sp.add_argument("--fast", action=argparse.BooleanOptionalAction,
+                    default=INHERIT_TURN_SETTING,
+                    help="override Fast tier for this and later turns; omitted inherits")
     sp.add_argument("--no-preamble", action="store_true")
     sp.set_defaults(fn=cmd_follow)
 
     sp = sub.add_parser("reply", help="one-shot reply: follow + wait + print latest turn result (for QUESTION)")
-    sp.add_argument("name")
+    sp.add_argument("name", type=worker_name_arg)
     sp.add_argument("--brief-file", help="read from stdin when '-'")
     sp.add_argument("--brief")
+    sp.add_argument("--model", default=INHERIT_TURN_SETTING,
+                    help="override the model for this and later turns; omitted inherits")
+    sp.add_argument("--effort", choices=EFFORT_CHOICES, default=INHERIT_TURN_SETTING,
+                    help="override reasoning effort for this and later turns; omitted inherits")
+    sp.add_argument("--fast", action=argparse.BooleanOptionalAction,
+                    default=INHERIT_TURN_SETTING,
+                    help="override Fast tier for this and later turns; omitted inherits")
     sp.add_argument("--no-preamble", action="store_true")
     sp.add_argument("--timeout", type=float, default=1800)
     sp.add_argument("--progress", type=float, default=300.0,
@@ -2283,16 +2854,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(fn=cmd_reply)
 
     sp = sub.add_parser("steer", help="inject mid-turn text into a running turn")
-    sp.add_argument("name")
+    sp.add_argument("name", type=worker_name_arg)
     sp.add_argument("text")
     sp.set_defaults(fn=cmd_steer)
 
     sp = sub.add_parser("interrupt", help="interrupt a turn")
-    sp.add_argument("name")
+    sp.add_argument("name", type=worker_name_arg)
     sp.set_defaults(fn=cmd_interrupt)
 
     sp = sub.add_parser("status", help="worker status (daemon not required)")
-    sp.add_argument("name", nargs="?")
+    sp.add_argument("name", nargs="?", type=worker_name_arg)
     sp.add_argument("--json", action="store_true")
     sp.add_argument("--all-repos", action="store_true", help="show workers from every repo namespace")
     sp.set_defaults(fn=cmd_status)
@@ -2303,12 +2874,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(fn=cmd_status, name=None)
 
     sp = sub.add_parser("result", help="print decision.md when present, else result.md")
-    sp.add_argument("name")
+    sp.add_argument("name", type=worker_name_arg)
     sp.add_argument("--raw", action="store_true", help="print raw result.md even when decision.md exists")
     sp.set_defaults(fn=cmd_result)
 
     sp = sub.add_parser("wait", help="poll until terminal state")
-    sp.add_argument("name")
+    sp.add_argument("name", type=worker_name_arg)
     sp.add_argument("--timeout", type=float, default=None)
     sp.add_argument("--progress", type=float, default=300.0,
                     help="seconds between status heartbeats while waiting; 0=off")

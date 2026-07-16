@@ -278,8 +278,8 @@ Codex-as-orchestrator 프롬프트는 [`AGENTS.md`](../AGENTS.md)로 제공됩�
 | `meight start <name> --mode design\|review\|delegate [opts]` | 세션을 시작하고 thread id와 함께 즉시 반환. 감독형 워크플로우의 진입점. |
 | `meight wait <name> --timeout SEC` | 체크포인트 대기: 터미널 상태, 답변 가능한 QUESTION, 데몬 사망, 타임아웃에 반환. 타임아웃은 워커를 살려둡니다. |
 | `meight dispatch <name> --mode design\|review\|delegate [opts]` | 원샷: 데몬 자동 시작 -> capability 확인 -> start -> wait -> 선호 결과 출력. 짧고 단순하고 위험 낮은 작업 전용. |
-| `meight reply <name> --brief ...` | 답변 가능한 질문에 원샷 응답. 모드/보고를 상속하고 최신 결과를 출력. |
-| `meight follow <name> --brief ...` | 저수준: 같은 라이브 스레드에 새 턴. 모드/보고 상속. |
+| `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | 답변 가능한 질문에 원샷 응답. 모드/보고와 생략한 턴 설정을 상속하고, 명시한 설정은 새 턴부터 적용한 뒤 최신 결과를 출력. |
+| `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | 저수준: 같은 라이브 스레드에 새 턴. 모드/보고와 생략한 턴 설정을 상속하며, 명시한 설정은 이후 턴의 상속값이 됨. |
 | `meight result <name> [--raw]` | `decision.md`가 있으면 그것을, `--raw`는 원본 `result.md`를 출력. |
 | `meight status [name] [--json] [--all-repos]` | pull 요약. 테이블에 `MODE` 포함; 예전 role 필드나 긴 mode 값이 있는 레거시 행도 읽습니다. |
 | `meight steer <name> "text"` | 실행 중인 턴에 지시 주입. |
@@ -300,9 +300,11 @@ Codex-as-orchestrator 프롬프트는 [`AGENTS.md`](../AGENTS.md)로 제공됩�
 - `--sandbox ws|ro|full` 기본은 `full`; 읽기와 리뷰는 보통 `ro`.
 - `--model luna|sol|terra`는 짧은 별칭을 받고, 전체 모델 문자열은 그대로
   통과합니다.
-- `--effort low|medium|high|xhigh` 기본은 `medium`.
-- `--fast`는 해당 워커를 priority service tier로 올립니다; 생략 또는
-  `--no-fast`는 비Fast 유지.
+- `--effort low|medium|high|xhigh|ultra|max`의 시작 기본값은 `medium`.
+- `--fast`는 priority service tier, `--no-fast`는 default를 선택합니다.
+  `follow`/`reply`에서 `--model`, `--effort`, Fast 플래그를 생략하면 현재
+  워커 값을 상속합니다. 명시한 override는 그 새 턴부터 적용되고 이후 턴이
+  상속할 값으로 기록됩니다.
 - `--main-thread`는 보이는 메인 스레드가 필요한 도구를 위해 숨김 ephemeral
   subagent 스레드를 끕니다.
 
@@ -313,6 +315,22 @@ Codex-as-orchestrator 프롬프트는 [`AGENTS.md`](../AGENTS.md)로 제공됩�
 해제합니다. 최종 구조화 `QUESTION:`은 라이브 데몬에 붙어 있어 `reply`가 같은
 스레드로 답할 수 있습니다. 데몬 재시작 후에는 디스크 산출물은 남지만
 같은-스레드 reply는 만료됩니다; 새 워커를 시작하세요.
+
+워커 이름은 영문자/숫자로 시작하는 1~128자의 ASCII 영문자, 숫자, `._-`만
+허용하며 CLI와 데몬이 모두 경로 문법을 거부합니다. 데몬은 socket 요청의
+repo 경로를 믿지 않고 repo key/state home을 직접 다시 계산해 검증합니다.
+데몬 home, `repos/`, repo/worker 상태 디렉터리는 `0700`, `meight.sock`은
+`0600`이고 worker 상태 경로의 symlink는 거부합니다. 요청 한 줄은 1 MiB로
+제한합니다. 프로세스 전체 umask는 설정하지 않으므로 워커가 레포에 만드는
+파일 모드는 바뀌지 않습니다.
+
+터미널 산출물은 기본 30일 보존합니다. `MEIGHT_SESSION_RETENTION_SEC`로 초를
+지정하고 `0`이면 디스크 정리를 끕니다. 정리는 accept loop 밖에서 최대 시간당
+한 번 실행되며 active/replyable, malformed, symlink, 현재 registry에 등록된
+워커는 건드리지 않습니다. 새 터미널 전이는 불변 `terminal_at`을 기록하고
+레거시 행만 `updated_at`을 사용합니다. 데몬 crash/restart 뒤 orphan active 행은
+증거를 보존한 채 `failed`/`runtime_lost_detail`로 바뀌며 숨김 ephemeral turn은
+재개하지 않습니다.
 
 ## 구 데몬을 mode3 지원으로 업그레이드
 
@@ -343,8 +361,19 @@ fail-closed로 멈춥니다 — 그리고 start/follow 응답의 정규화된 mo
   `thread_source=subagent`, `thread_ephemeral=true`.
 - 포그라운드 `meight daemon`은 활성 워커가 없으면 기본
   `MEIGHT_IDLE_TIMEOUT_SEC` 후 종료합니다. 관리형 `dispatch` 자동 시작과
-  LaunchAgent 시작은 idle 종료를 끕니다; 라이브 값은 `meight ping`으로
-  확인하세요.
+  LaunchAgent 시작은 idle 종료를 끕니다; idle/retention 라이브 값은
+  `meight ping`으로 확인하세요.
+- LaunchAgent는 crash에만 재시작하는 `SuccessfulExit=false` supervision을
+  씁니다. 정상 shutdown은 멈춘 채 유지됩니다. job이 load되어 있으면 auto-start는
+  `launchctl kickstart`를 쓰고 `kickstart -k`는 쓰지 않습니다. detached 직접
+  시작은 job이 없을 때만 사용합니다. `launchd install --load`는 non-force drain
+  승인 뒤 기존 PID/socket 소멸을 기다리고, load된 job에 bounded
+  `launchctl bootout --wait`를 실행한 다음
+  bootstrap하여 새 PID와 socket identity를 확인하고 그 PID가 launchd가 보고한
+  실행 PID와 같은지도 검증합니다. `launchctl` 결과가
+  모호하거나 비정상 데몬이 singleton lock을 잡고 있으면 fail-closed로
+  거부합니다. 공개 socket이 삭제되거나 교체되면 데몬은 0이 아닌 코드로
+  종료되어 launchd가 다시 만들게 합니다.
 - `openai-codex`는 핀 고정입니다(`0.1.0b3`, beta). SDK나 Codex CLI를 올릴
   때는 [`SPEC.md`](../SPEC.md)의 검증 스위트를 다시 돌리세요.
 - 설계 디테일, 상태 머신, 하드닝 히스토리, 라이프사이클 주의사항은
