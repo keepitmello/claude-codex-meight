@@ -25,8 +25,8 @@
   진짜 판정이 걸린 plan 리뷰, 적대적 결함 사냥, blind design을 맡습니다 — 계약에 *디스패처에게
   도전하라, 동의가 목표가 아니다*라고 적혀 있습니다.
 - **워커**(`--mode worker`)는 디스패처 참여형 bounded 구현자입니다.
-  코드·테스트·검증·런타임 QA를 소유하고, 외부 리뷰 체인은 디스패처가
-  유지합니다.
+  코드·테스트·검증·런타임 QA를 소유하고, 외부 리뷰의 필요성과 방식은
+  디스패처가 판단합니다.
 - **델리게이트**(`--mode delegate`)는 디스패처가 기술 맥락에서 빠진 상태로
   구현과 fresh-context 독립 리뷰를 끝까지 소유합니다. 하드게이트·money path·
   frozen dispatcher review chain 작업은 worker 모드로 fail-closed 합니다.
@@ -49,37 +49,26 @@
         status.json · events.log · result.md · decision.json · decision.md
 ```
 
-## 파이프라인
+## 프로세스보다 판단
 
-Meight에는 자기 자신을 개조하며 다듬은, 의견이 있는 개발 루프가 실려
-있습니다. 모든 단계는 프레임워크 코드가 아니라 독트린(하네스가 주입하는
-파일)입니다:
+Meight가 제공하는 것은 의무 개발 파이프라인이 아니라 네 가지 세션
+모드입니다. 과설계를 피하는 것이 최우선입니다. 디스패처는 작업의 실패 비용에
+맞춰 필요한 설계·리뷰·구현·검증 게이트만 고르고, 그 선택을 한 줄로
+기록합니다.
 
-1. **방향 갈림길은 blind design.** 방향을 정하는 결정 전에, 읽기 전용
-   메이트에게 문제와 제약만 줍니다 — 앵커링될 디스패처의 의견 없이 — 그리고
-   가장 근거 있는 설계와 그에 대한 가장 강한 반론을 돌려받습니다.
-2. **Plan-review 루프.** 방향이 정해지면 디스패처가 계획을 쓰고 `mate/sol`이
-   리뷰합니다: verdict-first `APPROVE`/`REVISE`, 최대 3라운드, 이전 지적의
-   증분 재리뷰, 노이즈 억제(스타일 트집·비현실 엣지케이스 금지). `REVISE`는
-   구조화된 질문으로 같은 스레드를 살려두므로 수정이 한 대화 안에서
-   이어집니다. 승인된 계획은 versioned `PLAN.md`로 동결됩니다 — 이후 모든
-   것이 이 계약을 기준으로 판정됩니다.
-3. **워커가 구현합니다.** bounded 작업의 기본은 `worker/luna` `xhigh`(가능하면
-   `--fast`) — 싸고 유능합니다. failure-cost 하드 게이트는 acceptance-critical
-   작업 — 동시성, 보안, 공개 API 계약 설계, 데이터 마이그레이션, 횡단
-   리팩터, 돈/데이터 손상이나 비가역 피해가 가능한 모든 것 — 을
-   `worker/sol`로 올립니다. 구현 보고는 계획과의 편차, 그 이유, 의도적으로
-   하지 않은 것을 반드시 명시합니다.
-4. **리뷰 체인.** `mate/sol`이 동결된 plan을 계약으로 적대 리뷰(최대 2라운드,
-   런타임 대조, verdict는 자신이 리뷰한 대상을 정확히 명시 — stale verdict는
-   폐기됨) → 디스패처가 plan과 레포 문맥을 들고 diff 전문을 정독, 유효한
-   결함은 직접 수정, 최종 사인오프를 소유합니다.
+Blind/anchored design은 실제 방향 갈림길을 명확히 할 때 쓸 수 있습니다.
+Plan 리뷰와 적대적 코드 리뷰도 필요할 때 꺼내는 판정 도구이지 기본 단계가
+아닙니다. Worker 모드에서는 디스패처가 필요하다고 판단할 때 별도 review
+세션을 띄우고, delegate 모드에서는 계약의 fresh-context 내부 리뷰를
+사용합니다. 워커의 `done`은 여전히 주장일 뿐입니다. 리뷰한 작업의 사인오프는
+리뷰 판정과 검증 근거를 함께 요구하고, 리뷰하지 않은 작업도 검증 근거는
+필수입니다. diff 전문 읽기는 어떤 모드에서도 사인오프 게이트가 아닙니다.
 
-**게이트는 작업 크기에 비례합니다.** plan이 지배하는 작업에는 전체 체인이
-기본이지만, 작고 위험 낮고 가역적인 작업에서는 디스패처가 게이트를
-생략/축소할 수 있습니다 — 단 절대 조용히는 아닙니다: 어떤 게이트를 왜
-건너뛰었는지 사용자에게 알리거나, 애매하면 먼저 묻습니다. failure-cost 하드
-게이트와 머니패스 사인오프는 절대 생략할 수 없고, 생략은 지표로 기록됩니다.
+포함된 operator-policy 템플릿은 bounded 작업을 `luna`에 라우팅하고,
+acceptance-critical 동시성·보안·공개 API 계약 설계·데이터 마이그레이션·횡단
+리팩터 또는 돈/데이터 손상과 비가역 피해 가능성이 있는 작업에 failure-cost
+하드 게이트를 적용합니다. 이 모델 및 money-path 게이트는 조정 가능한 운영자
+정책이지 meight 인터페이스 요구사항이 아닙니다.
 
 Effort도 같은 경제학을 따릅니다: `luna`는 싸니까 `xhigh`로 돌리고, `sol`은
 `high`가 기본(overthink할 수 있어 가벼운 메이트 작업은 디스패처 재량으로
@@ -180,7 +169,7 @@ that would settle remaining uncertainty. No code changes.
 EOF
 ```
 
-짧고 단순하고 위험 낮은 작업에는 원샷 디스패치도 있습니다:
+별도 감독 세션이 가치를 더하지 않을 때는 원샷 디스패치도 쓸 수 있습니다:
 
 ```bash
 meight dispatch tiny-1 --mode worker --report decision --sandbox ro \
@@ -222,9 +211,9 @@ plain file 원장 세 개가 디스패치 루프를 쓸수록 좋게 만듭니�
   리스크 판단만은 매칭돼도 항상 재확인합니다.
 - **교훈** (`<daemon-home>/notes/lessons.md`). 반복되는 리뷰 지적과 운영
   실수가 한 줄 교훈이 되고, 재발하면 브리프 템플릿으로 승격됩니다. 실행
-  기록에는 모드, plan-review 라운드 수와 revise 원인, 승격률과 발화한
-  하드게이트 조항, 게이트 생략, 사인오프 후 결함이 담깁니다 — 라우팅
-  게이트를 감이 아니라 실측으로 튜닝하는 기준선입니다.
+  기록에는 모드, 한 줄 게이트 선택, 재라우팅 이유, 사인오프 후 결함을 남길
+  수 있습니다 — 측정 자체를 의식으로 만들지 않으면서 결과로 라우팅을
+  튜닝하기에 충분합니다.
 
 이 중 어느 것도 새 서브시스템이 아닙니다 — 파일과 독트린뿐이고, 정의는
 [`skills/meight/SKILL.md`](../skills/meight/SKILL.md#learning-loop-decision-records-preferences-lessons)에
@@ -282,7 +271,7 @@ Codex-as-orchestrator 프롬프트는 [`AGENTS.md`](../AGENTS.md)로 제공됩�
 |---|---|
 | `meight start <name> --mode design\|review\|worker\|delegate [opts]` | 세션을 시작하고 thread id 및 mode/contract 자세와 함께 즉시 반환. 감독형 워크플로우의 진입점. |
 | `meight wait <name> --timeout SEC` | 체크포인트 대기: 터미널 상태, 답변 가능한 QUESTION, 데몬 사망, 타임아웃에 반환. 타임아웃은 워커를 살려둡니다. |
-| `meight dispatch <name> --mode design\|review\|worker\|delegate [opts]` | 원샷: 데몬 자동 시작 -> capability 확인 -> start -> wait -> 선호 결과 출력. 짧고 단순하고 위험 낮은 작업 전용. |
+| `meight dispatch <name> --mode design\|review\|worker\|delegate [opts]` | 원샷: 데몬 자동 시작 -> capability 확인 -> start -> wait -> 선호 결과 출력. |
 | `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | 답변 가능한 질문에 원샷 응답. 모드/보고와 생략한 턴 설정을 상속하고, 명시한 설정은 새 턴부터 적용한 뒤 최신 결과를 출력. |
 | `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | 저수준: 같은 라이브 스레드에 새 턴. 모드/보고와 생략한 턴 설정을 상속하며, 명시한 설정은 이후 턴의 상속값이 됨. |
 | `meight result <name> [--raw]` | `decision.md`가 있으면 그것을, `--raw`는 원본 `result.md`를 출력. |
@@ -295,7 +284,7 @@ Codex-as-orchestrator 프롬프트는 [`AGENTS.md`](../AGENTS.md)로 제공됩�
 
 - `--mode design|review|worker|delegate`는 `start`/`dispatch`에 필수입니다.
   `collab`, `collaborative`, `delegated`는 허용되는 별칭입니다. Design과
-  review는 메이트 계약, worker는 디스패처가 리뷰 체인을 유지하는 참여형 구현,
+  review는 메이트 계약, worker는 디스패처가 리뷰 여부를 판단하는 참여형 구현,
   delegate는 내부 독립 리뷰까지 맡기는 전권 위임입니다. 금지 라우트는 worker로
   fail-closed 합니다.
 - `--report text|decision` 기본은 `text`; `decision`은
@@ -390,9 +379,9 @@ fail-closed로 멈춥니다. 모든 start/follow 요청은 epoch `mode4`를 싣�
   때는 [`SPEC.md`](../SPEC.md)의 검증 스위트를 다시 돌리세요.
 - 설계 디테일, 상태 머신, 하드닝 히스토리, 라이프사이클 주의사항은
   [`ARCHITECTURE.md`](../ARCHITECTURE.md)에, 전체 디스패처 프로토콜은
-  [`skills/meight/SKILL.md`](../skills/meight/SKILL.md)에 있습니다. 이
-  파이프라인이 왜 이런 모양인지 — 자기 자신을 돌려서 설계된 그 날의 기록 —
-  은 [`2026-07-14-v3-pipeline-retrospective.md`](./2026-07-14-v3-pipeline-retrospective.md)에
+  [`skills/meight/SKILL.md`](../skills/meight/SKILL.md)에 있습니다. 이전
+  파이프라인 설계 회고 — 자기 자신을 돌려서 설계된 그 날의 기록 — 는
+  [`2026-07-14-v3-pipeline-retrospective.md`](./2026-07-14-v3-pipeline-retrospective.md)에
   있습니다.
 
 ## 라이선스

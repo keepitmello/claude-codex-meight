@@ -8,11 +8,11 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
 
 1. **Observation is pull, completion is push.** Streaming worker events into the orchestrator's context would burn tokens linearly with worker runtime. Instead the daemon reduces the event stream to disk digests (`status.json`, `events.log`, `result.md`); the orchestrator polls only when it cares, and a blocking `wait`/`dispatch` (run as a background shell) delivers a push — the completion notification with the result attached, or a checkpoint wake-up when `wait --timeout` elapses while the worker keeps running. Supervised dispatch leans on that second case: a `wait --timeout` set near the expected duration is a sparse checkpoint, letting the orchestrator read one `status` and `steer` mid-run without ever streaming.
 2. **Exit codes are the API.** `0` done, `2` failed/interrupted, `3` worker has a question, `4` daemon dead, `1` timeout. An agent branches on these without parsing prose.
-3. **One call per intent (one-shot), or a supervised loop.** `dispatch` = (ensure daemon → start → wait → print result) and `reply` = (follow → wait → print last-turn result) are symmetric single background calls — one-shot driving costs the same tool calls as a native subagent, which suits trivial work. For substantial work the orchestrator instead uses `start` plus `wait`, so the door to `status`/`steer` stays open mid-run; how often it actually checks is its judgment, not a fixed cadence. Same pull/push primitives — just sampled when it matters instead of a single fire-and-forget.
+3. **One call per intent (one-shot), or a supervised session.** `dispatch` = (ensure daemon → start → wait → print result) and `reply` = (follow → wait → print last-turn result) are symmetric single background calls. `start` plus `wait` keeps the door to `status`/`steer` open mid-run. The orchestrator selects either interface by whether supervision can change the outcome, without a fixed cadence.
 4. **Mode is harness policy, not memory.** `start` and `dispatch` require
    `--mode design|review|worker|delegate`. Design and review select the
    independent challenger (`mate`) contract. Worker selects participatory
-   implementation with a dispatcher-owned review chain. Delegate selects full
+   implementation with a dispatcher-owned review choice. Delegate selects full
    delegation with internal independent review. The preamble injects the
    mode-selected skill plus
    `meight-common/CONTRACT.md`. `follow`/`reply` inherit mode and report; they
@@ -35,10 +35,9 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
    `result.md` remains the raw audit record, but `result`/`dispatch`/`reply`
    prefer the decision surface so the orchestrator can communicate with the user
    without absorbing every implementation detail.
-7. **Plans are versioned review contracts.** Direction forks remain blind
-   design. After direction is set, a bounded anchored `mate/sol` review loop
-   freezes versioned `PLAN.md`; implementation, adversarial review, and
-   dispatcher sign-off all evaluate the same contract.
+7. **Plans can be versioned review contracts.** When the dispatcher chooses to
+   freeze an approved `PLAN.md`, later implementation and review evaluate that
+   exact contract. A material scope change reopens the decision.
 
 ## Process topology
 
@@ -151,33 +150,28 @@ main orchestrator.
   log investigation remain `luna`; API contract design/evolution and
   production mutation/remediation do not. Money paths retain dispatcher
   sign-off.
-- **Direction-setting forks use blind design by default**: the orchestrator
-  writes its own analysis first, keeps it out of the brief, and asks a read-only
-  mate for the best-supported design plus the strongest case against it.
-  Anchored design is only for refining an already-set direction. Plan review
-  is a bounded anchored loop after that direction is set.
-- **Plan review is persistent and bounded**: `REVISE` keeps the thread alive
-  for `reply` (text mode: a dispatcher-targeted structured `QUESTION:`;
-  decision mode: the schema encoding defined in `skills/meight/SKILL.md`);
-  `APPROVE` is terminal. Run at most three rounds, recording `new-risks` and
-  `resolved-risks` separately. An unapproved third round returns control to the
-  dispatcher for residual-risk sign-off, a targeted evidence check, or user
-  escalation. Approval freezes versioned `PLAN.md`; scope changes reopen it.
-- **The review chain is explicit**: `worker/luna` implementation → `mate/sol` adversarial
-  review (maximum two rounds) → dispatcher full-diff read with plan and repo
-  context → direct fixes and final sign-off. P1-fix-level corrections preserve
-  the contract; beyond-plan fixes reopen approval. Harness/core surgery routes
-  to `sol` and adds a Claude context-holding review at plan and final-diff
-  stages.
+- **Avoiding overengineering comes first**: design and review modes are tools,
+  not a default chain. The dispatcher selects gates by failure cost and records
+  the choice in one line.
+- **Design supports real uncertainty**: blind design avoids anchoring when an
+  independent direction would add evidence; anchored design pressure-tests a
+  direction already chosen.
+- **Plan review is available anchored refinement**: `REVISE` keeps the thread
+  alive for `reply` (text mode: a dispatcher-targeted structured `QUESTION:`;
+  decision mode: the encoding defined in `skills/meight/SKILL.md`), while
+  `APPROVE` is terminal. If approval freezes a versioned `PLAN.md`, a material
+  scope change reopens that decision.
+- **Review is verdict evidence, not a pipeline stage**: in worker mode the
+  dispatcher spawns a separate `--mode review` session when warranted; in
+  delegate mode the contract owns its internal fresh-context reviewer. For
+  reviewed work, sign-off combines the verdict with verification evidence.
+  Reading the entire diff is never a sign-off gate.
 - Sessions may commit/push completed verified work; the orchestrator still owns integration and final sign-off.
 - Briefs must point at *existing patterns* relevant to the task — detail-oriented reviewers flag absent context as defects otherwise.
-- `follow`/`reply` at most ~2 times per thread for ordinary work; the plan-review
-  loop is the explicit three-round exception.
 - The CLI retains `medium` as a compatibility default, but doctrine selects
   `luna xhigh` for bounded work and `sol high` for its ownership areas (`xhigh`
-  reserved for genuinely hard problems). Pipeline gates scale with the work at
-  the dispatcher's judgment — skips are announced to the user or asked first,
-  and failure-cost hard gates plus money-path sign-off are never skippable.
+  reserved for genuinely hard problems). These selections, the failure-cost
+  clauses, and money-path sign-off are adjustable operator policy.
 
 ## Hardening history
 

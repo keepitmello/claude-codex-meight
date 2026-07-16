@@ -25,8 +25,8 @@ session contracts:
   It reviews plans with a real verdict, hunts defects adversarially, and joins blind design —
   its contract says *challenge the dispatcher, agreement is not the goal*.
 - A **worker** (`--mode worker`) is a bounded participatory implementer. It owns
-  code, tests, verification, and runtime QA while the dispatcher retains the
-  external review chain.
+  code, tests, verification, and runtime QA while the dispatcher decides
+  whether and how to run an external review.
 - A **delegate** (`--mode delegate`) owns implementation and fresh-context
   independent review end to end while the dispatcher stays outside technical
   context. Hard-gated, money-path, and frozen dispatcher-review-chain work
@@ -51,40 +51,26 @@ worker's, or delegate's word alone.
         status.json · events.log · result.md · decision.json · decision.md
 ```
 
-## The Pipeline
+## Judgment Before Process
 
-Meight ships an opinionated development loop, refined by running it on itself.
-Every stage is doctrine (files the harness injects), not framework code:
+Meight provides four session modes, not a mandatory development pipeline.
+Avoiding overengineering comes first: the dispatcher chooses only the design,
+review, implementation, and verification gates justified by the task's failure
+cost, then records that choice in one line.
 
-1. **Blind design for direction forks.** Before a direction-setting decision,
-   a read-only mate gets the problem and constraints only — no dispatcher lean
-   to anchor on — and returns the best-supported design plus the strongest case
-   against it.
-2. **Plan-review loop.** Once direction is set, the dispatcher authors a plan
-   and a `mate/sol` reviews it: verdict-first `APPROVE`/`REVISE`, at most three
-   rounds, incremental re-review of prior findings, noise suppression (no style
-   nits, no impossible edge cases). `REVISE` keeps the same thread alive through
-   a structured question, so revisions stay in one conversation. Approval
-   freezes the plan as versioned `PLAN.md` — the review contract everything
-   downstream is judged against.
-3. **Workers implement.** `worker/luna` at `xhigh` (plus `--fast` when
-   available) is the cheap, capable default for bounded work. A failure-cost
-   hard gate routes acceptance-critical work — concurrency, security, public
-   API contract design, data migration, cross-cutting refactors, anything that
-   can corrupt money/data or cause irreversible harm — to `worker/sol` instead.
-   Implementation reports must state plan deviations, rationale, and what was
-   deliberately not done.
-4. **Review chain.** `mate/sol` adversarial review against the frozen plan
-   (maximum two rounds, runtime cross-checked, verdicts name exactly what they
-   reviewed so stale verdicts get discarded) → the dispatcher reads the full
-   diff with plan and repo context, fixes valid defects directly, and owns the
-   final sign-off.
+Blind or anchored design can clarify a real direction fork. Plan review and
+adversarial code review are available verdict tools, not default stages. Worker
+mode lets the dispatcher spawn a separate review session when warranted;
+delegate mode owns its contract's internal fresh-context review. A worker's
+`done` is still only a claim. For reviewed work, sign-off combines the review
+verdict with verification evidence; unreviewed work still requires verification
+evidence. Reading the entire diff is never a sign-off gate.
 
-**Gates scale with the work.** The full chain is the default for plan-governed
-work, but the dispatcher may skip or shrink gates for small, low-risk,
-reversible tasks — never silently: the user is told which gate was skipped and
-why, or asked first when it is borderline. Failure-cost hard gates and
-money-path sign-off are never skippable, and skips are recorded as metrics.
+The included operator-policy template routes bounded work to `luna` and uses a
+failure-cost hard gate for acceptance-critical concurrency, security, public
+API contract design, data migration, cross-cutting refactors, or work that can
+corrupt money/data or cause irreversible harm. Those model and money-path gates
+are explicitly adjustable operator policy, not meight interface requirements.
 
 Effort follows the same economics: `luna` runs `xhigh` because it is cheap,
 `sol` defaults to `high` (it can overthink; the dispatcher may drop light mate
@@ -186,7 +172,8 @@ that would settle remaining uncertainty. No code changes.
 EOF
 ```
 
-For trivial, short, low-risk tasks, one-shot dispatch is available:
+One-shot dispatch is available when a separately supervised session adds no
+value:
 
 ```bash
 meight dispatch tiny-1 --mode worker --report decision --sandbox ro \
@@ -228,10 +215,9 @@ Three plain-file ledgers make the dispatch loop improve with use:
   human once — only irreversible and risk calls are always re-confirmed.
 - **Lessons** (`<daemon-home>/notes/lessons.md`). Recurring review findings
   and operational mistakes become one-line lessons, promoted into brief
-  templates when they repeat. Per-run records carry the mode, plan-review
-  rounds and revise causes, escalation rates and which hard-gate clause fired,
-  gate skips, and post-sign-off defects — the baseline that tunes the routing
-  gates empirically instead of by vibe.
+  templates when they repeat. Per-run records can carry the mode, one-line gate
+  choice, reroute reason, and post-sign-off defects — enough to tune routing
+  from outcomes without turning measurement into ceremony.
 
 None of this is a new subsystem — just files plus doctrine, defined in
 [`skills/meight/SKILL.md`](./skills/meight/SKILL.md#learning-loop-decision-records-preferences-lessons).
@@ -290,7 +276,7 @@ protocol, two dispatcher runtimes.
 |---|---|
 | `meight start <name> --mode design\|review\|worker\|delegate [opts]` | Start a session and return immediately with the thread id plus visible mode/contract posture. Supervised workflow entry point. |
 | `meight wait <name> --timeout SEC` | Checkpoint wait: return on terminal state, replyable QUESTION, daemon death, or timeout. Timeout leaves the worker running. |
-| `meight dispatch <name> --mode design\|review\|worker\|delegate [opts]` | One-shot: auto-start daemon -> capability check -> start -> wait -> print preferred result. Use only for trivial, short, low-risk work. |
+| `meight dispatch <name> --mode design\|review\|worker\|delegate [opts]` | One-shot: auto-start daemon -> capability check -> start -> wait -> print preferred result. |
 | `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | One-shot answer to a replyable question; inherits mode/report and omitted turn settings, applies explicit turn overrides, and prints the latest result. |
 | `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | Low-level: new turn on the same live thread; inherits mode/report and omitted turn settings, while explicit overrides become the defaults for later turns. |
 | `meight result <name> [--raw]` | Print `decision.md` when present; `--raw` prints raw `result.md`. |
@@ -304,7 +290,7 @@ Common options:
 - `--mode design|review|worker|delegate` is required on `start` and `dispatch`.
   `collab`, `collaborative`, and `delegated` are accepted aliases. Design and
   review use the mate contract. Worker is participatory implementation with a
-  dispatcher-owned review chain. Delegate is full delegation with an internal
+  dispatcher-owned review choice. Delegate is full delegation with an internal
   independent reviewer and strict forbidden-route fallback to worker.
 - `--report text|decision` defaults to `text`; `decision` writes
   `decision.json`/`decision.md`.
@@ -398,8 +384,8 @@ cannot silently use the old contract. Drain and restart manually:
   CLI, re-run the verification suite in [`SPEC.md`](./SPEC.md).
 - Design details, state machine, hardening history, and lifecycle caveats live
   in [`ARCHITECTURE.md`](./ARCHITECTURE.md). Full dispatcher protocol lives in
-  [`skills/meight/SKILL.md`](./skills/meight/SKILL.md). Why the pipeline looks
-  like this — including the day it was designed by running itself — is in
+  [`skills/meight/SKILL.md`](./skills/meight/SKILL.md). The earlier pipeline
+  design retrospective — including the day it was designed by running itself — is in
   [`docs/2026-07-14-v3-pipeline-retrospective.md`](./docs/2026-07-14-v3-pipeline-retrospective.md).
 
 ## License

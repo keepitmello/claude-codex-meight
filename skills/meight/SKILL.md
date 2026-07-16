@@ -1,6 +1,6 @@
 ---
 name: meight
-description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-meight). Route blind and anchored design to design, verdict-first plan/diff review to review, participatory bounded implementation to worker, and dispatcher-free full delegation to delegate; require explicit --mode, supervise with start/status/result, and use one-shot dispatch only for trivial safe work. Use whenever a dispatcher routes work to Codex. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임"
+description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-meight). Route blind and anchored design to design, verdict-first plan/diff review to review, participatory bounded implementation to worker, and dispatcher-free full delegation to delegate; require explicit --mode and choose supervised or one-shot dispatch per task. Use whenever a dispatcher routes work to Codex. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임"
 ---
 
 # meight (claude-codex-meight)
@@ -30,7 +30,7 @@ is the dispatcher-facing SSOT for routing and supervision.
   integration, and git coordination.
 - A Codex worker owns participatory bounded technical design, implementation,
   verification, and local execution choices while the dispatcher owns the
-  external review chain. A delegate owns implementation and internal review
+  choice and handling of any external review. A delegate owns implementation and internal review
   end to end while the dispatcher stays outside technical context. A Codex
   mate independently challenges plans, direction, code, and doctrine.
 - Mate, worker, and delegate name the session contract, not the model: `--mode` picks
@@ -39,10 +39,10 @@ is the dispatcher-facing SSOT for routing and supervision.
   structured `QUESTION:` when they see a better direction, a wrong assumption,
   or a decision outside their ownership.
 - Verification owns the outcome. A worker's "done" is a claim; relevant tests
-  or runtime checks plus dispatcher sign-off make it a fact. Plan-governed
-  implementation additionally requires the `mate/sol` review verdict from the
-  review chain below; verification plus dispatcher sign-off alone is
-  sufficient only for work outside a plan-governed review chain.
+  or runtime checks plus dispatcher sign-off make it a fact. For work the
+  dispatcher judges to warrant review, sign-off combines the review verdict
+  with verification evidence. The dispatcher records its gate choice in one
+  line; there is no default delivery chain.
 - Sessions may commit/push completed verified work when the brief allows it, but
   the dispatcher still owns final integration and approval.
 
@@ -59,8 +59,8 @@ policy cannot be forgotten or left to memory.
 - `--mode review`: use for verdict-first plan, diff, adversarial, and doctrine
   review. The session is a mate with explicit review duties.
 - `--mode worker`: use for bounded implementation, fixes, tests, verification,
-  runtime/browser QA, computer use, and exploration while the dispatcher owns
-  the external review chain.
+  runtime/browser QA, computer use, and exploration while the dispatcher
+  decides whether a separate review session is warranted.
 - `--mode delegate`: use only for full delegation when the dispatcher should
   leave technical context. The delegate owns internal fresh-context read-only
   review and fails closed to worker for hard gates, money paths, or frozen
@@ -79,13 +79,10 @@ daemon does not advertise capability `mode4`, start fails closed. Every
 start/follow carries epoch `mode4`; success must atomically echo normalized mode
 and epoch or the CLI best-effort interrupts and exits nonzero.
 
-## Default: Start, Then Check Status
+## Supervision Interface
 
-For anything beyond trivial, short, low-risk work, use `start` instead of one
-blocking `dispatch`. After starting, keep working and use `status`, `steer`,
-`result`, and `reply` when the session is revisited or the host surfaces the
-background work. Do not keep a long-running background checkpoint shell as the
-normal supervision loop.
+`start` opens a supervised session. `status`, `steer`, `result`, and `reply`
+let the dispatcher revisit it without prescribing how often it must do so.
 
 ```bash
 meight start <name> --mode worker --report decision --brief-file - --cwd <dir> \
@@ -157,7 +154,8 @@ stopped background shell as a shell lifecycle event, not a worker failure.
 
 ## One-Shot Dispatch
 
-Use one-shot dispatch only when supervision is not worth it.
+`dispatch` is the blocking one-shot form when the dispatcher does not need a
+separately supervised session.
 
 ```bash
 meight dispatch tiny-1 --mode worker --report decision --sandbox ro \
@@ -210,18 +208,14 @@ answered class of question is answered from the ledger, not re-asked.
 meight reply <name> --brief "Use config-a.json and keep the legacy field."
 ```
 
-At most two `follow`/`reply` turns per thread is a good default for ordinary
-work and for the implementation review loop. The plan-review loop below is the
-explicit exception: it permits up to three total review rounds and uses
-dispatcher-targeted `QUESTION:` plus `reply` to preserve the thread. If daemon
-restart or GC expired the same-thread session, `status` shows
+If daemon restart or GC expired the same-thread session, `status` shows
 `runtime_lost_detail`; start a fresh worker instead of replying.
 
 ## Design Doctrine
 
 Use design with a mate for direction-setting forks and genuine uncertainty.
 
-### Blind Design (Default For Direction Forks)
+### Blind Design (For Unanchored Input)
 
 Analyze first and keep your own analysis out of the brief. Send only the
 problem, constraints, relevant files, and neutral option labels. Ask for the
@@ -245,7 +239,7 @@ that would settle remaining uncertainty. No code changes.
 EOF
 ```
 
-### Anchored Design (Only After Direction Is Set)
+### Anchored Design (For A Set Direction)
 
 Use anchored design to refine an already-set direction:
 
@@ -254,57 +248,30 @@ meight start design-refine --mode design --sandbox ro --model sol --effort high 
   --brief "Direction is Option B. Pressure-test it: what am I missing, and what edge cases should the implementation cover?"
 ```
 
-### Plan-Review Loop (Bounded Anchored Refinement)
+### Plan Review (Available Pattern)
 
-**Gates scale with the work.** The full chain (plan-review loop, adversarial
-review, dispatcher full-diff read) is the default for plan-governed work, but
-the dispatcher may scale it down for small, low-risk, reversible tasks — a
-direct user instruction, a doc-local edit, a single-file fix. Two rules bind
-every skip: (1) skipping a gate is never silent — tell the user which gate was
-skipped and why (trivial case), or ask first (borderline case); (2) failure-cost
-hard gates and money-path sign-off are never skippable. Record skips in the run
-metrics — a skip is data too.
+Plan review is useful when a verdict can still change direction or materially
+reduce failure cost. It is not a prerequisite for implementation. The
+dispatcher decides whether to use it, records that choice in one line, and may
+keep the review thread alive with `reply` while new evidence is still changing
+the decision.
 
-The blind-design contract remains unchanged for direction-setting forks. Only after the
-direction is set does the dispatcher author a plan and enter this bounded,
-anchored refinement loop with `sol high` (`xhigh` only for genuinely hard
-design problems):
+Use `--mode review --report decision` when a schema-validated verdict is useful.
+The reviewer leads with `APPROVE` or `REVISE`. The strict decision schema has no
+literal APPROVE/REVISE values, so the interface encoding is:
 
-1. The dispatcher authors the plan and sends it to a persistent `mate/sol` review
-   mate thread. Run this bounded loop with `--mode review --report decision` so
-   verdicts arrive schema-validated; `--report text` remains acceptable for
-   design-mode exploratory analysis.
-2. The reviewer leads with `APPROVE` or `REVISE`. In decision-report mode the
-   strict schema has no APPROVE/REVISE values, so the exact encoding is:
-   `APPROVE` ⇒ `outcome=done`, `verdict=GO`, summary starting
-   `"APPROVE — <plan identity>"`; `REVISE` ⇒ `outcome=needs_decision`,
-   `verdict=NO-GO`, summary starting `"REVISE — <plan identity>"`, with the
-   dispatcher-owned revision decision as the only `decisions[]` entry unless a
-   genuine user-owned decision exists. In text mode, `REVISE` ends as a
-   dispatcher-targeted structured `QUESTION:`. Either way the thread survives
-   for `meight reply`; `APPROVE` is terminal.
-   Reviewers must not flag:
-   - naming/style preferences in the plan document itself;
-   - theoretical edge cases that cannot occur with real inputs;
-   - out-of-scope “what about” hypotheticals; or
-   - findings the plan text or a prior round already resolved.
-3. Run at most three plan-review rounds. From round 2 onward, before raising
-   new findings, the reviewer first dispositions every prior finding as
-   `addressed`, `partially addressed`, or `not addressed`, citing the plan
-   text/evidence that resolved it or explains why it remains open. Record that
-   disposition with the `resolved-risks` half of the round ledger, while
-   `new-risks` contains only new findings; keep the two separate. In
-   decision-report mode the ledger lives in a worker-unique evidence artifact
-   with separate `new-risks` and `resolved-risks` headings, listed in
-   `evidence_artifacts` — the strict schema has no fields for it.
-4. If round three does not approve, do not auto-reenter. The dispatcher chooses
-   exactly one next step: residual-risk sign-off, a targeted evidence check, or
-   user escalation.
-5. Freeze the approved contract as versioned `PLAN.md`. Implementation and
-   final review both use that exact plan. A scope change reopens plan approval.
+- `APPROVE` => `outcome=done`, `verdict=GO`, summary starting
+  `"APPROVE — <plan identity>"`.
+- `REVISE` => `outcome=needs_decision`, `verdict=NO-GO`, summary starting
+  `"REVISE — <plan identity>"`, with the dispatcher-owned revision decision as
+  the only `decisions[]` entry unless a genuine user-owned decision exists.
 
-Plan review is also the routing backstop: it records which hard-gate clause
-fired, or explicitly records `none—luna eligible`.
+In text mode, `REVISE` ends as a dispatcher-targeted structured `QUESTION:`.
+Either report mode preserves the thread for `reply`; `APPROVE` is terminal.
+Reviewers suppress naming/style preferences, impossible edge cases,
+out-of-scope hypotheticals, and findings already resolved by the current plan
+or evidence. When the dispatcher freezes an approved versioned `PLAN.md`, scope
+change reopens that decision.
 
 ### Disagreement Protocol
 
@@ -313,7 +280,8 @@ fired, or explicitly records `none—luna eligible`.
 3. Evidence questions get one targeted verification session.
 4. User-owned value judgments (scope, UX, priority, risk appetite,
    irreversible action, acceptance criteria) escalate to the human.
-5. Max two rounds. Then prefer the reversible/lower-risk option or escalate.
+5. Stop when more debate cannot change the decision; prefer a reversible,
+   lower-risk option or escalate the user-owned judgment.
 
 Do not run mate-vs-mate debate loops. Do not feed one design into the other
 before both exist.
@@ -325,7 +293,7 @@ somewhere agents actually read. Three ledgers, all plain files:
 
 ### Decision Records (`<repo>/decisions/`)
 
-After any direction-setting fork resolved by two designs, write
+For a consequential direction-setting fork worth preserving, write
 `decisions/YYYY-MM-DD-<slug>.md` in the working repo:
 
 ```md
@@ -361,27 +329,19 @@ brief-writing gaps, harness interference patterns — get one line each. When a
 lesson recurs, promote it into the brief template's Constraints or into this
 skill. Repo-specific code patterns belong in that repo's own docs, not here.
 
-For this operating model, record enough structured data to measure:
+For this operating model, record enough structured data to learn from actual
+outcomes: mode, the one-line gate choice, reroutes or escalations and why they
+happened, and false approvals found after sign-off. Do not turn measurement
+into a mandatory ceremony.
 
-- plan-review round count and the cause of each `REVISE`;
-- mode (`design`, `review`, `worker`, or `delegate`) for every run record;
-- escalation rate as rerouted tasks divided by `luna`-started tasks, with
-  ordinary `QUESTION:` events tracked separately;
-- the escalation axis (`luna→sol` or `luna→terra`) and the hard-gate clause
-  that fired;
-- false approvals found after sign-off, measured within the same release
-  window; repos without releases must define a fixed time-window fallback;
-- gate skips: which gate was skipped, why, and whether the user was informed
-  or asked — a skipped gate that later produces a defect is the key signal
-  for tightening the proportionality guidance.
+Use baseline evidence before changing escalation rules.
 
-Do not harden escalation rules until this baseline exists.
+## Mate Review (Available Pattern)
 
-## Mate Review Pattern
-
-The normal implementation chain is `luna` implementation → `sol` adversarial
-review → dispatcher full-diff read and final sign-off. The review contract is
-the frozen, versioned `PLAN.md`, not a summary written after implementation.
+In worker mode, the dispatcher may spawn a separate read-only `--mode review`
+session when failure cost warrants it. In delegate mode, the delegate contract
+owns its internal fresh-context reviewer. Review is an independent evidence
+source, not a fixed implementation stage.
 
 ```bash
 meight start review-X --mode review --report decision --sandbox ro --model sol --effort high --cwd <repo root> --brief-file - <<'EOF'
@@ -392,22 +352,16 @@ file:line, why, fix direction. End with GO or NO-GO.
 EOF
 ```
 
-Every review verdict must name the exact input reviewed: the `PLAN.md` version
+Every review verdict names the exact input reviewed: the `PLAN.md` version
 for plan reviews, or a commit hash/diff identity for code reviews. Before acting
 on a verdict, the dispatcher compares that identity with the current artifact
 and discards the verdict as stale if they no longer match.
 
-The dispatcher reads the complete diff with both `PLAN.md` and repository
-context, arbitrates findings, fixes valid defects directly, and owns the final
-sign-off. A dispatcher fix that changes plan scope reopens plan approval; a
-P1-fix-level correction keeps the frozen contract. The adversarial code-review
-loop is capped at two rounds.
-
-Harness-grade or core surgery routes to Codex `sol`, not a dispatcher-side
-implementation fork. It also adds a dispatcher context-holding review at both
-the plan stage and the final-diff stage; prefer a Claude dispatcher for this
-class of work so that review stays cross-model. The dispatcher remains the
-orchestrator, arbitrator, and final signer.
+The dispatcher arbitrates findings. `NO-GO` means blockers were found: route
+valid blockers to an implementer, verify the correction, and obtain a verdict
+on the new review identity before sign-off. For reviewed work, sign-off is the
+review verdict plus verification evidence; reading the entire diff is never a
+sign-off gate. A change that alters frozen-plan scope reopens that decision.
 
 Delegate-mode implementation reports from `luna` must map the approved-plan rationale onto
 the existing decision schema:
@@ -419,12 +373,8 @@ the existing decision schema:
   when there truly is nothing to record);
 - `changed_files` and `commits`: identify the review surface exactly.
 
-Review guardrails:
-
-- At most two review rounds.
-- Fix P1 blockers only unless the brief says otherwise.
-- Record P2/P3 without broadening scope.
-- Put detailed review logs in `<worker-name>-evidence.md`.
+Set the review's severity threshold and scope in its brief. Put detailed logs in
+`<worker-name>-evidence.md` when they would overload the decision report.
 
 ### Fresh-Eyes UI Review (frontend dispatches)
 
@@ -437,8 +387,8 @@ verbatim reviewer prompt: `~/.codex/skills/frontend-ux-router/references/fresh-e
   and the reviewer prompt. Zero implementation context — no brief, no diff,
   no explanations. Contamination invalidates the review.
 - FAIL → route the reviewer's raw answers back to the implementer as redesign
-  input (path-card recomposition, not copy patches). One re-review; a second
-  FAIL on the same question escalates to the user.
+  input (path-card recomposition, not copy patches). The dispatcher judges
+  whether another fresh-eyes pass can still change the decision.
 
 Use the smallest brief that gives the worker the right contract:
 

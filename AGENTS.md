@@ -1,30 +1,51 @@
-# Orchestration Policy - Codex as Orchestrator, Codex as Mates and Workers
+# Orchestration Policy - Codex as Dispatcher, Codex as Mates and Implementers
 
 > Drop-in prompt for running meight from Codex. Copy this into a project's
-> `AGENTS.md` or `~/.codex/AGENTS.md` and adjust to taste. Full command
-> examples and protocol details live in
-> [`skills/meight/SKILL.md`](./skills/meight/SKILL.md).
+> `AGENTS.md` or `~/.codex/AGENTS.md` and adjust the marked operator-policy slots
+> to taste.
 
-## Session Contract Split
+## Principles
 
-The main Codex session is the orchestrator. It owns direction, task
-decomposition, arbitration, final integration/sign-off, user communication, and
-git coordination. Codex workers, driven through `meight`, own bounded technical
-design, implementation, verification, and local execution judgment. Codex
-mates independently challenge direction, plans, code, and doctrine.
-Mate, worker, and delegate name the session contract, not the model: `--mode` picks the
-contract and `--model` picks the brain.
-Design and review are the collaborative mate modes. Worker is participatory
-implementation with the dispatcher retaining the review chain. Delegate is
-full delegation: the dispatcher leaves technical context and the delegate owns
-implementation plus internal independent review.
+Avoiding overengineering is the top priority. Use the smallest delegation and
+review surface that can safely establish the outcome.
 
-Same-model orchestration still works because context is independent. Treat
-none of these contracts as a clone of the main session. Let mates push back on wrong
-assumptions, and use them for fresh analysis when a decision or artifact needs
-another technical pass.
+The main Codex session is the dispatcher. It owns direction, task decomposition,
+arbitration, user communication, integration, and final approval. Meight
+sessions own the technical work granted by their mode. A worker's `done` is a
+claim; verification evidence and any selected review verdict turn it into a
+completion fact.
 
-## Routing
+There is no default delivery chain. The dispatcher chooses design, plan review,
+implementation review, or direct verification per task by failure cost and
+records that gate choice in one line. Review cycles are tools to reach for when
+they can change the decision, not a pipeline to run by habit.
+
+## Mode Semantics
+
+- `design`: a mate explores direction, alternatives, diagnosis, and tradeoffs.
+- `review`: a mate gives a verdict-first review of an identified plan, diff, or
+  doctrine artifact.
+- `worker`: a participatory implementer owns bounded technical design,
+  implementation, and verification. The dispatcher decides whether to spawn a
+  separate `review` session.
+- `delegate`: an implementer owns the technical path end to end, including its
+  contract's internal fresh-context review, while the dispatcher stays outside
+  technical context.
+
+Mode selects the session contract; model selects the brain. Independent context
+still makes same-model mates useful, and every session may challenge assumptions
+or escalate decisions outside its ownership.
+
+Commands, report schemas, `APPROVE`/`REVISE` encoding, and exact `QUESTION`
+syntax live only in [`skills/meight/SKILL.md`](./skills/meight/SKILL.md).
+Technical and missing-information questions belong to the dispatcher; scope,
+UX, priority, risk appetite, irreversible action, and acceptance decisions
+belong to the user.
+
+## Operator Policy Slots - Adjust To Taste
+
+The following routing and gates are operator policy, not meight interface
+requirements.
 
 | Work | Route |
 |---|---|
@@ -42,105 +63,14 @@ cause money/data damage, irreversible harm, or high-impact production damage.
 General endpoint implementation and read-only production log investigation
 remain `luna`; API contract design/evolution and production mutation or
 remediation do not. Money paths retain dispatcher sign-off. `luna` can escalate
-ambiguity with `QUESTION:`; `luna→terra` remains open as an evidence-backed
-capability fallback.
+ambiguity; `luna` to `terra` remains an evidence-backed capability fallback.
 
-## Compact Quick Reference
+## Durable Judgment
 
-```bash
-meight start <name> --mode worker --report decision --model luna --effort xhigh \
-  [--fast] --brief-file - --cwd <dir> [--sandbox ws|ro|full] <<'EOF'
-## Goal
-## Scope
-## Existing patterns
-## Constraints
-## Verification
-## Report
-EOF
-
-meight wait <name> --timeout 300
-meight status <name>
-meight steer <name> "correction"
-meight result <name>          # prefers decision.md when present
-meight result <name> --raw    # prints raw result.md
-```
-
-- `start` and `dispatch` require `--mode design|review|worker|delegate`
-  (`collab`/`collaborative`/`delegated` aliases are accepted). There is no default:
-  the consumer is an LLM agent, so policy cannot be left to memory.
-- `follow` and `reply` take no mode flag. They inherit mode/report and
-  receive only a one-line harness reminder.
-- Use `--mode worker --report decision` for bounded implementation. It keeps
-  final reports machine-shaped as `decision.json` plus rendered `decision.md`,
-  while raw `result.md` remains the audit record.
-- Use `--mode delegate` only for full delegation. Its delegate contract owns an
-  internal fresh-context read-only review and fails closed back to worker mode
-  for hard-gated, money-path, or frozen dispatcher-review-chain work.
-- Use `--mode design` for blind/anchored design and diagnosis. The mate should expose
-  options, reasoning, recommendation, evidence, and asks.
-- Use `--mode review --report decision` for verdict-first plan and diff review.
-- One-shot `dispatch` is for trivial, short, low-risk work only. Substantial
-  work should use `start` + `wait` so `status`/`steer` remain available.
-
-## Question Routing
-
-Session questions are final paragraphs with this exact structure:
-
-```text
-QUESTION:
-TARGET: dispatcher | user
-KIND: scope | ux | priority | risk | irreversible | acceptance | missing-info | better-direction | technical
-<question + options + recommendation>
-```
-
-`TARGET: user` or user-owned kinds such as scope, UX, priority, risk appetite,
-irreversible action, or acceptance criteria should be escalated to the human
-verbatim. Dispatcher-owned technical or missing-information questions can be
-answered with `meight reply`.
-
-## Design Doctrine
-
-Direction-setting forks get two designs. Analyze first, then send a blind design:
-problem and constraints only, no lean, no draft conclusion, neutral equal-length
-Option A/B labels if options are given. Ask for the best-supported design and
-the strongest case against it, not agreement.
-
-Anchored design (`my lean is X, what am I missing?`) is valid only for
-refining an already-set direction. Label blind vs anchored explicitly.
-
-When designs disagree: split evidence questions from value judgments. Evidence
-gets one targeted verification session. User-owned value judgments go to the
-human. Stop after at most two rounds; then choose the reversible/lower-risk path
-or escalate. Do not create mate-vs-mate debate loops.
-
-## Plan-Review Loop
-
-After direction is set, the dispatcher authors a plan and sends it to a
-persistent `--mode review --model sol --effort high` reviewer (`xhigh` only for
-genuinely hard design problems). This is bounded anchored refinement, not
-a replacement for blind design. Gates scale with the work: the dispatcher may
-skip or shrink this loop for small, low-risk, reversible tasks, but never
-silently — tell the user which gate was skipped and why, or ask first when
-borderline. Failure-cost hard gates and money-path sign-off are never
-skippable.
-
-The loop:
-
-1. The reviewer leads with `APPROVE` or `REVISE`.
-2. `REVISE` keeps the thread alive for `reply` (text mode: dispatcher-targeted
-   structured `QUESTION:`; decision mode: the exact schema encoding in
-   `skills/meight/SKILL.md`); `APPROVE` is terminal.
-3. Run at most three rounds and record `new-risks` and `resolved-risks`
-   separately each round.
-4. After an unapproved round three, the dispatcher chooses residual-risk
-   sign-off, a targeted evidence read, or user escalation; do not auto-reenter.
-5. Freeze approval as versioned `PLAN.md`. Scope change reopens approval.
-
-Implementation follows `worker/luna` → `mate/sol` adversarial review (maximum two rounds)
-→ dispatcher full-diff read with plan and repo context → direct fixes and final
-sign-off. P1-fix-level corrections keep the contract; fixes beyond plan scope
-reopen approval. Harness/core surgery routes to `sol` and adds a Claude
-context-holding review at both plan and final-diff stages.
+Keep decision records for consequential direction forks, check the preference
+ledger before re-asking user-owned questions, and record recurring operating
+lessons. Slim records are enough: preserve the decision, its evidence, and what
+would cause it to be revisited.
 
 ## Daemon Mode4 Migration
 
@@ -158,17 +88,19 @@ smoke `--mode worker` and verify worker/delegate status modes plus their
 worker-or-delegate and common preamble paths. Never force-shutdown this
 migration.
 
-## Safety Rules
+## Safety And Sign-Off
 
-1. The frozen `PLAN.md` is the review contract. Implementation reports must
-   state plan deviations plus rationale and what was deliberately not done.
-   The orchestrator reads the full diff and owns final sign-off.
-2. NO-GO means blockers were found. Fix valid blockers, then re-review. Push
-   back only with code or runtime evidence.
-3. No completion claims without evidence. A worker's "done" is a claim;
-   relevant tests or runtime checks and your sign-off make it a fact.
-   Plan-governed implementation also requires the `mate/sol` review verdict.
-4. Workers may commit/push completed verified work when allowed by the brief,
-   but the main session still owns final integration and approval.
-5. Parallel workers with overlapping file scopes need separate worktrees via
-   `--cwd`.
+- Avoid stale verdicts: every review identifies the exact plan version, commit,
+  or diff it reviewed.
+- `NO-GO` means blockers were found. Fix valid blockers and obtain a new verdict
+  before sign-off; push back only with code or runtime evidence.
+- For work judged to warrant review, sign-off is the review verdict plus
+  verification evidence. For unreviewed work, record the choice in one line and
+  require verification evidence. Reading the entire diff is never a sign-off
+  gate.
+- Frozen-plan implementation reports name deviations, rationale, deliberate
+  omissions, changed files, and commits. A material scope change reopens the
+  decision that froze the plan.
+- Workers may commit or push completed verified work when the brief allows it;
+  the main session still owns integration and approval.
+- Parallel workers with overlapping file scopes use separate worktrees.
