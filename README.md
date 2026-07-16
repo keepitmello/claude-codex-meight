@@ -253,6 +253,11 @@ session contracts are [`skills/meight-mate/`](./skills/meight-mate/SKILL.md) and
 [`skills/meight-worker/`](./skills/meight-worker/SKILL.md), with their shared
 protocol in [`skills/meight-common/`](./skills/meight-common/CONTRACT.md).
 
+The default dispatcher is a Claude Code session. A Codex app/CLI session can
+dispatch through the same protocol via a thin `~/.codex/skills/meight` binding
+that points at [`skills/meight/SKILL.md`](./skills/meight/SKILL.md) — one
+protocol, two dispatcher runtimes.
+
 ## What "Easy For An Agent" Means
 
 - **Exit codes are the API.** `0` done, `2` failed/interrupted/runtime-lost, `3`

@@ -247,6 +247,12 @@ Codex-as-orchestrator 프롬프트는 [`AGENTS.md`](../AGENTS.md)로 제공됩�
 [`skills/meight-worker/`](../skills/meight-worker/SKILL.md), 공유 프로토콜은
 [`skills/meight-common/`](../skills/meight-common/CONTRACT.md)입니다.
 
+기본 디스패처는 Claude Code 세션입니다. Codex 앱/CLI 세션도
+`~/.codex/skills/meight` 얇은 바인딩(이 레포의
+[`skills/meight/SKILL.md`](../skills/meight/SKILL.md)를 그대로 참조)을 통해
+같은 프로토콜로 디스패치할 수 있습니다 — 프로토콜은 하나, 디스패처 런타임은
+둘입니다.
+
 ## "에이전트에게 쉽다"의 의미
 
 - **Exit code가 API입니다.** `0` 완료, `2` 실패/인터럽트/런타임 소실, `3`

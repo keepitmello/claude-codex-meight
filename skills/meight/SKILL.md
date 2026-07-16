@@ -10,6 +10,12 @@ usable from any repo via the `meight` CLI. One global daemon is shared across
 repos; session state is isolated per invoking repo under
 `<daemon-home>/repos/<repo-key>/`.
 
+The default dispatcher is a Claude Code session. A Codex app/CLI session can
+also act as dispatcher through the thin `~/.codex/skills/meight` binding that
+points back to this file. Prefer the Claude dispatcher for long multi-phase or
+direction-sensitive work: a cross-model dispatcher decorrelates blind spots
+with the Codex workers it supervises.
+
 Contract details live in [`skills/meight-mate/SKILL.md`](../meight-mate/SKILL.md)
 and [`skills/meight-worker/SKILL.md`](../meight-worker/SKILL.md). Their shared
 protocol lives in
@@ -70,7 +76,7 @@ For anything beyond trivial, short, low-risk work, use `start` instead of one
 blocking `dispatch`. After starting, keep working and use `status`, `steer`,
 `result`, and `reply` when the session is revisited or the host surfaces the
 background work. Do not keep a long-running background checkpoint shell as the
-normal Claude Code supervision loop.
+normal supervision loop.
 
 ```bash
 meight start <name> --mode delegate --report decision --brief-file - --cwd <dir> \
@@ -135,9 +141,8 @@ meight result <name> --raw  # raw result.md audit record
 meight reply <name> --brief "Use config-a.json and keep the legacy field."
 ```
 
-Long-running checkpoint shells are not the default Claude Code orchestration
-path. Treat a stopped background shell as a shell lifecycle event, not a worker
-failure.
+Long-running checkpoint shells are not the default orchestration path. Treat a
+stopped background shell as a shell lifecycle event, not a worker failure.
 
 ## One-Shot Dispatch
 
@@ -386,10 +391,11 @@ sign-off. A dispatcher fix that changes plan scope reopens plan approval; a
 P1-fix-level correction keeps the frozen contract. The adversarial code-review
 loop is capped at two rounds.
 
-Harness-grade or core surgery routes to Codex `sol`, not a Claude implementation
-fork. It also adds a Claude context-holding review at both the plan stage and
-the final-diff stage. The dispatcher remains the orchestrator, arbitrator, and
-final signer.
+Harness-grade or core surgery routes to Codex `sol`, not a dispatcher-side
+implementation fork. It also adds a dispatcher context-holding review at both
+the plan stage and the final-diff stage; prefer a Claude dispatcher for this
+class of work so that review stays cross-model. The dispatcher remains the
+orchestrator, arbitrator, and final signer.
 
 Delegate-mode implementation reports from `luna` must map the approved-plan rationale onto
 the existing decision schema:
