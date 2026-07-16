@@ -51,7 +51,7 @@ requirements.
 | Blind/anchored design and diagnosis | `--mode design --model sol --effort high` (`xhigh` only for genuinely hard problems) |
 | Plan and adversarial review | `--mode review --model sol --effort high` (`xhigh` only for genuinely hard problems) |
 | Hard-gated implementation | `--mode worker --model sol --effort high` (`xhigh` only for genuinely hard problems) |
-| Full delegation, dispatcher outside technical context | `--mode delegate` only when no hard gate, money path, or frozen dispatcher review chain applies |
+| Full delegation, dispatcher outside technical context | `--mode delegate` (defaults to `sol --effort high`) only when no hard gate, money path, or frozen dispatcher review chain applies |
 | Capability-specific fallback | any mode with `terra` only when measured evidence supports it |
 
 Failure cost is the gate. Hard-route to `sol` when acceptance-critical work
