@@ -25,9 +25,12 @@ is the dispatcher-facing SSOT for routing and supervision.
 
 ## Operating Model
 
-- The dispatcher owns WHAT, WHY, priority, scope, UX, user-visible behavior,
-  risk appetite, acceptance criteria, final approval, user communication,
-  integration, and git coordination.
+- The user owns WHAT, WHY, priority, scope, UX, user-visible behavior, risk
+  appetite, acceptance criteria, and approval to enter a new phase.
+- The dispatcher preserves those decisions and owns technical choices inside
+  the currently approved phase, user communication, integration, verification,
+  and git coordination. The dispatcher does not approve expanded work on the
+  user's behalf.
 - A Codex worker owns participatory bounded technical design, implementation,
   verification, and local execution choices while the dispatcher owns the
   choice and handling of any external review. A delegate owns implementation and internal review
@@ -45,6 +48,24 @@ is the dispatcher-facing SSOT for routing and supervision.
   line; there is no default delivery chain.
 - Sessions may commit/push completed verified work when the brief allows it, but
   the dispatcher still owns final integration and approval.
+
+## Phase Approval And Campaign Identity
+
+A user approval is bound to the named phase, method, expected cost envelope,
+and acceptance path. It expires when a required gate fails, the next action
+materially changes the method or expected cost, or the work shifts from
+advancing the outcome to strengthening records.
+
+Count attempts, repair rounds, and review rounds by the user outcome and
+decision being pursued. The campaign identity survives renamed workers, fresh
+threads, plan/addendum revisions, branches, and artifact or review identities.
+Starting a new session does not reset a cap.
+
+Inside one approved phase, at most one bounded repair and one re-review may be
+preauthorized. A second NO-GO, a new blocker after that re-review, or a reroute
+outside the approved phase stops automatic work. The dispatcher may gather the
+cheapest trustworthy failure record, then must return the failure, options, and
+recommendation to the user before dispatching more implementation or review.
 
 ## Modes Are Required
 
@@ -102,9 +123,12 @@ let the dispatcher revisit it without prescribing how often it must do so.
 ```bash
 meight start <name> --mode worker --brief-file - --cwd <dir> <<'EOF'
 ## Goal       <what this enables + success criteria>
+## Decision   <the user decision this phase must close>
+## Approval   <approved phase/method/cost envelope; campaign + round number>
 ## Scope      <file/dir boundary; do not exceed>
 ## Existing patterns  <file:line pointers; required for good review>
 ## Constraints <domain rules only; mode/QUESTION/report policy is injected>
+## Stop / Escalate <failed gate, cap, or phase-change conditions>
 ## Verification <commands to run + expected outcome>
 ## Report     <decision surface; details in a worker-unique evidence artifact>
 EOF
@@ -211,6 +235,13 @@ or missing-information questions can be answered with `reply`; user-owned
 scope, UX, priority, risk, irreversible, and acceptance decisions go to the
 human.
 
+Classify a question by the effect of answering it, not by the worker's label.
+If the answer authorizes a new worker, phase, plan/addendum, review identity
+beyond a preauthorized re-review, expensive rerun, materially different method,
+or additional repair after the campaign cap, it is user-owned scope, priority,
+or acceptance. Do not answer it with `meight reply` even when
+`TARGET: dispatcher` or `KIND: technical` was declared.
+
 The daemon parses leniently. Missing `TARGET` defaults to `dispatcher`. Parsed
 values are recorded as `needs_input_target` and `needs_input_kind` in
 `status.json`. Exit codes do not change: final structured questions still exit
@@ -224,7 +255,9 @@ meight reply <name> --brief "Use config-a.json and keep the legacy field."
 ```
 
 If daemon restart or GC expired the same-thread session, `status` shows
-`runtime_lost_detail`; start a fresh worker instead of replying.
+`runtime_lost_detail`. Start a fresh worker instead of replying only when the
+same campaign approval is still valid and its worker/repair cap has room.
+Otherwise preserve the failure record and return to the user before dispatch.
 
 ## Design Doctrine
 
@@ -279,7 +312,8 @@ literal APPROVE/REVISE values, so the interface encoding is:
   `"APPROVE — <plan identity>"`.
 - `REVISE` => `outcome=needs_decision`, `verdict=NO-GO`, summary starting
   `"REVISE — <plan identity>"`, with the dispatcher-owned revision decision as
-  the only `decisions[]` entry unless a genuine user-owned decision exists.
+  the only `decisions[]` entry only when the bounded revision round was already
+  approved. A new phase, method, cost envelope, or cap extension is user-owned.
 
 In text mode, `REVISE` ends as a dispatcher-targeted structured `QUESTION:`.
 Either report mode preserves the thread for `reply`; `APPROVE` is terminal.
@@ -372,11 +406,15 @@ for plan reviews, or a commit hash/diff identity for code reviews. Before acting
 on a verdict, the dispatcher compares that identity with the current artifact
 and discards the verdict as stale if they no longer match.
 
-The dispatcher arbitrates findings. `NO-GO` means blockers were found: route
-valid blockers to an implementer, verify the correction, and obtain a verdict
-on the new review identity before sign-off. For reviewed work, sign-off is the
-review verdict plus verification evidence; reading the entire diff is never a
-sign-off gate. A change that alters frozen-plan scope reopens that decision.
+The dispatcher arbitrates findings. `NO-GO` means blockers were found. If the
+current user-approved phase explicitly includes its one bounded repair round,
+route valid blockers to an implementer, verify the correction, and obtain one
+verdict on the new review identity. Otherwise stop and ask the user before
+repair. A second NO-GO or a new blocker after re-review ends the campaign; do
+not create another worker or review identity to reset it. For reviewed work,
+sign-off is the review verdict plus verification evidence; reading the entire
+diff is never a sign-off gate. A change that alters frozen-plan scope, method,
+cost envelope, or acceptance path reopens that decision.
 
 Delegate-mode implementation reports from `luna` must map the approved-plan rationale onto
 the existing decision schema:
@@ -408,9 +446,12 @@ verbatim reviewer prompt: `~/.codex/skills/frontend-ux-router/references/fresh-e
 Use the smallest brief that gives the worker the right contract:
 
 - Goal
+- Decision
+- Approval and campaign/round
 - Scope
 - Existing patterns (required; use file:line)
 - Constraints
+- Stop / Escalate
 - Verification
 - Report
 

@@ -8,10 +8,13 @@
 Avoiding overengineering is the top priority. Use the smallest delegation and
 review surface that can safely establish the outcome.
 
-The dispatcher owns direction, task decomposition, arbitration, user
-communication, integration, and final approval. Codex sessions own the
-technical work granted by their mode. A worker's `done` is a claim; verification
-evidence and any selected review verdict turn it into a completion fact.
+The user owns direction, scope, priority, risk appetite, acceptance criteria,
+and approval to enter a new phase. The dispatcher preserves those decisions
+and owns technical choices inside the approved phase, task decomposition,
+arbitration, user communication, integration, verification, and final
+sign-off. Codex sessions own the technical work granted by their mode. A
+worker's `done` is a claim; verification evidence and any selected review
+verdict turn it into a completion fact.
 
 There is no default delivery chain. The dispatcher chooses design, plan review,
 implementation review, or direct verification per task by failure cost and
@@ -38,7 +41,9 @@ Commands, report schemas, `APPROVE`/`REVISE` encoding, and exact `QUESTION`
 syntax live only in [`skills/meight/SKILL.md`](./skills/meight/SKILL.md).
 Technical and missing-information questions belong to the dispatcher; scope,
 UX, priority, risk appetite, irreversible action, and acceptance decisions
-belong to the user.
+belong to the user. Classify by effect: a new worker, phase, plan/addendum,
+review identity beyond a preauthorized re-review, expensive rerun, materially
+different method, or cap extension is user-owned even when labeled `technical`.
 
 ## Operator Policy Slots - Adjust To Taste
 
@@ -90,8 +95,10 @@ migration.
 
 - Avoid stale verdicts: every review identifies the exact plan version, commit,
   or diff it reviewed.
-- `NO-GO` means blockers were found. Fix valid blockers and obtain a new verdict
-  before sign-off; push back only with code or runtime evidence.
+- `NO-GO` means blockers were found. Use at most one preauthorized bounded
+  repair and one re-review in the same campaign. A second NO-GO or new blocker
+  after re-review returns to the user or a newly approved design phase; renamed
+  workers or review identities do not reset the cap.
 - For work judged to warrant review, sign-off is the review verdict plus
   verification evidence. For unreviewed work, record the choice in one line and
   require verification evidence. Reading the entire diff is never a sign-off

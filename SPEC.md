@@ -234,6 +234,14 @@ KIND: scope | ux | priority | risk | irreversible | acceptance | missing-info | 
 <question + options + recommendation>
 ```
 
+The harness records the declared target and kind; the orchestrating agent owns
+impact-based triage. A reply that would authorize a new worker, phase,
+plan/addendum, review identity beyond a preauthorized re-review, expensive
+rerun, materially different method, or campaign-cap extension must be
+escalated to the user even when the producer declared `TARGET: dispatcher` or
+`KIND: technical`. This is dispatcher policy, not a daemon-side semantic
+rewrite.
+
 When a completed turn's last paragraph starts with `QUESTION:`, the daemon
 promotes the worker to:
 
@@ -364,7 +372,9 @@ the worker's report mode.
   and `needs_input` rows `failed` with `runtime_lost_detail` and `terminal_at`.
 - `follow` does not rehydrate hidden ephemeral workers after daemon restart.
   Same-daemon follow is the supported path for final `QUESTION:` replies only;
-  low-level follow-up work after a terminal result should start a new worker.
+  low-level follow-up work after a terminal result may start a new worker only
+  inside a still-valid approved campaign and remaining worker/repair cap.
+  Otherwise the orchestrator returns to the user instead of dispatching.
 - `wait` checks daemon `runtime_status` for active disk states, including final
   `QUESTION:` waits. If a new daemon is alive but does not know that worker,
   `wait` marks the worker failed with `runtime_lost_detail` instead of polling

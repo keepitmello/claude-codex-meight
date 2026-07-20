@@ -200,6 +200,11 @@ KIND: scope | ux | priority | risk | irreversible | acceptance | missing-info | 
 dispatcher-owned questions with `meight reply` and escalates user-owned ones
 (scope, UX, risk appetite, irreversible actions) verbatim. In decision-report
 mode the same routing runs through `outcome=needs_decision` in the schema.
+Routing is impact-based: an answer that starts a new worker, phase,
+plan/addendum, review identity beyond a preauthorized re-review, expensive
+rerun, materially different method, or additional repair after the campaign
+cap is user-owned even when labeled `technical`. Worker names and fresh review
+identities do not reset the cap.
 
 ## The Harness Learns
 

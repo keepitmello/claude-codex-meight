@@ -37,7 +37,10 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
    without absorbing every implementation detail.
 7. **Plans can be versioned review contracts.** When the dispatcher chooses to
    freeze an approved `PLAN.md`, later implementation and review evaluate that
-   exact contract. A material scope change reopens the decision.
+   exact contract. A material scope, method, cost-envelope, or acceptance-path
+   change reopens the user decision. Campaign identity follows that decision
+   across renamed workers, plan revisions, and review identities, so a fresh
+   session cannot reset repair or review caps.
 
 ## Process topology
 

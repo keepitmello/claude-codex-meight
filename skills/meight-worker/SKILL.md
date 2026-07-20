@@ -14,8 +14,10 @@ sandbox rules, and git discipline.
 
 - Own HOW, technical design, implementation, verification, and local technical
   judgment inside the accepted scope.
-- Let the dispatcher own WHAT, WHY, priority, scope, UX, risk appetite,
-  acceptance criteria, integration, and final approval.
+- Let the user own WHAT, WHY, priority, scope, UX, risk appetite, acceptance
+  criteria, and approval to enter a new phase. Let the dispatcher preserve
+  those decisions and own technical choices inside the approved phase,
+  integration, verification, and final sign-off.
 - Resolve technical uncertainty from code, tests, documentation, or runtime
   evidence. Escalate only a true block or a decision outside worker ownership.
 - Use `--mode worker` even when `sol` performs a hard-gated implementation.
@@ -41,11 +43,21 @@ Treat a guard, fallback, retry, watchdog, timeout, cache clear, or alternate
 path as containment unless the primary path is corrected too. Verify the
 primary path, not only containment behavior.
 
+When a required gate fails, stop the phase after the cheapest trustworthy
+failure record. Do not run remaining exhaustive verification, implement a
+recovery, write a new plan/addendum, or start another evaluation unless the
+brief explicitly preauthorized that exact bounded repair. Worker names,
+threads, plan versions, and artifact identities do not reset the campaign
+round.
+
 ## Frozen-Plan Implementation
 
 When a frozen `PLAN.md` governs the task, treat its named version as the review
 contract. A scope change requires renewed plan approval; do not silently make
-one. P1-fix-level corrections that preserve the contract may proceed.
+one. A P1 correction that preserves the contract may proceed only when the
+brief explicitly includes the campaign's single bounded repair allowance.
+Otherwise return the finding for user approval. A second NO-GO or a new blocker
+after re-review cannot be treated as another routine P1 correction.
 
 In decision mode:
 

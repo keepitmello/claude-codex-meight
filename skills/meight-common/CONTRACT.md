@@ -75,6 +75,17 @@ Do not append a text `QUESTION:` in decision mode. Put the escalation in
 
 ## Question Routing
 
+The user owns WHAT, WHY, scope, priority, UX, risk appetite, acceptance
+criteria, and approval to enter a new phase. The dispatcher owns technical
+choices only inside the currently approved phase.
+
+Classify a question by the effect of the answer, not only by `TARGET` or
+`KIND`. An answer is user-owned when it authorizes a new worker, phase,
+plan/addendum, review identity beyond a preauthorized re-review, expensive
+rerun, materially different method or cost envelope, acceptance-path change,
+or additional repair after the campaign cap. Route it to the user even when
+the session labeled it `TARGET: dispatcher` or `KIND: technical`.
+
 In text mode, use a question only for an external decision or true blocker and
 make it the final paragraph with this exact shape:
 
@@ -89,7 +100,8 @@ Route missing information and in-scope technical direction to the dispatcher.
 Route scope, UX, priority, risk appetite, irreversible action, and acceptance
 criteria to the user unless the brief explicitly grants that authority to the
 dispatcher. Resolve local, reversible implementation or review choices without
-escalation.
+escalation only when they remain inside the approved phase, method, cost
+envelope, and repair/review cap.
 
 ## Evidence Artifacts
 

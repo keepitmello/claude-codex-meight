@@ -66,6 +66,9 @@ and inspect the exact implementation and verification evidence.
 
 - Permit at most two review rounds.
 - Fix accepted P1 blockers within scope and re-run the checks they affect.
+- Count those rounds across fresh internal reviewers and artifact identities.
+  A second NO-GO or a new blocker after re-review ends the campaign; do not
+  start a fresh delegate or reviewer to reset the cap.
 - Record the reviewer invocation, fresh-context and read-only posture, verdict,
   round count, accepted fixes, and rerun evidence in the worker-unique evidence
   artifact.

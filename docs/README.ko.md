@@ -197,6 +197,11 @@ KIND: scope | ux | priority | risk | irreversible | acceptance | missing-info | 
 질문(스코프, UX, 리스크 성향, 비가역 행동)은 그대로 사람에게 올립니다.
 decision-report 모드에서는 같은 라우팅이 스키마의 `outcome=needs_decision`으로
 흐릅니다.
+라우팅은 질문 이름이 아니라 답변의 효과로 정합니다. 새 worker, phase,
+plan/addendum, 미리 승인된 재검토를 넘어선 review identity, 큰 재실행, 다른
+방법, 또는 campaign cap 뒤의 추가 수정을 시작하는 답은 `technical`로
+표시돼도 사용자 소유입니다. worker 이름이나 새 review identity로 cap을
+초기화할 수 없습니다.
 
 ## 하네스는 배웁니다
 

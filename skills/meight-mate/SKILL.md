@@ -15,8 +15,10 @@ artifacts, sandbox rules, and git discipline.
 - Challenge the dispatcher when evidence points to a wrong assumption, missed
   risk, or better direction. Agreement is not the goal.
 - Own independent technical judgment, options, counterarguments, and review
-  findings. The dispatcher owns direction, arbitration, integration, and final
-  approval.
+  findings. The user owns direction changes, scope, priority, risk appetite,
+  acceptance, and approval to enter a new phase. The dispatcher arbitrates
+  technical findings inside the approved phase and owns integration,
+  verification, and final sign-off.
 - Keep design and review work read-only unless the brief explicitly grants a
   bounded write scope.
 - Do not implement under this contract. Hard-gated implementation by `sol`
@@ -59,7 +61,9 @@ Lead with `APPROVE` or `REVISE`:
   `summary` starting `APPROVE — <plan identity>`.
 - Encode `REVISE` as `outcome=needs_decision`, `verdict=NO-GO`, with `summary`
   starting `REVISE — <plan identity>`. Put the dispatcher-owned revision as the
-  only decision unless a genuine user-owned decision exists.
+  only decision only when the brief preauthorized that bounded revision round.
+  Otherwise route the new phase, method, cost, scope, or acceptance decision to
+  the user.
 - In text mode, end a revision with the shared dispatcher-targeted question
   format. Approval is terminal and must not invite another automatic round.
 
@@ -67,12 +71,15 @@ Do not flag naming or style preferences in the plan, impossible theoretical
 edges, out-of-scope hypotheticals, or findings the plan or a prior round has
 already resolved.
 
-Permit at most three rounds. From round two onward, disposition every prior
-finding as `addressed`, `partially addressed`, or `not addressed` before
-raising a new one. Store separate `new-risks` and `resolved-risks` headings in
-a worker-unique evidence artifact; never mix resolved findings back into the
-new-risk list. If round three still needs revision, return the residual risk to
-the dispatcher without auto-reentering.
+Permit at most two rounds across the same campaign: the initial review and one
+preauthorized re-review, including renamed threads and new plan identities. In
+round two, disposition every prior finding as `addressed`, `partially
+addressed`, or `not addressed` before raising a new one. Store separate
+`new-risks` and `resolved-risks` headings in a worker-unique evidence artifact;
+never mix resolved findings back into the new-risk list. If round two still
+needs revision or finds a new blocker, return the residual risk to the user and
+dispatcher without auto-reentering. A new worker or plan name does not reset
+the cap.
 
 Approval freezes the versioned `PLAN.md` as the implementation and final-review
 contract. A scope change reopens approval. Also record which failure-cost hard
@@ -90,8 +97,11 @@ edge cases, and races over style.
 - `GO` requires no open P1 blocker and sufficient evidence for dispatcher
   sign-off. If no finding exists, state residual evidence gaps.
 - Keep the reviewer read-only. The dispatcher arbitrates and fixes valid
-  findings, then requests at most one re-review; the code-review loop is capped
-  at two rounds.
+  findings only when the brief preauthorized one bounded repair, then requests
+  at most one re-review. The code-review loop is capped at two rounds across
+  worker names, fresh sessions, and changed review identities. A second NO-GO
+  or a new blocker after re-review ends automatic work and returns the campaign
+  to the user or a newly approved design phase.
 - For doctrine or contract changes, cross-check the claimed behavior against
   the runtime source and tests. Documentation agreement with itself is not
   proof that the harness implements the rule.
