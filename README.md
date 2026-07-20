@@ -309,8 +309,8 @@ Common options:
   On `follow`/`reply`, omitting `--model`, `--effort`, and Fast flags inherits
   the worker's current values; an explicit override applies to that new turn
   and becomes the value inherited by later turns.
-- `--main-thread` opts out of hidden ephemeral subagent threads for tools that
-  need a visible main thread.
+- `--main-thread` uses a visible user thread for tools that need one. Default
+  workers use persistent subagent threads, which remain hidden but resumable.
 
 Omitted `start`/`dispatch` settings resolve in the CLI before the request is
 sent:
@@ -331,9 +331,10 @@ Worker state lives in
 `<daemon-home>/repos/<repo-key>/workers/<name>/`: `brief.md`, `status.json`,
 `events.log`, `result.md`, and, in decision mode, `decision.json` and
 `decision.md`. Terminal workers keep disk artifacts but release their SDK
-runtime immediately. A final structured `QUESTION:` remains attached to the live
-daemon so `reply` can answer on the same thread. After daemon restart, disk
-artifacts remain but same-thread reply is expired; start a fresh worker.
+runtime immediately. A final structured `QUESTION:` also releases its runtime
+and remains as a dormant disk row. `reply`/`follow` opens a fresh app-server,
+resumes the stored `thread_id`, and continues the same thread even after daemon
+restart or in-memory worker GC.
 
 The daemon derives and verifies the repo key and state home instead of trusting
 socket request paths. Its home, `repos/`, and repo/worker state directories are
@@ -347,7 +348,9 @@ Terminal artifacts are retained for 30 days by default. Set
 never removes active, replyable, malformed, symlinked, or currently registered
 workers, and uses immutable `terminal_at` (`updated_at` only for legacy rows).
 After a daemon crash/restart, orphaned active rows become
-`failed`/`runtime_lost_detail`; hidden ephemeral turns are not resumed.
+`failed`/`runtime_lost_detail`. Final questions and terminal workers remain
+resumable. Legacy ephemeral workers continue in a new persistent subagent
+thread with a bounded handoff built from their saved brief, result, and events.
 
 ## Upgrading An Old Daemon To Mode4 Support
 
@@ -382,8 +385,8 @@ cannot silently use the old contract. Drain and restart manually:
 - Meight uses the current system `codex` executable rather than the SDK's
   bundled runtime. Set `MEIGHT_CODEX_BIN` only when an explicit executable
   override is needed.
-- Sessions start as hidden ephemeral Codex subagent threads by default:
-  `thread_source=subagent`, `thread_ephemeral=true`.
+- Sessions start as hidden persistent Codex subagent threads by default:
+  `thread_source=subagent`, `thread_ephemeral=false`.
 - Foreground `meight daemon` exits after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with
   no active workers by default. Managed `dispatch` auto-start and LaunchAgent
   starts disable idle shutdown; verify idle and retention values with

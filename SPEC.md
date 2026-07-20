@@ -46,7 +46,7 @@ h.steer("text")
 h.interrupt()
 h.stream()                            # -> Iterator[Notification]
 h.run()
-codex.thread_resume(thread_id)        # exists, but hidden ephemeral workers are not treated as resumable
+codex.thread_resume(thread_id)        # restores a released worker runtime from durable status
 ```
 
 - `Notification` objects expose `.method` as a string and `.payload` as a
@@ -124,7 +124,7 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   "model": null,
   "effort": "medium",
   "thread_source": "subagent",
-  "thread_ephemeral": true,
+  "thread_ephemeral": false,
   "current_item": "commandExecution: pnpm typecheck:be (12s)",
   "plan": ["[done] step1", "[active] step2"],
   "files_changed": ["src/x.ts"],
@@ -175,16 +175,16 @@ The command table must match the `python3 meight.py --help` subcommand list exac
 | `daemon [--idle-timeout-sec SEC]` | Run the foreground global daemon. The orchestrator starts it in the background. If a live daemon already exists, return exit `1`. `0` disables idle shutdown. |
 | `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid, runtime `idle_timeout_sec`, `session_retention_sec`, and advertised `capabilities=["mode4"]`. |
 | `launchd install [--load]` / `launchd status` / `launchd uninstall` | Manage the optional macOS LaunchAgent. The plist uses `RunAtLoad=true` and crash-only `KeepAlive={SuccessfulExit=false}`. `install --load` non-force drains a live daemon, waits boundedly for its acknowledged PID/socket exit, runs `launchctl bootout --wait` with a subprocess timeout for a loaded job, writes/bootstraps the plist, and requires a fresh ping/PID. Active sessions or timeouts refuse transfer. |
-| `start <name> --mode design\|review\|worker\|delegate (--brief-file F\|- \| --brief TEXT) [--report text\|decision] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new hidden Codex session with `thread_start(ephemeral=True, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--mode` is required; `collab`, `collaborative`, and `delegated` are accepted aliases. Before sending `start`, the CLI requires capability `mode4`. The request carries `protocol_epoch=mode4`; success atomically echoes normalized mode plus epoch, both validated by the CLI. The visible start line includes resolved `mode`, contract posture, model, effort, Fast, report, and sandbox values with `(default)` or `(set)` provenance. Model aliases `sol`, `terra`, and `luna` normalize to their current full slugs; other strings pass through. Omitted model/effort/Fast/report/sandbox flags resolve in the CLI and are sent explicitly: design=`sol`/`high`/off/`text`/`ro`; review=`sol`/`high`/off/`decision`/`ro`; worker=`luna`/`xhigh`/on/`decision`/`full`; delegate=`sol`/`high`/off/`decision`/`full`. Explicit flags always override. Other defaults are `cwd=current directory`, `thread_source=subagent`, and `thread_ephemeral=true`. `--report decision` supplies `output_schema`. `--main-thread` opts into a visible persistent user thread. `--fast` maps to service tier `priority`; off maps to `default`. Reject duplicate active names inside the same repo namespace. |
+| `start <name> --mode design\|review\|worker\|delegate (--brief-file F\|- \| --brief TEXT) [--report text\|decision] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new hidden, persistent Codex session with `thread_start(ephemeral=False, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--mode` is required; `collab`, `collaborative`, and `delegated` are accepted aliases. Before sending `start`, the CLI requires capability `mode4`. The request carries `protocol_epoch=mode4`; success atomically echoes normalized mode plus epoch, both validated by the CLI. The visible start line includes resolved mode, contract posture, model, effort, Fast, report, and sandbox values with provenance. Omitted settings use the mode defaults. Other defaults are `cwd=current directory`, `thread_source=subagent`, and `thread_ephemeral=false`. `--report decision` supplies `output_schema`. `--main-thread` changes the source to a visible persistent user thread. Reject duplicate active names inside the same repo namespace. |
 | `dispatch <name> --mode design\|review\|worker\|delegate (--brief-file F\|- \| --brief TEXT) [start opts] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, capability-check, `start`, `wait`, then print `decision.md` or `result.md`. Mode is required. Default timeout is `1800` seconds. Exit code matches `wait`. |
-| `follow <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble]` | Start a new turn on the same thread only for a session waiting on a final `QUESTION:` while attached to the current daemon. It takes no mode flag; it inherits recorded `mode` and `report` and receives a one-line reminder. Omitted model/effort/Fast options inherit the current worker settings. Explicit options apply at the new-turn boundary and, after successful turn creation, replace the settings recorded in `status.json` for later turns. Terminal sessions release their SDK runtime, and hidden sessions are not resumed from disk after restart. |
+| `follow <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble]` | Start a new turn on the same persisted thread for a terminal session or one waiting on a final `QUESTION:`. It inherits recorded mode, report, and omitted turn settings. Every completed stream releases its SDK runtime; follow restores metadata and calls `thread_resume` with the stored `thread_id`. A legacy `thread_ephemeral=true` row has no resumable rollout, so follow starts a persistent hidden subagent thread and injects a bounded handoff from saved brief, result, and recent events. |
 | `reply <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot answer path: `follow`, `wait`, then print the latest preferred result. It has the same mode/report inheritance and per-turn setting override semantics as `follow`. Default timeout is `1800` seconds. |
 | `steer <name> TEXT` | Inject mid-turn text into a running turn. Return an error unless the worker is currently running. |
 | `interrupt <name>` | Interrupt the active turn. For `ACTIVE` workers without a live `TurnHandle` yet, including the initial starting/SDK phase and follow/reply SDK phase, set `interrupt_requested`, return ok with a recorded-interrupt note, and let the atomic post-SDK commit abort the turn. |
 | `status [name] [--json] [--all-repos]` | Does not require the daemon. Read repo-scoped `status.json` directly. With no name, print a table including `MODE`; `--all-repos` reads every repo namespace. Legacy rows with a role field or long-form mode values remain readable. |
 | `list [--json] [--all-repos]` | Alias for `status` with no worker name. |
 | `result <name> [--raw]` | Print `decision.md` when present. `--raw` prints `result.md`. |
-| `wait <name> [--timeout SEC]` | Poll `status.json` once per second. Terminal states return `completed=0`, `failed=2`, `interrupted=2`. Final `QUESTION:` returns `3` only while the worker is still attached to the live daemon and can accept `reply`. Daemon death returns `4`. Timeout returns `1`. Print one final status summary line to stdout. |
+| `wait <name> [--timeout SEC]` | Poll `status.json` once per second. Terminal states return `completed=0`, `failed=2`, `interrupted=2`. A durable final `QUESTION:` returns `3` even after its runtime is released and can accept `reply` after daemon restart. Daemon death during a live turn returns `4`. Timeout returns `1`. Print one final status summary line to stdout. |
 | `shutdown [--force]` | Refuse shutdown while active workers exist. With `--force`, interrupt live turns, mark final `QUESTION:` waits interrupted, and then shut down. |
 
 ## Harness Preamble, Mode, and QUESTION Protocol
@@ -259,9 +259,9 @@ Parsing is lenient: a missing `TARGET` defaults to `dispatcher`. Missing or
 unknown `KIND` leaves `needs_input_kind=null` while preserving the raw
 `needs_input_detail`.
 
-`wait` returns exit `3` for this state only while the worker is still attached
-to the live daemon. `follow` and `reply` are allowed to continue from this state
-on the same Codex thread before daemon restart or interruption.
+`wait` returns exit `3` for this durable state without requiring a live worker
+runtime. `follow` and `reply` continue on the same Codex thread after runtime
+release, registry GC, daemon restart, or interruption.
 
 ## Decision Report Schema
 
@@ -341,11 +341,10 @@ the worker's report mode.
 - Completed, failed, and interrupted workers keep their disk state but release
   their SDK runtime after the stream ends. This closes the worker-owned
   `codex app-server`, its MCP subprocesses, and stdio file descriptors.
-- Final `QUESTION:` workers detach the completed turn's `TurnHandle` but keep
-  the worker-owned SDK runtime and `Thread` so `reply` can start the next turn
-  on the same thread. If the question is interrupted, that runtime is released.
-  Disk `thread_id` is an audit pointer, not a same-thread recovery mechanism for
-  hidden ephemeral workers.
+- Final `QUESTION:` workers release the completed turn's `TurnHandle`, `Thread`,
+  and worker-owned SDK runtime. Their disk row and `thread_id` remain dormant;
+  `reply`/`follow` starts a fresh runtime and calls `thread_resume` before the
+  next turn.
 - Terminal workers are removed from daemon memory after
   `MEIGHT_WORKER_GC_TTL_SEC` (default `3600`; `0` disables). Foreground
   `meight daemon` exits after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with no active
@@ -368,11 +367,12 @@ the worker's report mode.
   The internal prefix alone is never deletion authority because legacy worker
   names could collide with it.
 - After singleton ownership is secured and before accepting requests, startup
-  reconciliation preserves evidence but marks orphaned `starting`, `running`,
-  and `needs_input` rows `failed` with `runtime_lost_detail` and `terminal_at`.
-- `follow` does not rehydrate hidden ephemeral workers after daemon restart.
-  Same-daemon follow is the supported path for final `QUESTION:` replies only;
-  low-level follow-up work after a terminal result may start a new worker only
+  reconciliation preserves final-question rows with a valid `thread_id` and
+  marks orphaned `starting`, `running`, and tool-wait rows `failed` with
+  `runtime_lost_detail` and `terminal_at`.
+- `follow` rehydrates terminal and final-question workers from disk after daemon
+  restart or registry GC, then resumes their hidden thread by `thread_id`.
+  Low-level follow-up work after a terminal result may continue only
   inside a still-valid approved campaign and remaining worker/repair cap.
   Otherwise the orchestrator returns to the user instead of dispatching.
 - `wait` checks daemon `runtime_status` for active disk states, including final
@@ -455,17 +455,17 @@ launchd payload/routing/ownership transfer, and accept-loop exit classification.
 5. Multi-repo namespace test: run same-name workers from two git repos with the
    same `MEIGHT_HOME`; confirm one daemon pid and separate repo-scoped
    `status.json` files.
-6. Reply test: create a final-`QUESTION` worker, answer it before daemon
-   restart, and confirm `turns=2` with a separator in `result.md`.
+6. Reply test: create a final-`QUESTION` worker, confirm its app-server exits,
+   restart the daemon, answer it, and confirm the same `thread_id`, `turns=2`,
+   and a separator in `result.md`.
 7. Runtime release test: complete a non-question worker and confirm its worker
    runtime is no longer attached while disk artifacts remain readable.
 8. Lifecycle test: with small `MEIGHT_IDLE_TIMEOUT_SEC` and
    `MEIGHT_WORKER_GC_TTL_SEC`, confirm terminal workers are GC'd from daemon
    memory while disk result files remain and the daemon exits when idle.
-9. Restart/lost-worker test: create a running or final-`QUESTION` worker,
-   restart the daemon, then confirm `wait` marks the active disk state failed
-   with `runtime_lost_detail` instead of polling forever or returning stale
-   `QUESTION`.
+9. Restart/lost-worker test: restart during a running worker and confirm it
+   becomes failed with `runtime_lost_detail`; restart after a final `QUESTION`
+   and confirm it remains dormant and resumable.
 10. Force-shutdown test: create a final-`QUESTION` worker, run
     `shutdown --force`, and confirm the worker state becomes `interrupted`.
 11. Shutdown/post-SDK race test: cover both orderings around the post-SDK
@@ -499,7 +499,8 @@ This is operator-run after the old daemon finishes serving current sessions;
 implementation must not restart it.
 
 1. Run `meight list --all-repos --json` and drain every `starting`, `running`,
-   and `needs_input` row across all repo namespaces.
+   and tool/approval `needs_input` row across all repo namespaces. Final
+   `QUESTION:` rows are dormant and do not block shutdown.
 2. Run non-force `meight shutdown`. Its daemon-wide active-session guard is the
    enforcement backstop; do not use `--force` for migration.
 3. Branch on LaunchAgent state. Loaded uses `meight launchd install --load` and

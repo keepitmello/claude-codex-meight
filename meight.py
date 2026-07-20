@@ -34,6 +34,7 @@ ACTIVE_STATES = {"starting", "running", "needs_input"}
 SOCKET_TIMEOUT_SEC = 60.0  # start/follow may take several seconds for thread_start+turn RPCs
 STATUS_THROTTLE_SEC = 2.0
 EVENT_LINE_MAX = 300
+RECOVERY_ARTIFACT_MAX_CHARS = 24_000
 DEFAULT_IDLE_TIMEOUT_SEC = 30 * 60
 DEFAULT_WORKER_GC_TTL_SEC = 60 * 60
 DEFAULT_SESSION_RETENTION_SEC = 30 * 24 * 60 * 60
@@ -615,6 +616,18 @@ def truncate(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
+def read_text_tail(path: Path, limit: int = RECOVERY_ARTIFACT_MAX_CHARS) -> str:
+    """Read a bounded UTF-8 tail for legacy worker recovery."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - limit * 4))
+            return f.read(limit * 4).decode("utf-8", errors="replace")[-limit:]
+    except OSError:
+        return ""
+
+
 def dig(d: object, *keys: str, default=None):
     """Chained dict.get helper for missing beta SDK payload fields."""
     cur = d
@@ -728,7 +741,7 @@ class Worker:
         self.thread_ephemeral = thread_ephemeral
         self.mode = mode          # canonical mode; follow/reply turns inherit it
         self.report = report      # "text" | "decision" (decision = output_schema-forced final report)
-        self.thread = None       # openai_codex.Thread (kept while daemon lives -> reused for follow)
+        self.thread = None       # openai_codex.Thread (live only while starting/running a turn)
         self.handle = None       # TurnHandle
         self.codex = None        # openai_codex.Codex runtime owned by this worker
         self.consumer: threading.Thread | None = None
@@ -805,9 +818,13 @@ class Worker:
         state = self.status.get("state")
         if state in TERMINAL_STATES and not self.status.get("terminal_at"):
             self.status["terminal_at"] = timestamp
-        if state in TERMINAL_STATES and self.terminal_since is None:
+        dormant_question = (
+            state == "needs_input"
+            and self.status.get("needs_input_source") == "question"
+        )
+        if (state in TERMINAL_STATES or dormant_question) and self.terminal_since is None:
             self.terminal_since = time.monotonic()
-        elif state not in TERMINAL_STATES:
+        elif state not in TERMINAL_STATES and not dormant_question:
             self.terminal_since = None
         atomic_write_json(self.dir / "status.json", self.status)
 
@@ -1159,6 +1176,25 @@ class Worker:
                     pass
             self.write_status(force=True)
 
+    def legacy_recovery_context(self) -> str:
+        """Build a bounded handoff when an old ephemeral rollout cannot resume."""
+        prior_brief = read_text_tail(self.dir / "brief.md")
+        prior_result = read_text_tail(self.dir / "result.md")
+        prior_events = read_text_tail(self.dir / "events.log", 12_000)
+        return (
+            "The previous meight SDK thread was ephemeral and its rollout is no "
+            "longer available. Continue this worker from the durable handoff below. "
+            "Treat the current repository state as authoritative and inspect it before "
+            "making changes.\n\n"
+            "## Prior brief\n\n"
+            f"{prior_brief or '(unavailable)'}\n\n"
+            "## Prior result\n\n"
+            f"{prior_result or '(unavailable)'}\n\n"
+            "## Recent events\n\n"
+            f"{prior_events or '(unavailable)'}\n\n"
+            "## New follow-up\n\n"
+        )
+
     def record_turn_settings(self, model: str | None, effort: str,
                              service_tier: str | None) -> None:
         """Persist settings only after a follow turn has been created successfully."""
@@ -1184,9 +1220,16 @@ class Worker:
             source = self.status.get("needs_input_source")
         return state in ("starting", "running") or (state == "needs_input" and source != "question")
 
-    def detach_runtime_refs_if_idle(self, daemon: "Daemon", gen: int, reason: str,
-                                    keep_thread: bool = True) -> None:
-        """Release SDK runtime after a turn; keep it only for a replyable final QUESTION."""
+    def is_dormant_question(self) -> bool:
+        """True when durable status is waiting but no SDK runtime is required."""
+        with self.lock:
+            return (
+                self.status.get("state") == "needs_input"
+                and self.status.get("needs_input_source") == "question"
+            )
+
+    def detach_runtime_refs_if_idle(self, daemon: "Daemon", gen: int, reason: str) -> None:
+        """Release the SDK runtime after every terminal or replyable-question turn."""
         codex_to_close = None
         with self.ctl_lock:
             with self.lock:
@@ -1195,16 +1238,16 @@ class Worker:
                 detachable = state in TERMINAL_STATES or (state == "needs_input" and source == "question")
                 if gen != self.generation or not detachable:
                     return
-                keep_runtime = keep_thread and state == "needs_input" and source == "question"
                 had_refs = self.handle is not None or self.thread is not None or self.codex is not None
                 self.handle = None
-                if not keep_runtime:
-                    self.thread = None
-                    codex_to_close = self.codex
-                    self.codex = None
+                self.thread = None
+                codex_to_close = self.codex
+                self.codex = None
             if had_refs:
-                detached = "turn handle" if codex_to_close is None else "runtime refs"
-                daemon.log(f"detached {detached} worker={self.name} repo={self.repo_key} reason={reason}")
+                daemon.log(
+                    f"detached runtime refs worker={self.name} "
+                    f"repo={self.repo_key} reason={reason}"
+                )
         if codex_to_close is not None:
             try:
                 codex_to_close.close()
@@ -1308,8 +1351,8 @@ class Daemon:
             except FileNotFoundError:
                 pass
 
-        # Ownership is now exclusive. Active rows from the previous daemon cannot
-        # be resumed because hidden ephemeral SDK threads live only in that process.
+        # Ownership is now exclusive. Live turns from the previous daemon cannot
+        # be resumed safely; dormant persistent threads can be reopened on follow.
         self._reconcile_startup_orphans()
 
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -1374,6 +1417,15 @@ class Daemon:
                 except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
                     continue
                 if not isinstance(status_obj, dict) or status_obj.get("state") not in ACTIVE_STATES:
+                    continue
+                if (
+                    status_obj.get("state") == "needs_input"
+                    and status_obj.get("needs_input_source") == "question"
+                    and isinstance(status_obj.get("thread_id"), str)
+                    and status_obj["thread_id"]
+                ):
+                    # Final questions are durable dormant states. Their runtime was
+                    # already closed and follow can resume the stored thread_id.
                     continue
                 timestamp = now_iso()
                 prior_state = status_obj.get("state")
@@ -1529,7 +1581,7 @@ class Daemon:
                         w.handle.interrupt()
                     except Exception as e:
                         self.log(f"interrupt {w.name} failed: {e!r}")
-                elif state in ACTIVE_STATES:
+                elif w.has_live_turn():
                     w.mark_interrupted("daemon shutdown")
         deadline = time.monotonic() + 10
         for w in workers:
@@ -1542,13 +1594,13 @@ class Daemon:
             pass
 
     def _active_workers_locked(self) -> list[Worker]:
-        return [w for w in self.workers.values() if w.current_state() in ACTIVE_STATES]
+        return [w for w in self.workers.values() if w.has_live_turn()]
 
     def _maintenance(self) -> None:
         now = time.monotonic()
         with self.reg_lock:
             for key, w in list(self.workers.items()):
-                if w.current_state() not in TERMINAL_STATES:
+                if w.current_state() not in TERMINAL_STATES and not w.is_dormant_question():
                     continue
                 consumer = w.consumer
                 # Non-blocking liveness only: the accept loop runs maintenance, and a
@@ -1572,7 +1624,7 @@ class Daemon:
         with self.reg_lock:
             workers = list(self.workers.values())
         for w in workers:
-            w.detach_runtime_refs_if_idle(self, w.generation, "daemon cleanup", keep_thread=False)
+            w.detach_runtime_refs_if_idle(self, w.generation, "daemon cleanup")
         try:
             current = os.lstat(self.sock_path)
             if self.socket_identity == (current.st_dev, current.st_ino):
@@ -1683,6 +1735,43 @@ class Daemon:
         except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
             return None
 
+    def _restore_worker_from_status(
+        self,
+        repo_home: Path,
+        repo_root: str,
+        repo_key: str,
+        name: str,
+        status: dict,
+    ) -> Worker:
+        """Reattach durable worker metadata; the Codex runtime resumes on follow."""
+        thread_id = status.get("thread_id")
+        if not isinstance(thread_id, str) or not thread_id:
+            raise ValueError(f"worker '{name}' has no resumable thread_id")
+        sandbox = str(status.get("sandbox") or "full-access").replace("-", "_")
+        if sandbox not in set(SANDBOX_MAP.values()):
+            raise ValueError(f"worker '{name}' has invalid recorded sandbox: {sandbox!r}")
+        ensure_worker_state_dir(self.home, repo_home, name)
+        worker = Worker(
+            name,
+            repo_home,
+            repo_root,
+            repo_key,
+            str(status.get("cwd") or repo_root),
+            sandbox,
+            status.get("model"),
+            str(status.get("effort") or "medium"),
+            status.get("service_tier"),
+            str(status.get("thread_source") or "subagent"),
+            bool(status.get("thread_ephemeral", True)),
+            mode=str(status.get("mode") or "worker"),
+            report=str(status.get("report") or "text"),
+        )
+        worker.status = dict(status)
+        worker.generation = max(0, int(status.get("turns") or 0))
+        if worker.current_state() in TERMINAL_STATES or worker.is_dormant_question():
+            worker.terminal_since = time.monotonic()
+        return worker
+
     def cmd_runtime_status(self, req: dict) -> dict:
         name = req["name"]
         repo_key, _, _ = self._repo_from_req(req)
@@ -1750,7 +1839,9 @@ class Daemon:
         service_tier = req.get("service_tier")
         main_thread = bool(req.get("main_thread"))
         thread_source_label = "user" if main_thread else "subagent"
-        thread_ephemeral = not main_thread
+        # Persistent subagent threads remain hidden from the main user-thread list,
+        # but keep a rollout that thread_resume can reopen after runtime cleanup.
+        thread_ephemeral = False
         if ThreadSource is None:
             return {"ok": False, "error": "openai-codex SDK does not expose ThreadSource"}
 
@@ -1804,8 +1895,6 @@ class Daemon:
             relax_sdk_effort_echo()
             thread = w.codex.thread_start(
                 cwd=cwd,
-                # Hidden workers must be ephemeral subagent threads. Persistent user
-                # threads are opt-in because Codex Desktop lists them.
                 ephemeral=thread_ephemeral,
                 sandbox=getattr(Sandbox, sandbox_key),
                 thread_source=(ThreadSource.user if main_thread else ThreadSource.subagent),
@@ -1824,7 +1913,7 @@ class Daemon:
             # The failed placeholder stays registered so status/wait see a terminal state
             # instead of a zombie that blocks its name forever.
             w.mark_failed(f"start failed: {type(e).__name__}: {e}")
-            w.detach_runtime_refs_if_idle(self, w.generation, "start failed", keep_thread=False)
+            w.detach_runtime_refs_if_idle(self, w.generation, "start failed")
             self.log(f"start worker={name} repo={repo_key} failed: {e!r}")
             return {"ok": False, "error": f"start failed: {type(e).__name__}: {e}"}
 
@@ -1849,7 +1938,7 @@ class Daemon:
                 w.consumer.start()
         if aborted:
             w.mark_interrupted("start aborted: daemon shutting down or interrupted")
-            w.detach_runtime_refs_if_idle(self, w.generation, "start aborted", keep_thread=False)
+            w.detach_runtime_refs_if_idle(self, w.generation, "start aborted")
             return {"ok": False, "error": "start aborted: daemon shutting down or interrupted"}
 
         self.touch_activity()
@@ -1888,19 +1977,20 @@ class Daemon:
             w = self.workers.get(wid)
             if w is None:
                 st = self._load_worker_status(repo_home, name)
-                if st is not None:
-                    return {"ok": False, "error":
-                            f"worker '{name}' is not attached to this daemon; "
-                            "same-thread follow expired after daemon restart or GC — start a new worker"}
-                return {"ok": False, "error": f"unknown worker: {name}"}
+                if st is None:
+                    return {"ok": False, "error": f"unknown worker: {name}"}
+                try:
+                    w = self._restore_worker_from_status(
+                        repo_home, repo_root, repo_key, name, st
+                    )
+                except ValueError as e:
+                    return {"ok": False, "error": str(e)}
+                self.workers[wid] = w
             prev_state = w.current_state()
             # needs_input (waiting on QUESTION) can also follow; send the answer as a new turn on the same thread.
             if prev_state not in TERMINAL_STATES and prev_state != "needs_input":
                 return {"ok": False, "error":
                         f"worker '{name}' is not in a terminal state ({prev_state})"}
-            if w.thread is None:
-                return {"ok": False, "error":
-                        f"worker '{name}' has no live codex thread; terminal worker runtime was released — start a new worker"}
             # Reject follow until the old consumer fully exits (first guard against late-event contamination).
             if not w.consumer_finished():
                 return {"ok": False,
@@ -1911,6 +2001,10 @@ class Daemon:
             effort = w.effort if raw_effort is INHERIT_TURN_SETTING else raw_effort
             service_tier = (w.service_tier if raw_service_tier is INHERIT_TURN_SETTING
                             else raw_service_tier)
+            thread_id = w.status.get("thread_id")
+            resume_thread = w.thread is None
+            legacy_ephemeral = bool(w.status.get("thread_ephemeral", w.thread_ephemeral))
+            recovery_context = w.legacy_recovery_context() if legacy_ephemeral else ""
 
             reminder = build_follow_reminder(w.mode, w.report)
             turn_input = f"{reminder}{brief}" if use_preamble else brief
@@ -1922,6 +2016,43 @@ class Daemon:
 
         # Data-plane phase — outside reg_lock for the same reason as cmd_start.
         try:
+            if resume_thread:
+                from openai_codex import Codex, CodexConfig, Sandbox
+                from openai_codex.types import ThreadSource
+
+                w.codex = Codex(config=CodexConfig(codex_bin=system_codex_bin()))
+                install_computer_use_approval_bridge(w.codex, w.name)
+                relax_sdk_effort_echo()
+                if legacy_ephemeral:
+                    old_thread_id = thread_id
+                    w.thread = w.codex.thread_start(
+                        cwd=w.cwd,
+                        ephemeral=False,
+                        sandbox=getattr(Sandbox, w.sandbox),
+                        service_tier=service_tier,
+                        thread_source=ThreadSource.subagent,
+                    )
+                    thread_id = w.thread.id
+                    turn_input = f"{recovery_context}{turn_input}"
+                    with w.lock:
+                        w.thread_ephemeral = False
+                        w.thread_source = "subagent"
+                        w.status["thread_id"] = thread_id
+                        w.status["thread_ephemeral"] = False
+                        w.status["thread_source"] = "subagent"
+                        w.status["recovered_from_thread_id"] = old_thread_id
+                        w.write_status(force=True)
+                    w.log_event(
+                        "thread/recovered",
+                        f"legacy ephemeral thread {old_thread_id} continued as {thread_id}",
+                    )
+                else:
+                    w.thread = w.codex.thread_resume(
+                        thread_id,
+                        cwd=w.cwd,
+                        sandbox=getattr(Sandbox, w.sandbox),
+                        service_tier=service_tier,
+                    )
             extra = {"output_schema": REPORT_SCHEMA} if w.report == "decision" else {}
             allow_dynamic_sdk_effort(effort)
             w.handle = w.thread.turn(
@@ -1931,6 +2062,7 @@ class Daemon:
             )
         except Exception as e:
             w.mark_failed(f"follow turn failed (was {prev_state}): {type(e).__name__}: {e}")
+            w.detach_runtime_refs_if_idle(self, w.generation, "follow failed")
             self.log(f"follow worker={name} failed: {e!r}")
             return {"ok": False, "error": f"follow failed: {type(e).__name__}: {e}"}
 
@@ -1956,7 +2088,7 @@ class Daemon:
                 w.consumer.start()
         if aborted:
             w.mark_interrupted("follow aborted: daemon shutting down or interrupted")
-            w.detach_runtime_refs_if_idle(self, w.generation, "follow aborted", keep_thread=False)
+            w.detach_runtime_refs_if_idle(self, w.generation, "follow aborted")
             return {"ok": False, "error": "follow aborted: daemon shutting down or interrupted"}
 
         self.touch_activity()
@@ -2051,7 +2183,7 @@ class Daemon:
         force = bool(req.get("force"))
         with self.reg_lock:
             active = [f"{w.repo_key}:{w.name}" for w in self.workers.values()
-                      if w.current_state() in ACTIVE_STATES]
+                      if w.has_live_turn()]
         if active and not force:
             return {"ok": False,
                     "error": f"active workers: {', '.join(active)} — use --force to interrupt and shut down"}
@@ -2445,9 +2577,8 @@ def cmd_result(args, home: Path) -> int:
 
 def classify_wait_state(st: dict) -> int | None:
     """Map a status dict to a wait exit code. None means keep polling.
-    needs_input can exit 3 only when source=="question" (final QUESTION);
-    wait_for_worker checks daemon attachment before exposing that exit.
-    tool/approval waits are treated as active until stream-end cleanup."""
+    needs_input exits 3 only when source=="question" (a durable dormant state).
+    Tool/approval waits are active until stream-end cleanup."""
     state = st.get("state")
     if state in TERMINAL_STATES:
         return 0 if state == "completed" else 2
@@ -2471,6 +2602,10 @@ def wait_for_worker(home: Path, repo_home: Path, name: str, timeout: float | Non
             except (OSError, json.JSONDecodeError):
                 st = None
         if st is not None:
+            code = classify_wait_state(st)
+            if code is not None:
+                print(summary_line(st))
+                return code
             if st.get("state") in ACTIVE_STATES:
                 runtime = query_runtime_status(home, repo_home, name, st)
                 if runtime and runtime.get("ok"):
@@ -2483,15 +2618,6 @@ def wait_for_worker(home: Path, repo_home: Path, name: str, timeout: float | Non
                         st = mark_worker_runtime_lost(repo_home, name, st, reason)
                         print(summary_line(st))
                         return 2
-                    code = classify_wait_state(st)
-                    if code is not None:
-                        print(summary_line(st))
-                        return code
-            else:
-                code = classify_wait_state(st)
-                if code is not None:
-                    print(summary_line(st))
-                    return code
         # Daemon death check: ping success means definitely alive. pid alone is insufficient due to pid reuse.
         if probe_daemon_socket(home / "meight.sock"):
             dead_strikes = 0

@@ -321,16 +321,30 @@ class DaemonHardeningTests(unittest.TestCase):
                     "name": state, "state": state, "daemon_pid": 123,
                     "updated_at": "2026-01-01T00:00:00+09:00",
                 }), encoding="utf-8")
+            question_dir = workers / "dormant-question"
+            question_dir.mkdir()
+            (question_dir / "status.json").write_text(json.dumps({
+                "name": "dormant-question",
+                "state": "needs_input",
+                "needs_input_source": "question",
+                "thread_id": "thread-question",
+                "daemon_pid": 123,
+                "updated_at": "2026-01-01T00:00:00+09:00",
+            }), encoding="utf-8")
             daemon = meight.Daemon(home)
             with patch.object(meight, "read_bounded_json", wraps=meight.read_bounded_json) as read:
                 daemon._reconcile_startup_orphans()
-            self.assertEqual(read.call_count, 4)
+            self.assertEqual(read.call_count, 5)
             for state in ("starting", "running", "needs_input"):
                 row = json.loads((workers / state / "status.json").read_text())
                 self.assertEqual(row["state"], "failed")
                 self.assertIn(f"orphaned {state}", row["runtime_lost_detail"])
                 self.assertIsNotNone(row["terminal_at"])
                 self.assertIn("[runtime/lost]", (workers / state / "events.log").read_text())
+            dormant = json.loads((question_dir / "status.json").read_text())
+            self.assertEqual(dormant["state"], "needs_input")
+            self.assertEqual(dormant["thread_id"], "thread-question")
+            self.assertFalse((question_dir / "events.log").exists())
             completed = json.loads((workers / "completed" / "status.json").read_text())
             self.assertEqual(completed["state"], "completed")
             self.assertNotIn("runtime_lost_detail", completed)
@@ -883,6 +897,276 @@ class ModeLifecycleTests(unittest.TestCase):
             "start", "mode-test", "--mode", mode,
             "--brief", "Review the contract.", "--cwd", cwd,
         ])
+
+    def test_final_question_releases_runtime_but_preserves_resumable_status(self):
+        class ClosableCodex:
+            def __init__(self):
+                self.closed = 0
+
+            def close(self):
+                self.closed += 1
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            context = meight.repo_context(home, "/repo")
+            worker = meight.Worker(
+                "dormant-question",
+                Path(context["repo_home"]),
+                context["repo_root"],
+                context["repo_key"],
+                "/repo",
+                "workspace_write",
+                "gpt-5.6-sol",
+                "high",
+            )
+            worker.dir.mkdir(parents=True)
+            worker.init_status("thread-question")
+            worker.status["state"] = "needs_input"
+            worker.status["needs_input_source"] = "question"
+            worker.write_status(force=True)
+            worker.generation = 1
+            worker.thread = self._CaptureThread()
+            worker.handle = self._EmptyHandle()
+            codex = ClosableCodex()
+            worker.codex = codex
+
+            worker.detach_runtime_refs_if_idle(
+                meight.Daemon(home), worker.generation, "question complete"
+            )
+
+            self.assertEqual(codex.closed, 1)
+            self.assertIsNone(worker.codex)
+            self.assertIsNone(worker.thread)
+            self.assertIsNone(worker.handle)
+            self.assertEqual(worker.status["state"], "needs_input")
+            self.assertEqual(worker.status["thread_id"], "thread-question")
+
+    def test_follow_rehydrates_dormant_worker_and_resumes_saved_thread(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            context = meight.repo_context(home, "/repo")
+            repo_home = Path(context["repo_home"])
+            worker = meight.Worker(
+                "rehydrate",
+                repo_home,
+                context["repo_root"],
+                context["repo_key"],
+                "/repo",
+                "workspace_write",
+                "gpt-5.6-sol",
+                "high",
+                thread_ephemeral=False,
+                mode="review",
+                report="decision",
+            )
+            worker.dir.mkdir(parents=True)
+            worker.init_status("thread-resume")
+            worker.status["state"] = "needs_input"
+            worker.status["needs_input_source"] = "question"
+            worker.write_status(force=True)
+
+            capture_thread = self._CaptureThread()
+            resumed = []
+
+            class FakeCodex:
+                def __init__(self, config):
+                    self.config = config
+
+                def thread_resume(self, thread_id, **kwargs):
+                    resumed.append((thread_id, kwargs))
+                    return capture_thread
+
+                def close(self):
+                    return None
+
+            fake_codex = types.ModuleType("openai_codex")
+            fake_codex.Codex = FakeCodex
+            fake_codex.CodexConfig = lambda **kwargs: kwargs
+            fake_codex.Sandbox = types.SimpleNamespace(
+                workspace_write="workspace_write",
+                read_only="read_only",
+                full_access="full_access",
+            )
+            fake_types = types.ModuleType("openai_codex.types")
+            fake_types.ThreadSource = types.SimpleNamespace(subagent="subagent")
+
+            daemon = meight.Daemon(home)
+            with (
+                patch.dict(sys.modules, {
+                    "openai_codex": fake_codex,
+                    "openai_codex.types": fake_types,
+                }),
+                patch.object(meight.threading, "Thread", self._DormantConsumer),
+                patch.object(meight, "system_codex_bin", return_value="/usr/bin/true"),
+                patch.object(meight, "install_computer_use_approval_bridge"),
+                patch.object(meight, "relax_sdk_effort_echo"),
+                patch.object(meight, "allow_dynamic_sdk_effort"),
+            ):
+                response = daemon.cmd_follow({
+                    "name": worker.name,
+                    "brief": "Continue from the saved question.",
+                    **context,
+                })
+
+            self.assertTrue(response["ok"], response)
+            self.assertEqual(response["thread_id"], "thread-resume")
+            self.assertEqual(resumed, [(
+                "thread-resume",
+                {
+                    "cwd": "/repo",
+                    "sandbox": "workspace_write",
+                    "service_tier": None,
+                },
+            )])
+            restored = daemon.workers[
+                meight.registry_key(context["repo_key"], worker.name)
+            ]
+            self.assertEqual(restored.status["turns"], 2)
+            self.assertEqual(restored.status["state"], "starting")
+            self.assertEqual(capture_thread.turn_kwargs[0]["model"], "gpt-5.6-sol")
+
+    def test_follow_recovers_legacy_ephemeral_worker_into_persistent_subagent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            context = meight.repo_context(home, "/repo")
+            repo_home = Path(context["repo_home"])
+            worker = meight.Worker(
+                "legacy",
+                repo_home,
+                context["repo_root"],
+                context["repo_key"],
+                "/repo",
+                "workspace_write",
+                "gpt-5.6-sol",
+                "high",
+                thread_ephemeral=True,
+                mode="worker",
+            )
+            worker.dir.mkdir(parents=True)
+            worker.init_status("thread-legacy")
+            worker.status["state"] = "interrupted"
+            worker.write_status(force=True)
+            (worker.dir / "brief.md").write_text("Original legacy brief.\n")
+            (worker.dir / "result.md").write_text("Work stopped after schema changes.\n")
+            (worker.dir / "events.log").write_text("[fileChange] schema.sql\n")
+
+            capture_thread = self._CaptureThread()
+            started = []
+
+            class FakeCodex:
+                def __init__(self, config):
+                    self.config = config
+
+                def thread_start(self, **kwargs):
+                    started.append(kwargs)
+                    return capture_thread
+
+                def thread_resume(self, *_args, **_kwargs):
+                    raise AssertionError("legacy ephemeral worker must not call thread_resume")
+
+                def close(self):
+                    return None
+
+            fake_codex = types.ModuleType("openai_codex")
+            fake_codex.Codex = FakeCodex
+            fake_codex.CodexConfig = lambda **kwargs: kwargs
+            fake_codex.Sandbox = types.SimpleNamespace(
+                workspace_write="workspace_write",
+                read_only="read_only",
+                full_access="full_access",
+            )
+            fake_types = types.ModuleType("openai_codex.types")
+            fake_types.ThreadSource = types.SimpleNamespace(subagent="subagent")
+
+            daemon = meight.Daemon(home)
+            with (
+                patch.dict(sys.modules, {
+                    "openai_codex": fake_codex,
+                    "openai_codex.types": fake_types,
+                }),
+                patch.object(meight.threading, "Thread", self._DormantConsumer),
+                patch.object(meight, "system_codex_bin", return_value="/usr/bin/true"),
+                patch.object(meight, "install_computer_use_approval_bridge"),
+                patch.object(meight, "relax_sdk_effort_echo"),
+                patch.object(meight, "allow_dynamic_sdk_effort"),
+            ):
+                response = daemon.cmd_follow({
+                    "name": worker.name,
+                    "brief": "Finish the implementation.",
+                    **context,
+                })
+
+            self.assertTrue(response["ok"])
+            self.assertEqual(started[0]["ephemeral"], False)
+            self.assertEqual(started[0]["thread_source"], "subagent")
+            self.assertIn("Original legacy brief.", capture_thread.inputs[0])
+            self.assertIn("Work stopped after schema changes.", capture_thread.inputs[0])
+            self.assertIn("Finish the implementation.", capture_thread.inputs[0])
+            restored = daemon.workers[
+                meight.registry_key(context["repo_key"], worker.name)
+            ]
+            self.assertEqual(restored.status["thread_id"], "thread-mode-test")
+            self.assertEqual(restored.status["recovered_from_thread_id"], "thread-legacy")
+            self.assertFalse(restored.status["thread_ephemeral"])
+
+    def test_wait_returns_dormant_question_without_live_runtime(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            repo_home = home / "repos" / "repo-key"
+            worker_dir = repo_home / "workers" / "dormant"
+            worker_dir.mkdir(parents=True)
+            (worker_dir / "status.json").write_text(json.dumps({
+                "name": "dormant",
+                "state": "needs_input",
+                "needs_input_source": "question",
+                "thread_id": "thread-dormant",
+            }), encoding="utf-8")
+            with (
+                patch.object(meight, "query_runtime_status") as runtime,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                result = meight.wait_for_worker(home, repo_home, "dormant", timeout=1)
+            self.assertEqual(result, 3)
+            runtime.assert_not_called()
+
+    def test_dormant_question_does_not_block_shutdown_and_is_registry_gc_eligible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            context = meight.repo_context(home, "/repo")
+            worker = meight.Worker(
+                "dormant",
+                Path(context["repo_home"]),
+                context["repo_root"],
+                context["repo_key"],
+                "/repo",
+                "workspace_write",
+                "gpt-5.6-sol",
+                "high",
+            )
+            worker.dir.mkdir(parents=True)
+            worker.init_status("thread-dormant")
+            worker.status["state"] = "needs_input"
+            worker.status["needs_input_source"] = "question"
+            worker.write_status(force=True)
+            self.assertIsNotNone(worker.terminal_since)
+
+            daemon = meight.Daemon(home)
+            daemon.worker_gc_ttl_sec = 1
+            key = meight.registry_key(context["repo_key"], worker.name)
+            daemon.workers[key] = worker
+            response = daemon.cmd_shutdown({"force": False})
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["interrupted"], [])
+
+            daemon._shutdown_now()
+            self.assertEqual(worker.status["state"], "needs_input")
+            self.assertEqual(worker.status["thread_id"], "thread-dormant")
+
+            daemon.shutting_down.clear()
+            worker.terminal_since = time.monotonic() - 2
+            with patch.object(daemon, "_schedule_retention_cleanup"):
+                daemon._maintenance()
+            self.assertNotIn(key, daemon.workers)
 
     def test_each_mode_maps_to_expected_skill_and_common_contract(self):
         for mode, directory in (
@@ -1547,6 +1831,8 @@ class ModeLifecycleTests(unittest.TestCase):
             status = json.loads(status_path.read_text(encoding="utf-8"))
             self.assertNotIn("role", status)
             self.assertEqual(status["mode"], "review")
+            self.assertEqual(status["thread_source"], "subagent")
+            self.assertFalse(status["thread_ephemeral"])
             self.assertIn("skills/meight-mate/SKILL.md", capture_thread.inputs[0])
 
 

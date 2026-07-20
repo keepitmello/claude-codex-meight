@@ -254,10 +254,11 @@ answered class of question is answered from the ledger, not re-asked.
 meight reply <name> --brief "Use config-a.json and keep the legacy field."
 ```
 
-If daemon restart or GC expired the same-thread session, `status` shows
-`runtime_lost_detail`. Start a fresh worker instead of replying only when the
-same campaign approval is still valid and its worker/repair cap has room.
-Otherwise preserve the failure record and return to the user before dispatch.
+Final questions and terminal results do not keep an app-server alive.
+`reply`/`follow` resumes the persisted `thread_id` in a fresh runtime, including
+after daemon restart or registry GC. Continue only while the same campaign
+approval and worker/repair cap remain valid; otherwise return to the user before
+starting the follow-up turn.
 
 ## Design Doctrine
 
@@ -495,11 +496,12 @@ Meight runtime code is loaded into the long-lived daemon process. After changing
 
 ### Mode4 Migration And Post-Restart Smoke
 
-Do not restart while any repo namespace has an active or `needs_input` session.
-The operator performs this checklist manually:
+Do not restart while any repo namespace has a live turn. A final `QUESTION:`
+row is dormant, survives restart, and does not block it. The operator performs
+this checklist manually:
 
 1. Run `meight list --all-repos --json` and confirm no row is `starting`,
-   `running`, or `needs_input`.
+   `running`, or waiting on a tool/approval request.
 2. Run non-force `meight shutdown`. Its daemon-wide active-session guard must
    refuse shutdown if the drain check missed anything; do not use `--force` for
    this migration.
@@ -554,9 +556,8 @@ nonzero for launchd recovery. Do not manually bootout before drain.
 Hidden-session invariant:
 
 - Default workers must have `"thread_source": "subagent"` and
-  `"thread_ephemeral": true` in `status.json` / `meight status <name> --json`.
-- Only explicit `--main-thread` workers may have `"thread_source": "user"` and
-  `"thread_ephemeral": false`.
+  `"thread_ephemeral": false` in `status.json` / `meight status <name> --json`.
+- Only explicit `--main-thread` workers may have `"thread_source": "user"`.
 - If Codex Desktop shows new meight workers unexpectedly, check for an old
   daemon running from another home or process.
 
@@ -583,8 +584,9 @@ Hidden-session invariant:
   `terminal_at` (legacy fallback `updated_at`), atomically tombstones under the
   registry lock, and deletes outside it. Recovery never trusts the tombstone
   prefix alone; it rechecks terminal state, expiry, and registry ownership.
-  Active/replyable, malformed, symlinked, or registered sessions are skipped. Startup converts orphaned
-  active rows to `failed`/`runtime_lost_detail`; hidden turns are not resumed.
+  Active/replyable, malformed, symlinked, or registered sessions are skipped.
+  Startup converts orphaned live rows to `failed`/`runtime_lost_detail`; final
+  questions and terminal persistent subagent threads remain resumable.
 - Beta SDK (`openai-codex==0.1.0b3`, pinned): re-run the SPEC.md verification
   suite when upgrading.
 - Source and docs: README.md, SPEC.md, ARCHITECTURE.md.
