@@ -87,6 +87,10 @@
   (luna→terra 승격 사례, capability별 성패)가 lessons.md에 쌓인 뒤 재결정할
   것 — 지금의 표는 확정이 아니다. 승격 규칙(luna→sol, luna→terra) 정교화도
   같은 이유로 defer.
+- **`luna` 기본값 재고 — 열림 (2026-07-29)**: 공개 벤치에 luna row가 없고,
+  07-14 승격 근거는 실전 2건이었다(그중 1건이 후속 NO-GO 원인). 운영자 수치는
+  luna xhigh 49/0.14 vs sol medium 54/0.31이나 단위 미확인. 근거와 판단
+  재료는 `2026-07-29-model-routing-evidence.md` §5.
 - **luna 게이트 튜닝**: 실패 비용 판단만으로 라우팅이 충분한지는 미검증
   가정 (2026-07-29). luna 결함률·승격률·false-approve·게이트 생략 후
   결함 지표가 기준선.
