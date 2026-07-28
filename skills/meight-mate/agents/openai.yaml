@@ -1,4 +1,4 @@
 interface:
   display_name: "Meight Mate"
-  short_description: "Challenge plans, code, and technical direction."
-  default_prompt: "Use $meight-mate to independently review this plan or implementation."
+  short_description: "Think, design, diagnose, and review with independent judgment."
+  default_prompt: "Use $meight-mate to design or review this with independent judgment."
