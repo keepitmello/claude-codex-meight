@@ -28,7 +28,7 @@ class ModelAliasTests(unittest.TestCase):
 class StartDefaultsTests(unittest.TestCase):
     EXPECTED = {
         "mate": ("gpt-5.6-sol", "medium", "default", "text", "full"),
-        "worker": ("gpt-5.6-luna", "xhigh", "priority", "decision", "full"),
+        "worker": ("gpt-5.6-luna", "xhigh", "default", "decision", "full"),
     }
 
     def _args(self, command: str, mode: str, *options: str):
@@ -85,13 +85,13 @@ class StartDefaultsTests(unittest.TestCase):
             ("gpt-5.6-terra", "max", "priority", "decision", "ro"),
         )
 
-    def test_no_fast_overrides_worker_fast_default(self):
-        request = self._start_request(self._args("start", "worker", "--no-fast"))
-        self.assertEqual(request["service_tier"], "default")
+    def test_fast_overrides_worker_fast_default(self):
+        request = self._start_request(self._args("start", "worker", "--fast"))
+        self.assertEqual(request["service_tier"], "priority")
 
     def test_dispatch_uses_the_same_resolution_and_start_path(self):
-        start_args = self._args("start", "worker", "--model", "sol", "--no-fast")
-        dispatch_args = self._args("dispatch", "worker", "--model", "sol", "--no-fast")
+        start_args = self._args("start", "worker", "--model", "sol", "--fast")
+        dispatch_args = self._args("dispatch", "worker", "--model", "sol", "--fast")
         self.assertEqual(meight.resolve_start_options(start_args),
                          meight.resolve_start_options(dispatch_args))
         response = {
@@ -109,7 +109,7 @@ class StartDefaultsTests(unittest.TestCase):
         start.assert_called_once_with(dispatch_args, Path("/tmp/meight-defaults"))
         self.assertIn(
             "mode=worker model=sol(set) "
-            "effort=xhigh(default) fast=off(set) report=decision(default) "
+            "effort=xhigh(default) fast=on(set) report=decision(default) "
             "sandbox=full(default)",
             output.getvalue(),
         )
@@ -1616,7 +1616,7 @@ class ModeLifecycleTests(unittest.TestCase):
     def test_start_output_echoes_resolved_defaults_and_provenance(self):
         cases = (
             ("worker",
-             "model=luna(default) effort=xhigh(default) fast=on(default) "
+             "model=luna(default) effort=xhigh(default) fast=off(default) "
              "report=decision(default) sandbox=full(default)"),
             ("mate",
              "model=sol(default) effort=medium(default) fast=off(default) "
@@ -1642,7 +1642,7 @@ class ModeLifecycleTests(unittest.TestCase):
     def test_start_output_marks_explicit_flags_as_set(self):
         args = meight.build_parser().parse_args([
             "start", "mode-test", "--mode", "worker", "--brief", "Implement.",
-            "--model", "sol", "--effort", "high", "--no-fast",
+            "--model", "sol", "--effort", "high", "--fast",
             "--report", "text", "--sandbox", "ro",
         ])
         response = {
@@ -1656,7 +1656,7 @@ class ModeLifecycleTests(unittest.TestCase):
         ):
             self.assertEqual(meight.cmd_start(args, Path("/tmp/meight-output")), 0)
         self.assertIn(
-            "model=sol(set) effort=high(set) fast=off(set) "
+            "model=sol(set) effort=high(set) fast=on(set) "
             "report=text(set) sandbox=ro(set)",
             output.getvalue(),
         )

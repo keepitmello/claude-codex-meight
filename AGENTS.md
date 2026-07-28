@@ -51,10 +51,11 @@ requirements.
 
 | Work | Route |
 |---|---|
-| Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` (defaults: `luna xhigh` + Fast) |
-| Blind/anchored design and diagnosis | `--mode mate` (defaults: `sol medium`; `high`/`xhigh` only for genuinely hard problems) |
+| Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` (defaults: `luna xhigh`; Fast is opt-in via `--fast`) |
+| Blind/anchored design and diagnosis | `--mode mate` (defaults: `sol medium`; `high` only for genuinely hard problems, and `sol` stops at `high`) |
 | Plan and adversarial review | `--mode mate --report decision --effort high` |
-| Hard-gated implementation | `--mode worker --model sol --effort high` |
+| Difficult implementation - dispatcher's call | `--mode worker --model sol --effort medium` |
+| Hard-gated or genuinely hard implementation | `--mode worker --model sol --effort high` (costliest; confirm with the user before launching) |
 | Capability-specific fallback | either posture with `terra` only when measured evidence supports it |
 
 Failure cost is the gate. Hard-route to `sol` when acceptance-critical work
@@ -65,6 +66,13 @@ General endpoint implementation and read-only production log investigation
 remain `luna`; API contract design/evolution and production mutation or
 remediation do not. Money paths retain dispatcher sign-off. `luna` can escalate
 ambiguity; `luna` to `terra` remains an evidence-backed capability fallback.
+
+Difficulty routes alongside failure cost, and the dispatcher judges it: ordinary
+work stays `luna xhigh`, work whose design judgment or state/edge reasoning is
+genuinely hard moves to `sol medium` without asking, and only the hardest cases
+reach `sol high` - the costliest combination, which takes one user confirmation
+before launch. Whenever a session starts, tell the user in one line which model
+and effort it is running on.
 
 ## Durable Judgment
 

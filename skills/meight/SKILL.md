@@ -27,11 +27,11 @@ description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-mei
 | Mode | Model | Effort | Fast | Report | Sandbox |
 |---|---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `text` | `full` |
-| `worker` | `luna` | `xhigh` | on | `decision` | `full` |
+| `worker` | `luna` | `xhigh` | off | `decision` | `full` |
 
 표준은 조용하다 — 편차만 플래그로 주고, 명시한 플래그는 항상 기본값을 이긴다. 이 표는 의도적으로 `meight.py` 안의 코드 전용 운영 정책이다. config 파일이나 환경변수 오버라이드 레이어는 없다. start echo가 해소된 값 전부를 `(default)` / `(set)` 출처와 함께 보여준다.
 
-mate 기본 effort는 `medium`이다 — 정말 어려운 문제만 `--effort high`나 `xhigh`로 올린다. verdict 인코딩(APPROVE/REVISE → needs_input 라우팅)이 필요한 플랜 리뷰 루프는 `--report decision`을 명시한다; 설계 대화는 기본 `text`가 자연스럽다.
+mate 기본 effort는 `medium`이다 — 정말 어려운 문제만 `--effort high`로 올린다 (`sol`의 상한은 `high`다). verdict 인코딩(APPROVE/REVISE → needs_input 라우팅)이 필요한 플랜 리뷰 루프는 `--report decision`을 명시한다; 설계 대화는 기본 `text`가 자연스럽다.
 
 CLI는 `start` 전에 capability handshake를 한다. 살아있는 데몬이 capability `posture2`를 광고하지 않으면 start는 fail closed. 모든 start/follow는 epoch `posture2`를 싣고, 성공 시 정규화 모드와 epoch를 원자적으로 echo해야 한다 — 아니면 CLI가 best-effort interrupt 후 nonzero 종료.
 
@@ -39,12 +39,16 @@ CLI는 `start` 전에 capability handshake를 한다. 살아있는 데몬이 cap
 
 `--model`을 생략하면 위 자세 기본값. 편차일 때만 명시한다. 짧은 이름은 실제 별칭이다: `sol`, `terra`, `luna`가 현재 ChatGPT 계정 슬러그 `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`로 해소된다. 전체/커스텀 모델 문자열은 그대로 통과한다.
 
-라우팅 원리: **실패 비용이 모델을 고른다.** 기본값은 의도적으로 넓다 — bounded 작업은 `luna` `xhigh`, 계정과 서비스가 Fast를 지원하면 `--fast`.
+라우팅 원리: **실패 비용이 모델을 고른다.** 기본값은 의도적으로 넓다 — bounded 작업은 `luna` `xhigh`. Fast는 기본 off이고, 지연이 실제로 문제될 때만 `--fast`로 옵트인한다.
+
+실패 비용 옆에 난이도 축이 하나 더 있고, worker 자세 안의 사다리는 디스패처가 판단해서 올린다: 보통 작업은 `luna xhigh`, 설계 판단이 얽히거나 미묘한 상태·경계 조건이 실제로 어려운 작업은 `--model sol --effort medium`, 그중에서도 진짜 어려운 것만 `--model sol --effort high`. `luna` ↔ `sol medium`은 확인 없이 디스패처가 고른다 — 브리프를 쓰면서 "이건 luna가 헤맬 종류인가"를 한 번 묻고 답한다.
+
+**`sol high`는 가장 비싼 조합이라 띄우기 전에 사용자 확인을 한 번 받는다.** 무엇이 어려워서 올리는지 한 줄로 말하고 답을 기다린다 (비용 있는 실행은 사용자 소유 결정이다).
 
 | Model | 쓸 곳 | 통상 effort |
 |-------|------|---|
-| `luna` | worker 자세 구현·수정·테스트·검증, read-only 로그 파기, 브라우저/런타임 QA, computer use, 탐색의 기본 모델 | `xhigh` + 가능하면 `--fast` |
-| `sol` | mate 자세 방향·verdict 작업의 기본 모델, 그리고 하드 게이트 걸린 worker 구현 | `medium`; 어려우면 `high`, `xhigh`는 정말 어려운 문제에만 |
+| `luna` | worker 자세 구현·수정·테스트·검증, read-only 로그 파기, 브라우저/런타임 QA, computer use, 탐색의 기본 모델 | `xhigh` (Fast는 필요할 때 `--fast` 옵트인) |
+| `sol` | mate 자세 방향·verdict 작업의 기본 모델, 그리고 하드 게이트가 걸렸거나 난이도가 높은 worker 구현 | `medium`; 정말 어려운 문제만 `high`(띄우기 전 사용자 확인). `sol`은 `high`가 상한이고 `xhigh`는 쓰지 않는다 |
 | `terra` | 기본 소유 영역 없음. 측정 근거가 뒷받침될 때 capability-specific 폴백 | 작업별 |
 
 측정에서 나온 주의점 하나: `medium`은 적대적 리뷰에서 severity를 과대 승격하는 경향을 보였다. verdict가 걸린 리뷰는 `--effort high`로 올리는 게 낫고, medium은 설계 사고·스코핑 쪽에 맞는다.
@@ -65,6 +69,7 @@ Bash(command: "meight dispatch fix-auth --mode worker --cwd ~/repo --brief-file 
 → exit 3이면 → Bash(command: "meight reply fix-auth --brief '...'", run_in_background: true)
 ```
 
+- **띄우면 한마디 한다**: 세션을 시작할 때 이름·자세와 함께 어떤 모델·effort로 띄웠는지 사용자에게 한 줄로 말한다 (`fix-auth 워커 띄웠어 — luna xhigh`). 기본에서 벗어났으면 왜 올렸는지도 같은 줄에 붙인다. 백그라운드 세션은 사용자 눈에 안 보이니 이 한 줄이 어떤 브레인이 얼마짜리로 돌고 있는지 아는 유일한 창이다.
 - `--timeout`(기본 1800)은 안전망 체크포인트다: 타임아웃으로 깨어나도 워커는 계속 돈다 — `status <name>` 보고 백그라운드 `wait`를 다시 건다.
 - `--progress`(기본 300) heartbeat는 백그라운드에선 태스크 출력 파일에만 쌓인다 (한 줄/5분). 아주 긴 세션이면 `--progress 0`.
 - 중간 개입 가능성이 있는 작업은 `start`로 열고 백그라운드 `wait <name> --timeout`을 별도로 건다 — 그 사이 `meight steer <name> "correction"`으로 도는 턴에 텍스트를 주입할 수 있다.

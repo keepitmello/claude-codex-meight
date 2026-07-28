@@ -5,7 +5,8 @@
 > 문서를 갱신할 것. (역사적 경위는 decisions/를, 운영 프로토콜은 skills/를
 > 신뢰 — 충돌 시 그쪽이 이긴다.)
 >
-> LAST UPDATED: 2026-07-28 (posture2 — 2자세 통합, 샌드박스 강제 제거)
+> LAST UPDATED: 2026-07-29 (worker 기본 Fast off — `--fast` 옵트인)
+> 이전: 2026-07-28 (posture2 — 2자세 통합, 샌드박스 강제 제거)
 
 ## 현재 상태 스냅샷
 
@@ -18,11 +19,15 @@
   read-only는 브리프 지시.
 - **파이프라인**: blind design(방향 fork, mate) → plan-review 루프(mate
   `--report decision`, 최대 3라운드, PLAN.md 동결) → worker 구현(luna
-  xhigh+fast 기본, failure-cost 하드게이트만 sol) → 적대 리뷰(mate, 2라운드
+  xhigh 기본, Fast는 옵트인, failure-cost 하드게이트만 sol) → 적대 리뷰(mate, 2라운드
   캡) → dispatcher 사인오프. 게이트는 작업 크기에 비례해 생략 가능하되 절대
   조용히는 불가.
-- **effort 정책**: luna=xhigh(+fast), sol=medium 기본(어려우면 high, xhigh는
-  진짜 어려운 것만 — dispatcher 판단; verdict 리뷰는 high 권장).
+- **난이도 사다리(worker)**: 보통 `luna xhigh` → 어려우면 `sol medium`(디스패처
+  재량) → 진짜 어려우면 `sol high`(가장 비싼 조합, 띄우기 전 사용자 확인 1회).
+  세션을 띄우면 어떤 모델·effort로 띄웠는지 사용자에게 한 줄 보고.
+- **effort 정책**: luna=xhigh(Fast는 `--fast` 옵트인), sol=medium 기본이고 상한은
+  high — 진짜 어려운 것만 high로 올린다(dispatcher 판단 + 사용자 확인; verdict
+  리뷰는 high 권장). sol에 xhigh는 쓰지 않는다.
 - **fail-closed 기계**: 데몬 경계 epoch `posture2` 검증이 모든 start/follow
   부작용보다 앞선다. start/follow 성공 응답의 normalized mode+epoch를 CLI가
   함께 검증하고 불일치 시 interrupt 클린업한다. 레거시 status 행은 계속

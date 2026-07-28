@@ -137,9 +137,10 @@ main orchestrator.
 | Work | Route |
 |---|---|
 | Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` |
-| Blind/anchored design and diagnosis | `--mode mate` (`high`/`xhigh` only for genuinely hard problems) |
+| Blind/anchored design and diagnosis | `--mode mate` (`high` only for genuinely hard problems; `sol` stops at `high`) |
 | Plan and adversarial review | `--mode mate --report decision --effort high` |
-| Hard-gated implementation | `--mode worker --model sol --effort high` (`xhigh` only for genuinely hard problems) |
+| Difficult implementation - dispatcher's call | `--mode worker --model sol --effort medium` |
+| Hard-gated or genuinely hard implementation | `--mode worker --model sol --effort high` (costliest; confirm with the user before launching) |
 | Capability-specific fallback | either posture with `terra`; no default ownership, re-promotable on measured evidence |
 
 - **Failure cost is the hard gate**: route to `sol` when acceptance-critical
@@ -175,7 +176,7 @@ main orchestrator.
   | Mode | Model | Effort | Fast | Report | Sandbox |
   |---|---|---|---|---|---|
   | `mate` | `sol` | `medium` | off | `text` | `full` |
-  | `worker` | `luna` | `xhigh` | on | `decision` | `full` |
+  | `worker` | `luna` | `xhigh` | off | `decision` | `full` |
 
   Standard is silent and deviation is explicit. The table is deliberately
   code-only operator policy in `meight.py`; there is no config-file or

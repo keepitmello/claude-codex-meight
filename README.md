@@ -74,8 +74,9 @@ are explicitly adjustable operator policy, not meight interface requirements.
 
 Effort follows the same economics: `luna` runs `xhigh` because it is cheap,
 `sol` defaults to `medium` for mate work (raise to `high` for verdict-bearing
-review) and reserves `xhigh` for genuinely hard problems — the dispatcher
-judges what qualifies.
+review) and stops at `high`, which is reserved for genuinely hard problems —
+the dispatcher judges what qualifies, and `sol high` takes one user
+confirmation before launch because it is the costliest combination.
 
 ## Why This Exists
 
@@ -317,7 +318,7 @@ sent:
 | Mode | Model | Effort | Fast | Report | Sandbox |
 |---|---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `text` | `full` |
-| `worker` | `luna` | `xhigh` | on | `decision` | `full` |
+| `worker` | `luna` | `xhigh` | off | `decision` | `full` |
 
 Neither posture enforces a sandbox: read-only is brief-driven policy (the mate
 contract defaults to not modifying repository files), and `--sandbox` remains

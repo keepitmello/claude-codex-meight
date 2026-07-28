@@ -70,8 +70,8 @@ cross-cutting 리팩터, 그리고 돈/데이터 손상이나 비가역 피해�
 
 effort도 같은 경제학을 따른다: `luna`는 싸니까 `xhigh`로 돌리고, `sol`은
 mate 작업 기본이 `medium`이다 (verdict가 걸린 리뷰는 `high`로 올린다).
-`xhigh`는 정말 어려운 문제에만 아낀다 — 뭐가 거기 해당하는지는 디스패처가
-판단한다.
+`sol`의 상한은 `high`이고 정말 어려운 문제에만 아낀다 — 뭐가 거기 해당하는지는
+디스패처가 판단하고, 가장 비싼 조합이라 띄우기 전에 사용자 확인을 한 번 받는다.
 
 ## 왜 이게 존재하나
 
@@ -303,7 +303,7 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 | Mode | Model | Effort | Fast | Report | Sandbox |
 |---|---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `text` | `full` |
-| `worker` | `luna` | `xhigh` | on | `decision` | `full` |
+| `worker` | `luna` | `xhigh` | off | `decision` | `full` |
 
 어느 자세도 샌드박스를 강제하지 않는다: read-only는 브리프가 정하는
 정책이고(mate 계약은 브리프가 시키지 않는 한 레포 파일을 고치지 않는 게
