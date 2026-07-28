@@ -5,3 +5,6 @@ __pycache__/
 *-evidence.md
 result.md
 *-read.md
+
+# consult evidence (local only)
+.consult/
