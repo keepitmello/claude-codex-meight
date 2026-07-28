@@ -25,18 +25,18 @@
   조용히는 불가.
 - **난이도 대응 = 모델 승급이 아니라 단계 추가**: 어려우면 `sol` mate 플랜 →
   동결 → `luna` 워커 구현이 기본이자 가장 싼 조합. worker `sol`은 설계를 앞에
-  못 붙이거나 플랜을 쥐고도 구현이 어려울 때의 예외 경로이고 `medium`이 먼저다.
-  `sol high`는 가장 비싼 조합이라 띄우기 전 사용자 확인 1회 — 구현에 필요해
-  보이면 대개 앞단 설계가 빠졌다는 신호. 세션을 띄우면 어떤 모델·effort로
-  띄웠는지 사용자에게 한 줄 보고.
+  못 붙이거나 플랜을 쥐고도 구현이 어려울 때의 예외 경로이고 항상 `medium` —
+  `high`와의 차이는 작고 코드 작업에 태우면 값을 못 한다. `sol high`는 mate
+  자리(정말 어려운 설계·verdict) 전용이고 띄우기 전 사용자 확인 1회. 세션을
+  띄우면 어떤 모델·effort로 띄웠는지 사용자에게 한 줄 보고.
 - **모델 라우팅**: 실패 비용 판단 하나 — 실패가 돈·데이터를 손상시키거나
   비가역이거나 프로덕션에 크게 번지면 브레인을 올리고 나머지는 `luna`. 작업
   이름이 아니라 실패 결과를 보고, 올렸으면 이유를 한 줄로 말한다. 돈 경로
   sign-off와 worker 스킬의 "혼자 결정 금지" 에스컬레이션 목록은 다른 축으로
   유지 (경위: `decisions/2026-07-29-difficulty-answered-with-a-stage.md`).
-- **effort 정책**: luna=xhigh(Fast는 `--fast` 옵트인), sol=medium 기본이고 상한은
-  high — 진짜 어려운 것만 high로 올린다(dispatcher 판단 + 사용자 확인; verdict
-  리뷰는 high 권장). sol에 xhigh는 쓰지 않는다.
+- **effort 정책**: luna=xhigh(Fast는 `--fast` 옵트인), sol=medium 기본. sol
+  `high`는 mate 자리 전용이고 진짜 어려운 것만(dispatcher 판단 + 사용자 확인;
+  verdict 리뷰는 high 권장). sol에 xhigh는 쓰지 않는다.
 - **fail-closed 기계**: 데몬 경계 epoch `posture2` 검증이 모든 start/follow
   부작용보다 앞선다. start/follow 성공 응답의 normalized mode+epoch를 CLI가
   함께 검증하고 불일치 시 interrupt 클린업한다. 레거시 status 행은 계속

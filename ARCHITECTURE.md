@@ -140,8 +140,8 @@ main orchestrator.
 | Blind/anchored design and diagnosis | `--mode mate` (`high` only for genuinely hard problems; `sol` stops at `high`) |
 | Plan and adversarial review | `--mode mate --report decision --effort high` |
 | Hard work of any kind | `--mode mate` for the plan first, then `--mode worker` (`luna`) on the frozen plan |
-| Implementation still hard with a plan in hand | `--mode worker --model sol --effort medium` |
-| `sol high` in either posture | costliest combination; confirm with the user before launching |
+| Implementation still hard with a plan in hand | `--mode worker --model sol --effort medium` (worker `sol` stays at `medium`) |
+| `sol high` | mate posture only, for genuinely hard design or verdict work; confirm with the user before launching |
 | Capability-specific fallback | either posture with `terra`; no default ownership, re-promotable on measured evidence |
 
 - **Failure cost is the gate**: raise the brain when failure can damage money or
@@ -152,7 +152,8 @@ main orchestrator.
   worker contract escalates its own do-not-decide-alone list before acting.
 - **Difficulty is answered with a stage, not a bigger worker**: a `sol` mate
   plan feeding a `luna` worker is the cheapest strong combination. `sol` in
-  worker mode is the exception, and `sol high` takes one user confirmation.
+  worker mode is the exception and stays at `medium`; `sol high` is mate-only
+  and takes one user confirmation.
 - **Avoiding overengineering comes first**: design and review modes are tools,
   not a default chain. The dispatcher selects gates by failure cost and records
   the choice in one line.

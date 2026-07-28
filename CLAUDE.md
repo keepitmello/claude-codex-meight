@@ -54,8 +54,8 @@ requirements.
 | Blind/anchored design and diagnosis | `--mode mate` (defaults: `sol medium`; `high` only for genuinely hard problems, and `sol` stops at `high`) |
 | Plan and adversarial review | `--mode mate --report decision --effort high` |
 | Hard work of any kind | `--mode mate` for the plan first, then `--mode worker` (`luna`) on the frozen plan |
-| Implementation still hard with a plan in hand | `--mode worker --model sol --effort medium` |
-| `sol high` in either posture | costliest combination; confirm with the user before launching |
+| Implementation still hard with a plan in hand | `--mode worker --model sol --effort medium` (worker `sol` stays at `medium`) |
+| `sol high` | mate posture only, for genuinely hard design or verdict work; confirm with the user before launching |
 | Capability-specific fallback | either posture with `terra` only when measured evidence supports it |
 
 Failure cost is the gate: raise the brain when failure can damage money or data,
@@ -72,10 +72,11 @@ When work gets hard, add a stage before upgrading the worker: take a plan from a
 `sol` mate, freeze it, and let a `luna` worker implement it. Most difficulty
 lives in the judgment rather than the typing, and this is the cheapest strong
 combination. Move the worker itself to `sol medium` only when design cannot come
-first or the implementation stays hard with a plan in hand; `sol high` is the
-costliest combination and takes one user confirmation before launch - needing it
-for implementation usually means the design stage was skipped. Whenever a
-session starts, tell the user in one line which model and effort it runs on.
+first or the implementation stays hard with a plan in hand, and keep worker `sol`
+at `medium`: the gap to `high` is small and code work does not repay it. `sol
+high` belongs to the mate posture, for genuinely hard design and verdict work,
+and takes one user confirmation before launch. Whenever a session starts, tell
+the user in one line which model and effort it runs on.
 
 ## Durable Judgment
 

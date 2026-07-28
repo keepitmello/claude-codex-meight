@@ -75,10 +75,11 @@ implementation that stays hard with a plan in hand. Those model and money-path g
 are explicitly adjustable operator policy, not meight interface requirements.
 
 Effort follows the same economics: `luna` runs `xhigh` because it is cheap,
-`sol` defaults to `medium` for mate work (raise to `high` for verdict-bearing
-review) and stops at `high`, which is reserved for genuinely hard problems —
-the dispatcher judges what qualifies, and `sol high` takes one user
-confirmation before launch because it is the costliest combination.
+`sol` defaults to `medium` and stays there in worker mode, and `high` is
+reserved for genuinely hard mate work such as verdict-bearing review — the
+dispatcher judges what qualifies, and `sol high` takes one user confirmation
+before launch because it is the costliest combination. `sol` never runs
+`xhigh`.
 
 ## Why This Exists
 
