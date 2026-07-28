@@ -90,7 +90,7 @@ MODE_START_DEFAULTS = {
         "report": "text", "sandbox": "full",
     },
     "worker": {
-        "model": "luna", "effort": "xhigh", "fast": False,
+        "model": "luna", "effort": "max", "fast": False,
         "report": "decision", "sandbox": "full",
     },
 }

@@ -27,7 +27,7 @@ description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-mei
 | Mode | Model | Effort | Fast | Report | Sandbox |
 |---|---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `text` | `full` |
-| `worker` | `luna` | `xhigh` | off | `decision` | `full` |
+| `worker` | `luna` | `max` | off | `decision` | `full` |
 
 표준은 조용하다 — 편차만 플래그로 주고, 명시한 플래그는 항상 기본값을 이긴다. 이 표는 의도적으로 `meight.py` 안의 코드 전용 운영 정책이다. config 파일이나 환경변수 오버라이드 레이어는 없다. start echo가 해소된 값 전부를 `(default)` / `(set)` 출처와 함께 보여준다.
 
@@ -39,9 +39,9 @@ CLI는 `start` 전에 capability handshake를 한다. 살아있는 데몬이 cap
 
 `--model`을 생략하면 위 자세 기본값. 편차일 때만 명시한다. 짧은 이름은 실제 별칭이다: `sol`, `terra`, `luna`가 현재 ChatGPT 계정 슬러그 `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`로 해소된다. 전체/커스텀 모델 문자열은 그대로 통과한다.
 
-라우팅 원리: **실패 비용이 모델을 고른다.** 기본값은 의도적으로 넓다 — bounded 작업은 `luna` `xhigh`. Fast는 기본 off이고, 지연이 실제로 문제될 때만 `--fast`로 옵트인한다.
+라우팅 원리: **실패 비용이 모델을 고른다.** 기본값은 의도적으로 넓다 — bounded 작업은 `luna` `max`. Fast는 기본 off이고, 지연이 실제로 문제될 때만 `--fast`로 옵트인한다.
 
-난이도가 올라갈 때 첫 대응은 워커 브레인 승급이 아니라 **단계 추가**다: `sol` mate에게 설계·플랜을 먼저 받아 동결하고, 그 플랜을 브리프로 받은 `luna` 워커가 구현한다. 판단이 어려운 것과 실행이 어려운 것은 다른 문제이고 대부분의 어려움은 앞쪽에 있다 — 좋은 플랜을 쥔 `luna xhigh`는 대부분의 구현을 해낸다. 이게 이 하네스의 기본 구조이자 가장 싼 조합이다.
+난이도가 올라갈 때 첫 대응은 워커 브레인 승급이 아니라 **단계 추가**다: `sol` mate에게 설계·플랜을 먼저 받아 동결하고, 그 플랜을 브리프로 받은 `luna` 워커가 구현한다. 판단이 어려운 것과 실행이 어려운 것은 다른 문제이고 대부분의 어려움은 앞쪽에 있다 — 좋은 플랜을 쥔 `luna max`는 대부분의 구현을 해낸다. 이게 이 하네스의 기본 구조이자 가장 싼 조합이다.
 
 worker 자세를 `sol`로 올리는 건 그 다음이다 — 설계를 앞에 붙일 수 없거나, 플랜이 있어도 구현 자체가 `sol` 브레인을 요구할 때. **worker의 `sol`은 `medium`이다.** `medium`은 무겁게 들리는 작업도 해내고 `high`와의 실측 차이는 작아서, 코드 작업에 `high`를 태우면 값을 못 한다. 구현이 `medium`으로도 안 풀릴 것 같으면 브레인이 아니라 설계가 부족한 것이니 mate 한 판을 앞에 붙인다.
 
@@ -49,11 +49,17 @@ worker 자세를 `sol`로 올리는 건 그 다음이다 — 설계를 앞에 �
 
 | Model | 쓸 곳 | 통상 effort |
 |-------|------|---|
-| `luna` | worker 자세 구현·수정·테스트·검증, read-only 로그 파기, 브라우저/런타임 QA, computer use, 탐색의 기본 모델 | `xhigh` (Fast는 필요할 때 `--fast` 옵트인) |
-| `sol` | mate 자세 방향·verdict 작업의 기본 모델. worker에는 예외 경로 — 설계 선행이 불가능하거나 구현 자체가 어려울 때 worker는 언제나 `medium`. `high`는 mate 자리의 정말 어려운 설계·verdict에만 쓰고 띄우기 전 사용자 확인을 받는다. `xhigh`는 쓰지 않는다 |
+| `luna` | worker 자세 구현·수정·테스트·검증, read-only 로그 파기, 브라우저/런타임 QA, computer use, 탐색의 기본 모델 | `max` (Fast는 필요할 때 `--fast` 옵트인) |
+| `sol` | mate 자세 방향·verdict 작업의 기본 모델. worker에는 예외 경로 — 설계 선행이 불가능하거나 구현 자체가 어려울 때 | worker는 언제나 `medium`. `high`는 mate 자리의 정말 어려운 설계·verdict에만 쓰고 띄우기 전 사용자 확인을 받는다. `xhigh`는 쓰지 않는다 |
 | `terra` | 기본 소유 영역 없음. 측정 근거가 뒷받침될 때 capability-specific 폴백 | 작업별 |
 
-가격표가 이 사다리를 뒷받침한다: `luna xhigh`는 지능지수 49에 비용 0.14, `sol medium`은 54에 0.31 — 두 배 남짓한 값으로 5포인트다. bounded 작업이 `luna`에 머무는 이유이자, 판단이 걸리는 순간 `sol medium`이 여전히 싼 이유다.
+실측이 이 사다리를 뒷받침한다 (Artificial Analysis Coding Agent Index v1.3, 종합 / DeepSWE / SWE-Atlas-QnA / 태스크당 비용):
+
+- `luna xhigh` 55 / 57 / 31 / $1.26
+- `luna max` **59 / 63 / 33 / $1.57**
+- `sol medium` 61 / 64 / 40 / $2.99
+
+`xhigh`에서 `max`로 올리는 건 25%로 종합 4점과 DeepSWE 6%p를 사는 거라 기본값이 거기 있다. 거기서 `sol medium`까지는 비용이 다시 1.9배인데 종합은 2점뿐 — 한계수익이 떨어진다. `sol medium`이 확실히 앞서는 자리는 레포 이해·탐색(QnA 40 대 33)이고, 그게 위 사다리에서 판단이 걸릴 때 `sol medium`으로 올리는 이유다. 근거 전문: [`docs/2026-07-29-model-routing-evidence.md`](../../docs/2026-07-29-model-routing-evidence.md).
 
 측정에서 나온 주의점 하나: `medium`은 적대적 리뷰에서 severity를 과대 승격하는 경향을 보였다. verdict가 걸린 리뷰는 `--effort high`로 올리는 게 낫고, medium은 설계 사고·스코핑 쪽에 맞는다.
 
@@ -75,7 +81,7 @@ Bash(command: "meight dispatch fix-auth --mode worker --cwd ~/repo --brief-file 
 → exit 3이면 → Bash(command: "meight reply fix-auth --brief '...'", run_in_background: true)
 ```
 
-- **띄우면 한마디 한다**: 세션을 시작할 때 이름·자세와 함께 어떤 모델·effort로 띄웠는지 사용자에게 한 줄로 말한다 (`fix-auth 워커 띄웠어 — luna xhigh`). 기본에서 벗어났으면 왜 올렸는지도 같은 줄에 붙인다. 백그라운드 세션은 사용자 눈에 안 보이니 이 한 줄이 어떤 브레인이 얼마짜리로 돌고 있는지 아는 유일한 창이다.
+- **띄우면 한마디 한다**: 세션을 시작할 때 이름·자세와 함께 어떤 모델·effort로 띄웠는지 사용자에게 한 줄로 말한다 (`fix-auth 워커 띄웠어 — luna max`). 기본에서 벗어났으면 왜 올렸는지도 같은 줄에 붙인다. 백그라운드 세션은 사용자 눈에 안 보이니 이 한 줄이 어떤 브레인이 얼마짜리로 돌고 있는지 아는 유일한 창이다.
 - `--timeout`(기본 1800)은 안전망 체크포인트다: 타임아웃으로 깨어나도 워커는 계속 돈다 — `status <name>` 보고 백그라운드 `wait`를 다시 건다.
 - `--progress`(기본 300) heartbeat는 백그라운드에선 태스크 출력 파일에만 쌓인다 (한 줄/5분). 아주 긴 세션이면 `--progress 0`.
 - 중간 개입 가능성이 있는 작업은 `start`로 열고 백그라운드 `wait <name> --timeout`을 별도로 건다 — 그 사이 `meight steer <name> "correction"`으로 도는 턴에 텍스트를 주입할 수 있다.

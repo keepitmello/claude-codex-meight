@@ -5,8 +5,8 @@
 > 문서를 갱신할 것. (역사적 경위는 decisions/를, 운영 프로토콜은 skills/를
 > 신뢰 — 충돌 시 그쪽이 이긴다.)
 >
-> LAST UPDATED: 2026-07-29 (worker 기본 Fast off, 모델 라우팅은 실패 비용
-> 판단으로 통일, 난이도는 mate 단계 추가로 대응)
+> LAST UPDATED: 2026-07-29 (worker 기본 `luna max` + Fast off, 모델 라우팅은
+> 실패 비용 판단으로 통일, 난이도는 mate 단계 추가로 대응)
 > 이전: 2026-07-28 (posture2 — 2자세 통합, 샌드박스 강제 제거)
 
 ## 현재 상태 스냅샷
@@ -20,7 +20,7 @@
   read-only는 브리프 지시.
 - **파이프라인**: blind design(방향 fork, mate) → plan-review 루프(mate
   `--report decision`, 최대 3라운드, PLAN.md 동결) → worker 구현(luna
-  xhigh 기본, Fast는 옵트인, sol worker는 예외 경로) → 적대 리뷰(mate, 2라운드
+  max 기본, Fast는 옵트인, sol worker는 예외 경로) → 적대 리뷰(mate, 2라운드
   캡) → dispatcher 사인오프. 게이트는 작업 크기에 비례해 생략 가능하되 절대
   조용히는 불가.
 - **난이도 대응 = 모델 승급이 아니라 단계 추가**: 어려우면 `sol` mate 플랜 →
@@ -34,9 +34,11 @@
   이름이 아니라 실패 결과를 보고, 올렸으면 이유를 한 줄로 말한다. 돈 경로
   sign-off와 worker 스킬의 "혼자 결정 금지" 에스컬레이션 목록은 다른 축으로
   유지 (경위: `decisions/2026-07-29-difficulty-answered-with-a-stage.md`).
-- **effort 정책**: luna=xhigh(Fast는 `--fast` 옵트인), sol=medium 기본. sol
-  `high`는 mate 자리 전용이고 진짜 어려운 것만(dispatcher 판단 + 사용자 확인;
-  verdict 리뷰는 high 권장). sol에 xhigh는 쓰지 않는다.
+- **effort 정책**: luna=max — `xhigh` 대비 비용 +25%에 Coding Agent Index
+  +4점이라 기본이 여기다 (Fast는 `--fast` 옵트인). sol=medium 기본이고
+  `high`는 mate 자리 전용, 진짜 어려운 것만(dispatcher 판단 + 사용자 확인;
+  verdict 리뷰는 high 권장). sol에 xhigh는 쓰지 않는다. 근거:
+  `docs/2026-07-29-model-routing-evidence.md`.
 - **fail-closed 기계**: 데몬 경계 epoch `posture2` 검증이 모든 start/follow
   부작용보다 앞선다. start/follow 성공 응답의 normalized mode+epoch를 CLI가
   함께 검증하고 불일치 시 interrupt 클린업한다. 레거시 status 행은 계속
@@ -87,10 +89,9 @@
   (luna→terra 승격 사례, capability별 성패)가 lessons.md에 쌓인 뒤 재결정할
   것 — 지금의 표는 확정이 아니다. 승격 규칙(luna→sol, luna→terra) 정교화도
   같은 이유로 defer.
-- **`luna` 기본값 재고 — 열림 (2026-07-29)**: 공개 벤치에 luna row가 없고,
-  07-14 승격 근거는 실전 2건이었다(그중 1건이 후속 NO-GO 원인). 운영자 수치는
-  luna xhigh 49/0.14 vs sol medium 54/0.31이나 단위 미확인. 근거와 판단
-  재료는 `2026-07-29-model-routing-evidence.md` §5.
+- **`QUESTION:` 품질 baseline**: 어느 모델도 공개 실측이 없다 (HiL-Bench에
+  luna row 없음, sol 수치도 ASK-F1이 아님). 하드게이트 목록을 걷어낸 지금
+  워커 에스컬레이션에 더 의존하는데 그 품질을 모른다 — 로컬 관측 필요.
 - **luna 게이트 튜닝**: 실패 비용 판단만으로 라우팅이 충분한지는 미검증
   가정 (2026-07-29). luna 결함률·승격률·false-approve·게이트 생략 후
   결함 지표가 기준선.

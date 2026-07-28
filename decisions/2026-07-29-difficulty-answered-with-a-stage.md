@@ -37,6 +37,13 @@ DECISION:
    백그라운드 세션은 사용자 눈에 안 보이므로 이 한 줄이 비용과 브레인 티어를
    아는 유일한 창이다.
 
+8. (AMENDMENT 2026-07-29, 같은 날 후속) worker 기본 effort를 `xhigh`에서
+   **`max`**로 올린다. Artificial Analysis Coding Agent Index v1.3 설정별
+   실측에서 `luna max` 59/63/33이 `luna xhigh` 55/57/31을 비용 +25%로
+   앞선다 — 한계수익이 분명하다. `sol medium`(61/64/40)까지는 비용이 다시
+   1.9배인데 종합 +2점뿐이라 사다리의 다음 칸으로 남긴다. 근거 전문:
+   `docs/2026-07-29-model-routing-evidence.md`.
+
 REVISIT WHEN: mate 플랜을 받은 `luna` 워커가 반복해서 구현에 실패한 실측이
 lessons.md에 쌓이면 2를 재검토한다. 하드게이트 목록 폐지 후 브레인을 올렸어야
 할 작업을 `luna`로 보낸 사고가 나면 5를 재검토한다.

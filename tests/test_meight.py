@@ -28,7 +28,7 @@ class ModelAliasTests(unittest.TestCase):
 class StartDefaultsTests(unittest.TestCase):
     EXPECTED = {
         "mate": ("gpt-5.6-sol", "medium", "default", "text", "full"),
-        "worker": ("gpt-5.6-luna", "xhigh", "default", "decision", "full"),
+        "worker": ("gpt-5.6-luna", "max", "default", "decision", "full"),
     }
 
     def _args(self, command: str, mode: str, *options: str):
@@ -109,7 +109,7 @@ class StartDefaultsTests(unittest.TestCase):
         start.assert_called_once_with(dispatch_args, Path("/tmp/meight-defaults"))
         self.assertIn(
             "mode=worker model=sol(set) "
-            "effort=xhigh(default) fast=on(set) report=decision(default) "
+            "effort=max(default) fast=on(set) report=decision(default) "
             "sandbox=full(default)",
             output.getvalue(),
         )
@@ -1616,7 +1616,7 @@ class ModeLifecycleTests(unittest.TestCase):
     def test_start_output_echoes_resolved_defaults_and_provenance(self):
         cases = (
             ("worker",
-             "model=luna(default) effort=xhigh(default) fast=off(default) "
+             "model=luna(default) effort=max(default) fast=off(default) "
              "report=decision(default) sandbox=full(default)"),
             ("mate",
              "model=sol(default) effort=medium(default) fast=off(default) "

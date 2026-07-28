@@ -69,7 +69,8 @@ meight가 주는 건 두 개의 세션 자세지, 의무적인 개발 파이프�
 자세의 `sol`은 플랜을 쥐고도 구현이 어려울 때를 위한 예외 경로다. 이 모델·돈 경로 게이트는 명시적으로
 조정 가능한 오퍼레이터 정책이지 meight 인터페이스 요구사항이 아니다.
 
-effort도 같은 경제학을 따른다: `luna`는 싸니까 `xhigh`로 돌리고, `sol`은
+effort도 같은 경제학을 따른다: `luna`는 `max`로 돌린다 — `xhigh` 대비 25%
+비용으로 종합 4점을 사기 때문이다. `sol`은
 mate 작업 기본이 `medium`이다 (verdict가 걸린 리뷰는 `high`로 올린다).
 `sol`은 worker 자세에선 `medium`에 머물고, `high`는 정말 어려운 mate 작업에만
 아낀다 — 뭐가 거기 해당하는지는 디스패처가 판단하고, 가장 비싼 조합이라 띄우기
@@ -305,7 +306,7 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 | Mode | Model | Effort | Fast | Report | Sandbox |
 |---|---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `text` | `full` |
-| `worker` | `luna` | `xhigh` | off | `decision` | `full` |
+| `worker` | `luna` | `max` | off | `decision` | `full` |
 
 어느 자세도 샌드박스를 강제하지 않는다: read-only는 브리프가 정하는
 정책이고(mate 계약은 브리프가 시키지 않는 한 레포 파일을 고치지 않는 게

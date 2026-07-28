@@ -71,13 +71,27 @@ Terminal-Bench, SWE-Atlas-QnA, SWE-bench Verified, WebDev Arena, AA-Briefcase는
 - **`luna` 전반**: 어떤 공개 벤치에도 `luna` row가 없다. 위 Sol 수치를
   `luna`에 그대로 적용할 수 없다.
 
-## 5. 미결 — `luna` 기본값 재고
+## 5. worker 기본값 — `luna xhigh` → `luna max` (결정)
 
-운영자 제공 수치: `luna xhigh` 지능지수 **49** / 비용 **0.14**,
-`sol medium` **54** / **0.31**. 단위와 출처는 아직 확인되지 않았다 — 위
-Artificial Analysis의 태스크당 달러와 같은 축이 아니므로 직접 비교하지 말 것.
+같은 Coding Agent Index v1.3의 **설정별** row. 디스패처가 원본에서 직접 확인.
 
-재고가 필요한 이유:
+| 설정 | Index | DeepSWE | Terminal-Bench v2 | SWE-Atlas-QnA | $/task | 시간 | 토큰 |
+|---|---|---|---|---|---|---|---|
+| `luna xhigh` (구 기본) | 55 | 57% | 76% | 31% | $1.26 | 6.6분 | 12.3M |
+| **`luna max` (신 기본)** | **59** | **63%** | **80%** | 33% | $1.57 | 8.0분 | 15.5M |
+| `sol medium` | 61 | 64% | 78% | **40%** | $2.99 | 5.2분 | 5.8M |
+
+`xhigh` → `max`는 비용 +25%로 종합 +4점, DeepSWE +6%p — 한계수익이 분명해서
+기본값이 여기 있다. 거기서 `sol medium`까지는 비용이 다시 1.9배인데 종합은
++2점뿐이다. `sol medium`이 확실히 앞서는 자리는 레포 이해·탐색(QnA 40 대 33)
+이고, 그래서 사다리에서 판단이 걸릴 때 올리는 대상으로 남는다.
+
+운영자가 처음 제시한 `49 / 0.14`, `54 / 0.31`은 **Intelligence Index v4.1**과
+그 평가 과제당 가중평균 API 비용(USD)이었다 — Coding Agent Index의 태스크당
+비용과 다른 축이므로 섞어 쓰지 않는다. (`luna max`는 Intelligence Index 51 /
+$0.21.)
+
+`luna xhigh`를 기본에서 내린 배경:
 
 1. `sol medium`은 07-14 v3 이전의 원래 기본값이었고, `luna xhigh`로 바꾼
    근거는 실전 **2건**과 "luna는 판단 가능한 모델"이라는 추정이었다
@@ -86,9 +100,12 @@ Artificial Analysis의 태스크당 달러와 같은 축이 아니므로 직접 
    적발됐다.
 2. 그때 sol이 남긴 잔여 반론 — "라우팅은 dispatcher가 acceptance-critical
    의존을 사전 식별하는 데 의존한다" — 이 2026-07-29 하드게이트 목록 폐지로
-   더 얇아졌다. 판단에 더 의존하는 구조인데, 판단을 올려보내는 주체(워커)의
-   지능이 낮으면 QUESTION 에스컬레이션 품질도 함께 낮아진다.
-3. HiL-Bench가 보여준 축(모르는 것을 묻는 능력)에서 모델 간 격차가 크다.
+   더 얇아졌다. 판단에 더 의존하는 구조라 워커의 에스컬레이션 품질이 더 중요해졌다.
+3. `QUESTION:` 품질의 직접 실측은 어느 모델에도 없다. HiL-Bench에 `luna` row가
+   없고, 공개된 `sol` 수치(32.33±5.49)도 ASK-F1이 아니라 `ask_human()` 가용
+   조건의 task outcome이다. 벤치 전체 결론도 냉정하다 — 최고 combined ASK-F1이
+   44% 수준, SWE task blocker recall 최고치가 36%다. **모델 선택으로 삭제한
+   백스톱을 대신했다고 볼 수 없다.**
 
-결정에 필요한 것: 0.14/0.31의 단위와 출처, 그리고 실제 워크로드에서의 총
-비용 차이. `luna` 실패율·승격률 지표는 아직 baseline이 없다.
+남은 baseline 공백: `luna`의 실제 실패율·승격률. 공개 벤치가 답할 수 없는
+영역이라 로컬 관측이 쌓여야 한다.

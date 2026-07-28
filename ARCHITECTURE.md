@@ -179,7 +179,7 @@ main orchestrator.
   | Mode | Model | Effort | Fast | Report | Sandbox |
   |---|---|---|---|---|---|
   | `mate` | `sol` | `medium` | off | `text` | `full` |
-  | `worker` | `luna` | `xhigh` | off | `decision` | `full` |
+  | `worker` | `luna` | `max` | off | `decision` | `full` |
 
   Standard is silent and deviation is explicit. The table is deliberately
   code-only operator policy in `meight.py`; there is no config-file or

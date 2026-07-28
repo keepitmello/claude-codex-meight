@@ -74,7 +74,8 @@ mate plan handed to a `luna` worker — and reserves `sol` in worker mode for
 implementation that stays hard with a plan in hand. Those model and money-path gates
 are explicitly adjustable operator policy, not meight interface requirements.
 
-Effort follows the same economics: `luna` runs `xhigh` because it is cheap,
+Effort follows the same economics: `luna` runs `max`, which buys a measured
+four Index points over `xhigh` for a quarter more cost,
 `sol` defaults to `medium` and stays there in worker mode, and `high` is
 reserved for genuinely hard mate work such as verdict-bearing review — the
 dispatcher judges what qualifies, and `sol high` takes one user confirmation
@@ -321,7 +322,7 @@ sent:
 | Mode | Model | Effort | Fast | Report | Sandbox |
 |---|---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `text` | `full` |
-| `worker` | `luna` | `xhigh` | off | `decision` | `full` |
+| `worker` | `luna` | `max` | off | `decision` | `full` |
 
 Neither posture enforces a sandbox: read-only is brief-driven policy (the mate
 contract defaults to not modifying repository files), and `--sandbox` remains
