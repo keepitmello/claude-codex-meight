@@ -32,6 +32,7 @@ DEBUG_EVENTS = os.environ.get("MEIGHT_DEBUG") == "1"
 TERMINAL_STATES = {"completed", "failed", "interrupted"}
 ACTIVE_STATES = {"starting", "running", "needs_input"}
 SOCKET_TIMEOUT_SEC = 60.0  # start/follow may take several seconds for thread_start+turn RPCs
+TOOL_WAIT_GRACE_SEC = 15.0  # tool/approval waits older than this surface as exit 3 instead of hanging
 STATUS_THROTTLE_SEC = 2.0
 EVENT_LINE_MAX = 300
 RECOVERY_ARTIFACT_MAX_CHARS = 24_000
@@ -49,31 +50,25 @@ PRUNE_TOMBSTONE_PREFIX = ".meight-prune-"
 # Mode contracts resolve relative to this file so any clone location works.
 _SKILLS_ROOT = Path(__file__).resolve().parent / "skills"
 MODE_SKILL_PATHS = {
-    "design": _SKILLS_ROOT / "meight-mate" / "SKILL.md",
-    "delegate": _SKILLS_ROOT / "meight-delegate" / "SKILL.md",
-    "review": _SKILLS_ROOT / "meight-mate" / "SKILL.md",
+    "mate": _SKILLS_ROOT / "meight-mate" / "SKILL.md",
     "worker": _SKILLS_ROOT / "meight-worker" / "SKILL.md",
 }
 COMMON_CONTRACT_PATH = _SKILLS_ROOT / "meight-common" / "CONTRACT.md"
-PROTOCOL_EPOCH = "mode4"
+PROTOCOL_EPOCH = "posture2"
 DAEMON_CAPABILITIES = [PROTOCOL_EPOCH]
 
 # Every session runs in an explicit mode; the CLI requires it so the contract cannot be skipped.
+# Legacy four-mode names map onto the two postures so old muscle memory and
+# recorded status files keep working.
 MODE_MAP = {
-    "design": "design",
-    "collab": "design",
-    "collaborative": "design",
-    "delegate": "delegate",
-    "delegated": "delegate",
-    "review": "review",
+    "mate": "mate",
+    "design": "mate",
+    "collab": "mate",
+    "collaborative": "mate",
+    "review": "mate",
     "worker": "worker",
-}
-
-MODE_CONTRACT_POSTURES = {
-    "design": "collaborative-design",
-    "review": "adversarial-review",
-    "worker": "participatory",
-    "delegate": "full-delegation",
+    "delegate": "worker",
+    "delegated": "worker",
 }
 
 # Friendly names are a CLI contract, while the SDK requires ChatGPT-account model slugs.
@@ -87,22 +82,15 @@ MODEL_ALIASES = {
 EFFORT_CHOICES = ["low", "medium", "high", "xhigh", "ultra", "max"]
 
 # Start/dispatch defaults are deliberately code-only operator policy. Omitted
-# flags select the mode row; explicit flags always win.
+# flags select the mode row; explicit flags always win. Neither posture enforces
+# a sandbox: read-only is brief-driven policy, not a harness gate.
 MODE_START_DEFAULTS = {
-    "design": {
-        "model": "sol", "effort": "high", "fast": False,
-        "report": "text", "sandbox": "ro",
-    },
-    "review": {
-        "model": "sol", "effort": "high", "fast": False,
-        "report": "decision", "sandbox": "ro",
+    "mate": {
+        "model": "sol", "effort": "medium", "fast": False,
+        "report": "text", "sandbox": "full",
     },
     "worker": {
         "model": "luna", "effort": "xhigh", "fast": True,
-        "report": "decision", "sandbox": "full",
-    },
-    "delegate": {
-        "model": "sol", "effort": "high", "fast": False,
         "report": "decision", "sandbox": "full",
     },
 }
@@ -162,10 +150,9 @@ def normalize_mode(mode: str | None) -> str | None:
 
 # Single source of the teaching error shown wherever --mode is missing (validated before any side effect).
 MODE_TEACHING_ERROR = """error: --mode is required. Pick one:
-  --mode design    architect together: blind/anchored design, diagnosis, direction
-  --mode review    verdict-first review of a plan/diff
-  --mode worker    implement while the dispatcher owns the review chain
-  --mode delegate  own implementation and independent review end to end"""
+  --mode mate    thinking partner: design, diagnosis, verdict-first review, direction
+  --mode worker  team implementer: owns how, implementation, verification, self-review
+(legacy aliases: design|collab|collaborative|review → mate; delegate|delegated → worker)"""
 
 PROTOCOL_EPOCH_ERROR = (
     f"protocol epoch mismatch: expected {PROTOCOL_EPOCH}; "
@@ -177,7 +164,6 @@ PROTOCOL_EPOCH_ERROR = (
 _PREAMBLE_TEMPLATE = """[Harness protocol — mode: {mode}; report: {report} — applies on top of the task below]
 Read and follow the {skill_name} skill at `{skill_path}`. It is the mode contract SSOT.
 Also read and follow the shared meight contract at `{common_path}`.
-{mode_guidance}
 """
 
 
@@ -186,20 +172,12 @@ def build_preamble(mode: str, report: str = "text") -> str:
     if normalized_mode is None:
         raise ValueError(f"invalid mode: {mode!r}")
     skill_path = MODE_SKILL_PATHS[normalized_mode]
-    mode_guidance = ""
-    if normalized_mode == "review":
-        mode_guidance = (
-            "Review mode: follow the mate skill's review protocol sections: verdict-first "
-            "APPROVE/REVISE or GO/NO-GO, noise suppression, incremental re-review, and "
-            "reviewed-input identity."
-        )
     return _PREAMBLE_TEMPLATE.format(
         mode=normalized_mode,
         report=report,
         skill_name=skill_path.parent.name,
         skill_path=skill_path,
         common_path=COMMON_CONTRACT_PATH,
-        mode_guidance=mode_guidance,
     )
 
 
@@ -208,21 +186,9 @@ def build_follow_reminder(mode: str, report: str = "text") -> str:
     normalized_mode = normalize_mode(mode)
     if normalized_mode is None:
         raise ValueError(f"invalid mode: {mode!r}")
-    review_guidance = (
-        " Apply the mate skill's verdict-first, noise-suppressed, incremental review protocol "
-        "and preserve reviewed-input identity."
-        if normalized_mode == "review" else ""
-    )
     return (f"[Harness reminder — mode: {normalized_mode}; report: {report} — continue following "
             f"the mode skill at `{MODE_SKILL_PATHS[normalized_mode]}` and shared contract at "
-            f"`{COMMON_CONTRACT_PATH}`.{review_guidance}]\n")
-
-
-def contract_posture(mode: str) -> str:
-    normalized_mode = normalize_mode(mode)
-    if normalized_mode is None:
-        raise ValueError(f"invalid mode: {mode!r}")
-    return MODE_CONTRACT_POSTURES[normalized_mode]
+            f"`{COMMON_CONTRACT_PATH}`.]\n")
 
 
 def install_computer_use_approval_bridge(codex, worker_name: str) -> None:
@@ -739,7 +705,9 @@ class Worker:
         self.service_tier = service_tier  # "default" unless --fast maps the worker to "priority"
         self.thread_source = thread_source
         self.thread_ephemeral = thread_ephemeral
-        self.mode = mode          # canonical mode; follow/reply turns inherit it
+        # Canonical posture; follow/reply turns inherit it. Normalizing here keeps
+        # sessions recorded under legacy four-mode names resumable and echo-consistent.
+        self.mode = normalize_mode(mode) or "worker"
         self.report = report      # "text" | "decision" (decision = output_schema-forced final report)
         self.thread = None       # openai_codex.Thread (live only while starting/running a turn)
         self.handle = None       # TurnHandle
@@ -2358,14 +2326,14 @@ def require_mode(args) -> None:
         raise SystemExit(2)
 
 
-def require_mode4_capability(home: Path) -> dict:
-    """Fail closed when the live daemon predates the four-mode protocol."""
+def require_protocol_capability(home: Path) -> dict:
+    """Fail closed when the live daemon predates the current protocol epoch."""
     resp = send_request(home, {"cmd": "ping"}, timeout=10)
     if not resp.get("ok"):
         return resp
     capabilities = resp.get("capabilities")
     if not isinstance(capabilities, list) or PROTOCOL_EPOCH not in capabilities:
-        return {"ok": False, "error": "daemon predates --mode worker; restart required"}
+        return {"ok": False, "error": f"daemon predates protocol {PROTOCOL_EPOCH}; restart required"}
     return {"ok": True}
 
 
@@ -2411,7 +2379,7 @@ def start_resolution_echo(args, mode: str | None = None) -> str:
     canonical_mode = normalize_mode(mode) or normalize_mode(args.mode)
     fast = "on" if values["fast"] else "off"
     return (
-        f"mode={canonical_mode} contract={contract_posture(canonical_mode)} "
+        f"mode={canonical_mode} "
         f"model={values['model']}({provenance['model']}) "
         f"effort={values['effort']}({provenance['effort']}) "
         f"fast={fast}({provenance['fast']}) "
@@ -2423,7 +2391,7 @@ def start_resolution_echo(args, mode: str | None = None) -> str:
 def start_request(args, home: Path) -> dict:
     require_mode(args)
     validate_worker_name(args.name)
-    capability = require_mode4_capability(home)
+    capability = require_protocol_capability(home)
     if not capability.get("ok"):
         return capability
     resolved, _provenance = resolve_start_options(args)
@@ -2577,13 +2545,21 @@ def cmd_result(args, home: Path) -> int:
 
 def classify_wait_state(st: dict) -> int | None:
     """Map a status dict to a wait exit code. None means keep polling.
-    needs_input exits 3 only when source=="question" (a durable dormant state).
-    Tool/approval waits are active until stream-end cleanup."""
+    needs_input exits 3 when source=="question" (a durable dormant state), and
+    when a tool/approval wait persists past the grace window — those used to be
+    invisible to the dispatcher until timeout even though nobody would ever
+    answer them. A short grace period absorbs waits the SDK resolves itself."""
     state = st.get("state")
     if state in TERMINAL_STATES:
         return 0 if state == "completed" else 2
-    if state == "needs_input" and st.get("needs_input_source") == "question":
-        return 3
+    if state == "needs_input":
+        source = st.get("needs_input_source")
+        if source == "question":
+            return 3
+        if source == "tool":
+            updated = parse_aware_timestamp(st.get("updated_at"))
+            if updated is None or (now_kst() - updated).total_seconds() >= TOOL_WAIT_GRACE_SEC:
+                return 3
     return None
 
 
@@ -2594,6 +2570,7 @@ def wait_for_worker(home: Path, repo_home: Path, name: str, timeout: float | Non
     deadline = now + timeout if timeout else None
     next_progress = now + progress if progress and progress > 0 else None
     dead_strikes = 0  # avoid false positives from transient ping failures while the daemon is busy
+    last_plan_note = None  # mid-turn narration: surface each newly active worker plan step once
     while True:
         st = None
         if sj.is_file():
@@ -2602,6 +2579,15 @@ def wait_for_worker(home: Path, repo_home: Path, name: str, timeout: float | Non
             except (OSError, json.JSONDecodeError):
                 st = None
         if st is not None:
+            # The worker's own plan steps are the only mid-turn text it authors;
+            # printing each transition lets the dispatcher watch progress (and
+            # steer) without waiting for the turn to end.
+            active_step = next(
+                (s for s in (st.get("plan") or []) if s.startswith("[active]")), None)
+            if active_step and active_step != last_plan_note:
+                print(f"  [{time.strftime('%H:%M:%S')}] {name} ▶ {active_step[len('[active] '):]}",
+                      flush=True)
+                last_plan_note = active_step
             code = classify_wait_state(st)
             if code is not None:
                 print(summary_line(st))
@@ -3044,8 +3030,8 @@ def build_parser() -> argparse.ArgumentParser:
         # missing AND invalid values, so both cases print the same teaching error.
         sp.add_argument(
             "--mode",
-            help=("required: design|review|worker|delegate "
-                  "(aliases: collab|collaborative|delegated)"),
+            help=("required: mate|worker (legacy aliases: "
+                  "design|collab|collaborative|review → mate; delegate|delegated → worker)"),
         )
         sp.add_argument("--report", choices=["text", "decision"],
                         default=OMITTED_START_SETTING,

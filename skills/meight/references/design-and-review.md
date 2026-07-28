@@ -9,7 +9,7 @@
 먼저 스스로 분석하고, 그 분석은 brief에 넣지 않는다. 문제, 제약, 관련 파일, 중립적인 옵션 라벨만 보낸다. 동의가 아니라 가장 근거 있는 설계와 그것에 대한 가장 강한 반론을 요구한다.
 
 ```bash
-meight start design-auth --mode design --cwd <repo root> --brief-file - <<'EOF'
+meight start design-auth --mode mate --cwd <repo root> --brief-file - <<'EOF'
 We need to choose an auth-token refresh design.
 
 Constraints:
@@ -29,7 +29,7 @@ EOF
 ### 앵커드 설계 (방향이 정해진 경우)
 
 ```bash
-meight start design-refine --mode design --cwd <repo root> \
+meight start design-refine --mode mate --cwd <repo root> \
   --brief "Direction is Option B. Pressure-test it: what am I missing, and what edge cases should the implementation cover?"
 ```
 
@@ -47,7 +47,7 @@ mate 대 mate 논쟁 루프는 돌리지 않는다. 두 설계가 다 나오기 
 
 verdict가 아직 방향을 바꾸거나 실패 비용을 실질적으로 줄일 수 있을 때 값을 한다. 구현의 선행 조건은 아니다. 쓸지 말지는 디스패처가 정하고 그 선택을 한 줄로 기록한다. 새 증거가 결정을 계속 바꾸는 동안에는 `reply`로 리뷰 스레드를 살려둘 수 있다.
 
-기본은 `--mode review`로 스키마 검증된 decision 리포트. 리뷰어는 `APPROVE`나 `REVISE`로 시작한다. strict decision 스키마에는 APPROVE/REVISE 리터럴 값이 없어서 인터페이스 인코딩은 이렇다:
+기본은 `--mode mate --report decision`으로 스키마 검증된 decision 리포트 (mate 기본 report는 text라 verdict 루프에는 `--report decision`을 명시한다; verdict가 걸리면 `--effort high`도 고려). 리뷰어는 `APPROVE`나 `REVISE`로 시작한다. strict decision 스키마에는 APPROVE/REVISE 리터럴 값이 없어서 인터페이스 인코딩은 이렇다:
 
 - `APPROVE` → `outcome=done`, `verdict=GO`, summary가 `"APPROVE — <plan identity>"`로 시작.
 - `REVISE` → `outcome=needs_decision`, `verdict=NO-GO`, summary가 `"REVISE — <plan identity>"`로 시작. 디스패처 소유의 개정 결정을 유일한 `decisions[]` 항목으로 넣되, bounded 개정 라운드가 이미 승인된 경우에만. 새 phase·방법·비용 범위·캡 연장은 사용자 소유다.
@@ -58,10 +58,10 @@ text 모드에서 `REVISE`는 디스패처를 향한 구조화된 `QUESTION:`으
 
 ## mate 리뷰
 
-worker 모드에서는 실패 비용이 값을 할 때 디스패처가 별도 read-only `--mode review` 세션을 띄운다. delegate 모드에서는 delegate 계약이 내부 fresh-context 리뷰어를 소유한다. 리뷰는 고정된 구현 단계가 아니라 독립적인 증거원이다.
+실패 비용이 값을 할 때 디스패처가 별도 `--mode mate --report decision` 리뷰 세션을 띄운다. worker는 계약상 자기 리뷰(필요시 내부 fresh-context 리뷰어 스폰 포함)를 하지만, 그건 외부 리뷰의 대체가 아니라 별개 증거원이다. 리뷰는 고정된 구현 단계가 아니라 독립적인 증거원이다.
 
 ```bash
-meight start review-X --mode review --cwd <repo root> --brief-file - <<'EOF'
+meight start review-X --mode mate --report decision --cwd <repo root> --brief-file - <<'EOF'
 Adversarial review. Target: <files>. Contract: <versioned PLAN.md>.
 Hunt for real defects: correctness, regressions, missing verification,
 security/data risk, edge cases, races. For each finding: severity P1/P2/P3,
@@ -75,9 +75,9 @@ EOF
 
 리뷰의 severity 임계값과 스코프는 그 brief에서 정한다. 상세 로그가 decision 리포트를 과적재할 것 같으면 `<worker-name>-evidence.md`에 넣는다.
 
-### delegate 구현 리포트 매핑
+### frozen-plan 구현 리포트 매핑
 
-`luna`의 delegate 모드 구현 리포트는 승인된 플랜의 근거를 기존 decision 스키마에 얹는다:
+승인된 플랜 아래 도는 worker의 구현 리포트는 플랜 근거를 기존 decision 스키마에 얹는다:
 
 - `summary`: 플랜 버전을 명시하고 모든 편차와 그 근거를 적는다.
 - `verification`: 구현이 동결된 플랜을 충족한다는 증거.

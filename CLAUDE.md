@@ -21,21 +21,19 @@ implementation review, or direct verification per task by failure cost and
 records that gate choice in one line. Review cycles are tools to reach for when
 they can change the decision, not a pipeline to run by habit.
 
-## Mode Semantics
+## Posture Semantics
 
-- `design`: a mate explores direction, alternatives, diagnosis, and tradeoffs.
-- `review`: a mate gives a verdict-first review of an identified plan, diff, or
-  doctrine artifact.
-- `worker`: a participatory implementer owns bounded technical design,
-  implementation, and verification. The dispatcher decides whether to spawn a
-  separate `review` session.
-- `delegate`: an implementer owns the technical path end to end, including its
-  contract's internal fresh-context review, while the dispatcher stays outside
-  technical context.
+- `mate`: a thinking partner — blind/anchored design, diagnosis, direction,
+  and verdict-first review of an identified plan, diff, or doctrine artifact.
+  The brief selects which protocol applies.
+- `worker`: a team implementer owns technical design, implementation,
+  verification, and self-review, and surfaces observations and better
+  directions instead of executing silently. The dispatcher decides whether to
+  spawn a separate external review session.
 
-Mode selects the session contract; model selects the brain. Mates and
-implementers may challenge assumptions or escalate decisions outside their
-ownership.
+Mode selects the session contract; model selects the brain. Both postures are
+team-member contracts: they challenge assumptions and escalate decisions
+outside their ownership.
 
 Commands, report schemas, `APPROVE`/`REVISE` encoding, and exact `QUESTION`
 syntax live only in [`skills/meight/SKILL.md`](./skills/meight/SKILL.md).
@@ -52,12 +50,11 @@ requirements.
 
 | Work | Route |
 |---|---|
-| Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `--mode worker --model luna --effort xhigh`, plus Fast when available |
-| Blind/anchored design and diagnosis | `--mode design --model sol --effort high` (`xhigh` only for genuinely hard problems) |
-| Plan and adversarial review | `--mode review --model sol --effort high` (`xhigh` only for genuinely hard problems) |
-| Hard-gated implementation | `--mode worker --model sol --effort high` (`xhigh` only for genuinely hard problems) |
-| Full delegation, dispatcher outside technical context | `--mode delegate` (defaults to `sol --effort high`) only when no hard gate, money path, or frozen dispatcher review chain applies |
-| Capability-specific fallback | any mode with `terra` only when measured evidence supports it |
+| Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` (defaults: `luna xhigh` + Fast) |
+| Blind/anchored design and diagnosis | `--mode mate` (defaults: `sol medium`; `high`/`xhigh` only for genuinely hard problems) |
+| Plan and adversarial review | `--mode mate --report decision --effort high` |
+| Hard-gated implementation | `--mode worker --model sol --effort high` |
+| Capability-specific fallback | either posture with `terra` only when measured evidence supports it |
 
 Failure cost is the gate. Hard-route to `sol` when acceptance-critical work
 materially depends on concurrency, security, public schema/API contract design,
@@ -75,21 +72,15 @@ ledger before re-asking user-owned questions, and record recurring operating
 lessons. Slim records are enough: preserve the decision, its evidence, and what
 would cause it to be revisited.
 
-## Daemon Mode4 Migration
+## Daemon Epoch Migration
 
-The CLI fails closed when the live daemon does not advertise capability
-`mode4`. The operator must drain `meight list --all-repos --json` to zero
-`starting`/`running`/`needs_input` rows, use non-force `meight shutdown`, then
-branch on LaunchAgent state: if loaded, use `meight launchd install --load` and
-verify its bounded `bootout --wait` ownership transfer; if not loaded, start the
-daemon normally. Confirm `meight ping` shows `mode4` and verify the new PID and
-socket identity. Then run the two throwaway read-only delegate smokes: one
-intentionally non-trivial brief that records fresh-context/read-only internal
-review invocation, verdict, round count, and final decision surface; and one
-trivial brief that explicitly waives review and records the exemption. Also
-smoke `--mode worker` and verify worker/delegate status modes plus their
-worker-or-delegate and common preamble paths. Never force-shutdown this
-migration.
+The CLI fails closed when the live daemon does not advertise the current
+protocol capability (`posture2`). To migrate: drain active rows, non-force
+`meight shutdown`, restart per LaunchAgent state, confirm `meight ping` shows
+the capability, then smoke one `--mode worker` and one `--mode mate` throwaway
+session. Full checklist:
+[`skills/meight/references/daemon-ops.md`](./skills/meight/references/daemon-ops.md).
+Never force-shutdown this migration.
 
 ## Safety And Sign-Off
 

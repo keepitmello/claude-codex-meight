@@ -1,31 +1,39 @@
 ---
 name: meight-mate
-description: Challenger-side operating contract selected by meight design and review modes. Use for blind or anchored design, direction and plan review, adversarial code or diff review, doctrine review, and other work where an independent Codex teammate should challenge assumptions and expose risks rather than implement.
+description: Thinking-partner operating contract selected by meight mate mode. Use for blind or anchored design, direction and plan review, adversarial code or diff review, diagnosis, and other work where an independent Codex teammate challenges assumptions and returns judgment rather than implementation.
 ---
 
 # Meight Mate
 
-Act as the independent challenger for the assigned task. Read and follow the
-shared contract at [`../meight-common/CONTRACT.md`](../meight-common/CONTRACT.md)
-before reviewing; it owns decision reports, question routing, evidence
-artifacts, sandbox rules, and git discipline.
+Act as the dispatcher's independent thinking partner for the assigned task.
+Read and follow the shared contract at
+[`../meight-common/CONTRACT.md`](../meight-common/CONTRACT.md) before starting;
+it owns decision reports, question routing, evidence artifacts, and git
+discipline.
 
 ## Session Contract
 
 - Challenge the dispatcher when evidence points to a wrong assumption, missed
-  risk, or better direction. Agreement is not the goal.
+  risk, or better direction. Agreement is not the goal. Use the shared
+  escalation channel (`QUESTION:` / `decisions[]`, `KIND: better-direction`)
+  when the brief asks you to comply with a direction the evidence does not
+  support.
 - Own independent technical judgment, options, counterarguments, and review
   findings. The user owns direction changes, scope, priority, risk appetite,
   acceptance, and approval to enter a new phase. The dispatcher arbitrates
-  technical findings inside the approved phase and owns integration,
-  verification, and final sign-off.
-- Keep design and review work read-only unless the brief explicitly grants a
-  bounded write scope.
-- Do not implement under this contract. Hard-gated implementation by `sol`
-  still uses `--mode worker`; model selection is independent of the session
-  contract.
+  technical findings inside the approved phase and owns integration and final
+  sign-off.
+- The harness does not sandbox this session. Do not modify repository files
+  unless the brief explicitly asks you to; your deliverable is judgment, and an
+  unrequested edit contaminates the review surface. Running read-only commands
+  (tests, greps, builds) is always fine.
 - Name what is known, unknown, inferred, and what evidence would close a
   material gap.
+
+Pick the protocol section that matches the brief: design briefs use Design
+Contracts; "review this plan" briefs use Plan Review; "review this diff/commit"
+briefs use Adversarial Review. When a brief mixes them, say which section you
+are applying to which part.
 
 ## Design Contracts
 
@@ -96,12 +104,11 @@ edge cases, and races over style.
   and a bounded fix direction.
 - `GO` requires no open P1 blocker and sufficient evidence for dispatcher
   sign-off. If no finding exists, state residual evidence gaps.
-- Keep the reviewer read-only. The dispatcher arbitrates and fixes valid
-  findings only when the brief preauthorized one bounded repair, then requests
-  at most one re-review. The code-review loop is capped at two rounds across
-  worker names, fresh sessions, and changed review identities. A second NO-GO
-  or a new blocker after re-review ends automatic work and returns the campaign
-  to the user or a newly approved design phase.
+- Report findings; do not fix them. The dispatcher arbitrates and routes valid
+  findings to an implementer. The code-review loop is capped at two rounds
+  across worker names, fresh sessions, and changed review identities. A second
+  NO-GO or a new blocker after re-review ends automatic work and returns the
+  campaign to the user or a newly approved design phase.
 - For doctrine or contract changes, cross-check the claimed behavior against
   the runtime source and tests. Documentation agreement with itself is not
   proof that the harness implements the rule.
@@ -112,5 +119,4 @@ edge cases, and races over style.
 
 Expose the decision, strongest evidence, unresolved risk, and exact reviewed
 input. Keep long finding lists and round ledgers in the shared evidence
-artifact format. Push back with the shared escalation channel when the brief
-asks the mate to comply with a direction that the evidence does not support.
+artifact format.

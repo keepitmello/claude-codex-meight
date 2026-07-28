@@ -10,11 +10,10 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
 2. **Exit codes are the API.** `0` done, `2` failed/interrupted, `3` worker has a question, `4` daemon dead, `1` timeout. An agent branches on these without parsing prose.
 3. **One call per intent (one-shot), or a supervised session.** `dispatch` = (ensure daemon → start → wait → print result) and `reply` = (follow → wait → print last-turn result) are symmetric single background calls. `start` plus `wait` keeps the door to `status`/`steer` open mid-run. The orchestrator selects either interface by whether supervision can change the outcome, without a fixed cadence.
 4. **Mode is harness policy, not memory.** `start` and `dispatch` require
-   `--mode design|review|worker|delegate`. Design and review select the
-   independent challenger (`mate`) contract. Worker selects participatory
-   implementation with a dispatcher-owned review choice. Delegate selects full
-   delegation with internal independent review. The preamble injects the
-   mode-selected skill plus
+   `--mode mate|worker`. Mate selects the thinking-partner contract (design,
+   diagnosis, verdict-first review — the brief picks the protocol). Worker
+   selects team implementation with self-review and a dispatcher-owned
+   external-review choice. The preamble injects the mode-selected skill plus
    `meight-common/CONTRACT.md`. `follow`/`reply` inherit mode and report; they
    also inherit model/effort/service tier unless the caller overrides them at
    the new-turn boundary. Model stays independent: in practice mate work runs
@@ -57,18 +56,17 @@ meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  g
 
 - **Daemon home** = `$MEIGHT_HOME` if set, otherwise `$XDG_STATE_HOME/meight` or `~/.meight` → one daemon shared across repos.
 - **Repo state home** = `<daemon-home>/repos/<repo-key>/`, where `<repo-key>` is a stable slug plus hash of the invoking repo root. `--cwd` still controls the worker execution directory; it does not change the repo namespace for status/result lookup.
-- **Mode4 protocol boundary** = `ping` and `runtime_status` advertise only
-  `capabilities=["mode4"]`. Every start/follow request carries epoch `mode4`;
-  the daemon validates it before imports, path resolution or creation,
-  registry reservation, SDK startup, or turn start. Successful responses echo
-  normalized mode plus epoch atomically, and the CLI interrupts and fails on
-  either mismatch.
-- **Mode contract path** = `design` and `review` map to
-  `skills/meight-mate/SKILL.md`; `worker` maps to
-  `skills/meight-worker/SKILL.md`; `delegate` maps to
-  `skills/meight-delegate/SKILL.md`; all load `skills/meight-common/CONTRACT.md`.
-  Status persists only the canonical mode. Legacy rows with a role field or
-  long-form mode values remain renderable.
+- **Protocol epoch boundary** = `ping` and `runtime_status` advertise only
+  `capabilities=["posture2"]`. Every start/follow request carries epoch
+  `posture2`; the daemon validates it before imports, path resolution or
+  creation, registry reservation, SDK startup, or turn start. Successful
+  responses echo normalized mode plus epoch atomically, and the CLI interrupts
+  and fails on either mismatch.
+- **Mode contract path** = `mate` maps to `skills/meight-mate/SKILL.md`;
+  `worker` maps to `skills/meight-worker/SKILL.md`; both load
+  `skills/meight-common/CONTRACT.md`. Legacy four-mode names normalize onto
+  the two postures. Status persists only the canonical mode. Legacy rows with
+  a role field or long-form mode values remain renderable.
 - The SDK spawns `codex app-server --listen stdio://` and speaks JSON-RPC. Meight owns one SDK runtime per active worker so terminal workers can close their app-server, MCP subprocesses, and stdio file descriptors without waiting for daemon shutdown.
 - The daemon holds `Thread` objects in a registry keyed by `(repo_key, worker_name)` only while a turn is starting or running. It keeps a `TurnHandle` only while a stream is live. Every completed stream, including a final `QUESTION:`, closes the worker-owned SDK runtime. `reply`/`follow` resumes the persisted `thread_id` into a fresh runtime before starting the next turn.
 - Workers start with `ephemeral=False` and `thread_source=ThreadSource.subagent` by default. Subagent source keeps them out of Codex Desktop's main user-thread list, while the persistent rollout makes later `follow`/`reply` possible. `--main-thread` changes the source to `ThreadSource.user` for tools that need a visible/main thread. Legacy ephemeral rows recover into a new persistent subagent thread from bounded saved artifacts because their original rollout cannot be resumed.
@@ -138,12 +136,11 @@ main orchestrator.
 
 | Work | Route |
 |---|---|
-| Bounded implementation, fixes, tests, verification, read-only log digging, browser/runtime QA, computer use, exploration | `--mode worker` |
-| Blind/anchored design and diagnosis | `--mode design` (`--effort xhigh` only for genuinely hard problems) |
-| Plan and adversarial review | `--mode review` (`--effort xhigh` only for genuinely hard problems) |
+| Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` |
+| Blind/anchored design and diagnosis | `--mode mate` (`high`/`xhigh` only for genuinely hard problems) |
+| Plan and adversarial review | `--mode mate --report decision --effort high` |
 | Hard-gated implementation | `--mode worker --model sol --effort high` (`xhigh` only for genuinely hard problems) |
-| Full delegation outside dispatcher technical context | `--mode delegate` only outside hard gates, money paths, and frozen dispatcher review chains |
-| Capability-specific fallback | any mode with `terra`; no default ownership, re-promotable on measured evidence |
+| Capability-specific fallback | either posture with `terra`; no default ownership, re-promotable on measured evidence |
 
 - **Failure cost is the hard gate**: route to `sol` when acceptance-critical
   behavior materially depends on concurrency, security, public schema/API
@@ -164,11 +161,12 @@ main orchestrator.
   decision mode: the encoding defined in `skills/meight/SKILL.md`), while
   `APPROVE` is terminal. If approval freezes a versioned `PLAN.md`, a material
   scope change reopens that decision.
-- **Review is verdict evidence, not a pipeline stage**: in worker mode the
-  dispatcher spawns a separate `--mode review` session when warranted; in
-  delegate mode the contract owns its internal fresh-context reviewer. For
-  reviewed work, sign-off combines the verdict with verification evidence.
-  Reading the entire diff is never a sign-off gate.
+- **Review is verdict evidence, not a pipeline stage**: the worker contract
+  owns self-review (spawning an internal fresh-context reviewer when
+  warranted), and the dispatcher spawns a separate `--mode mate --report
+  decision` session when failure cost justifies it. For reviewed work,
+  sign-off combines the verdict with verification evidence. Reading the entire
+  diff is never a sign-off gate.
 - Sessions may commit/push completed verified work; the orchestrator still owns integration and final sign-off.
 - Briefs must point at *existing patterns* relevant to the task — detail-oriented reviewers flag absent context as defects otherwise.
 - The CLI resolves omitted start/dispatch settings from the selected mode
@@ -176,10 +174,8 @@ main orchestrator.
 
   | Mode | Model | Effort | Fast | Report | Sandbox |
   |---|---|---|---|---|---|
-  | `design` | `sol` | `high` | off | `text` | `ro` |
-  | `review` | `sol` | `high` | off | `decision` | `ro` |
+  | `mate` | `sol` | `medium` | off | `text` | `full` |
   | `worker` | `luna` | `xhigh` | on | `decision` | `full` |
-  | `delegate` | `sol` | `high` | off | `decision` | `full` |
 
   Standard is silent and deviation is explicit. The table is deliberately
   code-only operator policy in `meight.py`; there is no config-file or
@@ -206,17 +202,16 @@ State-machine changes should re-run the fake-event scenarios (tool-wait→stream
 
 ## Operational notes
 
-- **Editing `meight.py` does not affect a running daemon.** For the mode4
+- **Editing `meight.py` does not affect a running daemon.** For an epoch
   migration, first inspect `meight list --all-repos --json` and drain all
   active/`needs_input` sessions across every namespace. Then use non-force
   `meight shutdown`; its daemon-wide guard is the enforcement backstop. Branch
   on LaunchAgent state: loaded uses `meight launchd install --load` and its
   bounded `bootout --wait` transfer, unloaded uses normal startup. Require a
-  fresh PID/socket identity and `meight ping` capability `mode4`. Then run a
-  read-only worker smoke plus both delegate smokes: non-trivial internal
-  fresh-context/read-only review with verdict/round evidence, and trivial
-  explicit review exemption. Verify saved mode-specific/common preamble paths
-  before real work. Do not use forced shutdown for this migration.
+  fresh PID/socket identity and `meight ping` capability `posture2`. Then run
+  one worker smoke and one mate smoke and verify saved mode-specific/common
+  preamble paths before real work. Do not use forced shutdown for this
+  migration.
 - Optional LaunchAgent support lives behind `meight launchd install --load`. It uses `RunAtLoad=true` plus crash-only `KeepAlive={SuccessfulExit=false}`: unexpected accept/socket failure exits nonzero and restarts, while acknowledged shutdown exits zero and stays stopped. The daemon also exits nonzero if the published socket pathname is deleted or replaced. Loaded-job auto-start uses `launchctl kickstart` without `-k`; direct detached startup is only used after the explicit service-not-found result proves no job is loaded. Other `launchctl` failures are unknown and fail closed. Install/reload shares one bounded ownership-transfer path: non-force drain (active sessions refuse), wait for the acknowledged old PID and socket to disappear, run `launchctl bootout --wait` with a subprocess timeout for an already-loaded job, write/bootstrap the plist, then require a fresh ping/PID and socket identity whose PID matches launchd's running job PID. This provenance check rejects a detached contender started during the transfer window. A ping failure is stale only when the recorded PID is dead (if present) and the singleton lock can be acquired; a held or unprobeable lock refuses transfer. No bootout occurs before drain completion.
 - Beta SDK (`openai-codex==0.1.0b3`, pinned): meight deliberately supplies the current system `codex` executable instead of the SDK's older bundled runtime. `MEIGHT_CODEX_BIN` is the explicit override. Before bumping the SDK or Codex CLI, re-introspect the API surface (`inspect.signature`), dump real event payloads (`MEIGHT_DEBUG=1` → per-worker `debug-events.log`), and re-run the verification suite.
 - Approval requests arrive as SDK server-requests (auto-accepted by the SDK's default handler), not stream notifications — the `needs_input` tool path is defensive.

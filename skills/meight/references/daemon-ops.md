@@ -2,19 +2,17 @@
 
 meight 런타임 코드는 장수 데몬 프로세스에 로드된다. `meight.py`를 고쳤으면 새 워커의 동작을 믿기 전에 데몬을 재시작한다.
 
-## mode4 마이그레이션과 재시작 후 스모크
+## epoch 마이그레이션과 재시작 후 스모크
 
-살아있는 턴이 있는 레포 네임스페이스가 하나라도 있으면 재시작하지 않는다. 최종 `QUESTION:` 행은 dormant이고 재시작을 견디며 막지 않는다. 이 체크리스트는 오퍼레이터가 수동으로 수행한다.
+살아있는 턴이 있는 레포 네임스페이스가 하나라도 있으면 재시작하지 않는다. 최종 `QUESTION:` 행은 dormant이고 재시작을 견디며 막지 않는다. 이 체크리스트는 오퍼레이터가 수동으로 수행한다. (현재 epoch: `posture2`.)
 
 1. `meight list --all-repos --json`으로 `starting`/`running`이거나 tool/approval 요청을 기다리는 행이 없는지 확인.
 2. 비강제 `meight shutdown` 실행. 데몬 전역 active-session 가드가 drain 체크에서 놓친 게 있으면 shutdown을 거부해야 한다. 이 마이그레이션에 `--force`는 쓰지 않는다.
 3. LaunchAgent 상태로 분기. 로드돼 있으면 `meight launchd install --load`를 쓰고 bounded `bootout --wait` 소유권 이전을 확인. 로드 안 돼 있으면 데몬을 평소대로 기동.
-4. `meight ping` 실행 → `capabilities=mode4` 확인, 새 데몬 PID와 소켓 정체성 확인.
-5. 버리는 read-only `--mode worker` 스모크 하나. status의 mode와 `meight-worker` + common preamble 경로 확인.
-6. 버리는 read-only delegate 스모크 둘: (a) 의도적으로 non-trivial한 brief — 내부 리뷰어 호출, fresh-context/read-only 자세, verdict, 라운드 수, 최종 decision 표면이 증거에 남는지; (b) trivial한 brief — 리뷰를 명시적으로 면제하고 그 예외를 기록하는지. 둘 다 status mode와 `meight-delegate` + common preamble 경로 확인.
+4. `meight ping` 실행 → `capabilities=posture2` 확인, 새 데몬 PID와 소켓 정체성 확인.
+5. 버리는 `--mode worker` 스모크 하나 (brief에 read-only 지시). status의 mode와 `meight-worker` + common preamble 경로 확인.
+6. 버리는 `--mode mate` 스모크 하나. status mode `mate`와 `meight-mate` + common preamble 경로 확인.
 7. 그다음에야 실제 작업을 디스패치. 버린 디스크 아티팩트는 평소 오퍼레이터 정책대로 지우거나 남긴다 — 강제 정리는 필요 없다.
-
-구현 워커는 이 절차를 문서화하되, mode4 롤아웃 중 옛 데몬에 대고 실행하지는 않는다.
 
 ## 점검 커맨드
 

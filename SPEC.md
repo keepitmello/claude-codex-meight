@@ -1,7 +1,7 @@
 # claude-codex-meight SPEC
 
 `claude-codex-meight` is a harness that lets an orchestrator run multiple Codex
-mate, worker, and delegate sessions in parallel.
+mate and worker sessions in parallel.
 
 Core design goals:
 
@@ -119,7 +119,7 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   "daemon_pid": 12345,
   "cwd": "...",
   "sandbox": "workspace-write",
-  "mode": "design|review|worker|delegate",
+  "mode": "mate|worker",
   "report": "decision",
   "model": null,
   "effort": "medium",
@@ -149,11 +149,13 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
 - `needs_input_source` is the public source of truth for `needs_input`:
   `"question"` means a final `QUESTION:` blocker; `wait` exits `3` only when
   the worker is still attached to the live daemon and can accept `reply`;
-  `"tool"` means an SDK tool or approval wait and is treated as active until
-  stream-end cleanup.
-- `mode` is required on `start`/`dispatch`: canonical `design`, `review`,
-  `worker`, or `delegate` after alias normalization. `collab`, `collaborative`,
-  and `delegated` are accepted aliases. `follow`/`reply` inherit mode.
+  `"tool"` means an SDK tool or approval wait — `wait` treats it as active
+  during a grace window (`TOOL_WAIT_GRACE_SEC`, 15s) and then surfaces it as
+  exit `3` so an unanswerable wait is not invisible until timeout.
+- `mode` is required on `start`/`dispatch`: canonical `mate` or `worker` after
+  alias normalization. Legacy names `design`, `collab`, `collaborative`, and
+  `review` normalize to `mate`; `delegate` and `delegated` normalize to
+  `worker`. `follow`/`reply` inherit mode.
   Legacy rows with a `role` field or old long-form mode values must render
   without crashing.
 - `report` is `text` or `decision`.
@@ -173,10 +175,10 @@ The command table must match the `python3 meight.py --help` subcommand list exac
 | Command | Behavior |
 |---|---|
 | `daemon [--idle-timeout-sec SEC]` | Run the foreground global daemon. The orchestrator starts it in the background. If a live daemon already exists, return exit `1`. `0` disables idle shutdown. |
-| `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid, runtime `idle_timeout_sec`, `session_retention_sec`, and advertised `capabilities=["mode4"]`. |
+| `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid, runtime `idle_timeout_sec`, `session_retention_sec`, and advertised `capabilities=["posture2"]`. |
 | `launchd install [--load]` / `launchd status` / `launchd uninstall` | Manage the optional macOS LaunchAgent. The plist uses `RunAtLoad=true` and crash-only `KeepAlive={SuccessfulExit=false}`. `install --load` non-force drains a live daemon, waits boundedly for its acknowledged PID/socket exit, runs `launchctl bootout --wait` with a subprocess timeout for a loaded job, writes/bootstraps the plist, and requires a fresh ping/PID. Active sessions or timeouts refuse transfer. |
-| `start <name> --mode design\|review\|worker\|delegate (--brief-file F\|- \| --brief TEXT) [--report text\|decision] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new hidden, persistent Codex session with `thread_start(ephemeral=False, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--mode` is required; `collab`, `collaborative`, and `delegated` are accepted aliases. Before sending `start`, the CLI requires capability `mode4`. The request carries `protocol_epoch=mode4`; success atomically echoes normalized mode plus epoch, both validated by the CLI. The visible start line includes resolved mode, contract posture, model, effort, Fast, report, and sandbox values with provenance. Omitted settings use the mode defaults. Other defaults are `cwd=current directory`, `thread_source=subagent`, and `thread_ephemeral=false`. `--report decision` supplies `output_schema`. `--main-thread` changes the source to a visible persistent user thread. Reject duplicate active names inside the same repo namespace. |
-| `dispatch <name> --mode design\|review\|worker\|delegate (--brief-file F\|- \| --brief TEXT) [start opts] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, capability-check, `start`, `wait`, then print `decision.md` or `result.md`. Mode is required. Default timeout is `1800` seconds. Exit code matches `wait`. |
+| `start <name> --mode mate\|worker (--brief-file F\|- \| --brief TEXT) [--report text\|decision] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new hidden, persistent Codex session with `thread_start(ephemeral=False, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--mode` is required; legacy names `design`, `collab`, `collaborative`, `review`, `delegate`, and `delegated` are accepted aliases. Before sending `start`, the CLI requires capability `posture2`. The request carries `protocol_epoch=posture2`; success atomically echoes normalized mode plus epoch, both validated by the CLI. The visible start line includes resolved mode, model, effort, Fast, report, and sandbox values with provenance. Omitted settings use the mode defaults. Other defaults are `cwd=current directory`, `thread_source=subagent`, and `thread_ephemeral=false`. `--report decision` supplies `output_schema`. `--main-thread` changes the source to a visible persistent user thread. Reject duplicate active names inside the same repo namespace. |
+| `dispatch <name> --mode mate\|worker (--brief-file F\|- \| --brief TEXT) [start opts] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, capability-check, `start`, `wait`, then print `decision.md` or `result.md`. Mode is required. Default timeout is `1800` seconds. Exit code matches `wait`. |
 | `follow <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble]` | Start a new turn on the same persisted thread for a terminal session or one waiting on a final `QUESTION:`. It inherits recorded mode, report, and omitted turn settings. Every completed stream releases its SDK runtime; follow restores metadata and calls `thread_resume` with the stored `thread_id`. A legacy `thread_ephemeral=true` row has no resumable rollout, so follow starts a persistent hidden subagent thread and injects a bounded handoff from saved brief, result, and recent events. |
 | `reply <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot answer path: `follow`, `wait`, then print the latest preferred result. It has the same mode/report inheritance and per-turn setting override semantics as `follow`. Default timeout is `1800` seconds. |
 | `steer <name> TEXT` | Inject mid-turn text into a running turn. Return an error unless the worker is currently running. |
@@ -193,27 +195,21 @@ By default, `start`, `dispatch`, `follow`, and `reply` prepend the harness
 protocol preamble to the brief. `--no-preamble` disables this.
 
 `start` and `dispatch` build a mode-specific preamble at dispatch time. Mode
-selects the session contract and skill:
+selects the session contract and skill (protocol epoch `posture2`):
 
-- `design` (`collab` / `collaborative` aliases):
-  `skills/meight-mate/SKILL.md` for blind or anchored design and diagnosis.
-- `review`: `skills/meight-mate/SKILL.md` for verdict-first plan, diff,
-  adversarial, and doctrine review.
-- `worker`: `skills/meight-worker/SKILL.md` for participatory bounded
-  implementation with the dispatcher-owned external review chain.
-- `delegate` / `delegated`: `skills/meight-delegate/SKILL.md` for full
-  delegation with internal fresh-context independent review.
-
-Design and review create mate sessions. Worker keeps the dispatcher in the
-technical/review chain. Delegate removes the dispatcher from technical context
-and fails closed to worker for hard gates, money paths, or frozen dispatcher
-review chains.
+- `mate` (legacy aliases `design` / `collab` / `collaborative` / `review`):
+  `skills/meight-mate/SKILL.md` — thinking partner for blind or anchored
+  design, diagnosis, and verdict-first plan/diff/adversarial/doctrine review.
+  The brief selects which protocol section applies.
+- `worker` (legacy aliases `delegate` / `delegated`):
+  `skills/meight-worker/SKILL.md` — team implementer owning implementation,
+  verification, and self-review; escalates dispatcher-sign-off gates
+  (security-sensitive, public API contract, data migration, money path,
+  frozen review chain) before acting.
 
 Both preambles also inject `skills/meight-common/CONTRACT.md`, the sole shared
 source for decision fields, question routing, evidence artifacts, sandbox, and
-commit discipline. Review-mode preambles additionally point to the mate skill's
-verdict-first, noise-suppression, incremental re-review, and reviewed-input
-identity duties.
+commit discipline.
 
 The preamble includes normalized mode and report type. All skill paths
 resolve relative to `meight.py`, not the invoking cwd.
@@ -321,15 +317,15 @@ the worker's report mode.
   Example: `{"cmd":"start",...}` -> `{"ok":true}` or
   `{"ok":false,"error":"..."}`.
 - `ping` and `runtime_status` responses advertise only
-  `"capabilities": ["mode4"]`. Start/follow requests carry
-  `"protocol_epoch": "mode4"`.
+  `"capabilities": ["posture2"]`. Start/follow requests carry
+  `"protocol_epoch": "posture2"`.
 - The daemon validates epoch before imports, path resolution or creation,
   registry reservation, SDK startup, turn start, or any other start/follow
   side effect. It then validates start mode before start side effects.
 - Successful `start` and `follow` responses atomically echo canonical mode and
   epoch. The CLI validates both and fails closed with a best-effort interrupt
   if a swapped daemon accepts the request under another contract, including a
-  same-token `delegate` downgrade.
+  same-token stale-epoch downgrade.
 - Every name-bearing CLI/socket command accepts only a 1-128 character worker
   name made from ASCII letters/digits/`._-`, starting with a letter or digit.
   The daemon derives and verifies repo context before selecting state and
@@ -430,18 +426,18 @@ The automated suite is:
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m unittest discover -s tests -v
 ```
 
-It covers all four mode-to-skill mappings, aliases, missing/invalid mode and
-missing/stale epoch rejection before side effects, follow/reply mode
-inheritance, start posture output, the `MODE` status cell, legacy rows with role
-or old mode values, negative capability handshake with no start request or
+It covers both posture-to-skill mappings, legacy aliases, missing/invalid mode
+and missing/stale epoch rejection before side effects, follow/reply mode
+inheritance, start resolution output, the `MODE` status cell, legacy rows with
+role or old mode values, negative capability handshake with no start request or
 state creation, mode+epoch fail-closed cleanup (including swapped same-token
-delegate), positive handshake with canonical mode in status,
+stale-epoch), positive handshake with canonical mode in status,
 private state/socket permissions, path/name/symlink rejection, request bounds,
 immutable terminal timestamps, orphan reconciliation, retention safety/races,
 launchd payload/routing/ownership transfer, and accept-loop exit classification.
 
 1. Start `daemon` in the background with a temporary `MEIGHT_HOME`, then confirm
-   `ping` returns capability `mode4` and the socket lives under that global home.
+   `ping` returns capability `posture2` and the socket lives under that global home.
 2. Run:
    `start t1 --mode worker --brief "create /tmp/fleet-test/hello.txt with content 'hi', then reply DONE" --cwd /tmp/fleet-test --sandbox ws`
    Then `wait t1` must exit `0`; the file must exist; repo-scoped `status.json`,
@@ -506,15 +502,12 @@ implementation must not restart it.
 3. Branch on LaunchAgent state. Loaded uses `meight launchd install --load` and
    verifies bounded `bootout --wait` ownership transfer; unloaded uses normal
    daemon startup.
-4. Require `meight ping` to advertise `capabilities=mode4` and verify the fresh
-   daemon PID and socket identity.
-5. Run a throwaway read-only worker smoke and verify status mode plus
-   `meight-worker` and common preamble paths.
-6. Run two read-only delegate smokes: an intentionally non-trivial brief whose
-   evidence records fresh-context/read-only internal review, verdict, round
-   count, and final decision surface; and a trivial brief with explicit review
-   exemption whose evidence records the waiver. Verify delegate/common
-   preamble paths and `mode=delegate` before real dispatches resume.
+4. Require `meight ping` to advertise `capabilities=posture2` and verify the
+   fresh daemon PID and socket identity.
+5. Run a throwaway worker smoke (brief-directed read-only) and verify status
+   mode plus `meight-worker` and common preamble paths.
+6. Run a throwaway mate smoke and verify `mode=mate` plus `meight-mate` and
+   common preamble paths before real dispatches resume.
 
 ## Scope-Outs
 

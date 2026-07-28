@@ -1,7 +1,8 @@
 # Shared Meight Contract
 
-This contract applies to every meight mode. The mode skill owns mode-specific
-behavior; this file is the only source for the shared protocol below.
+This contract applies to both meight postures. The mode skill owns
+posture-specific behavior; this file is the only source for the shared
+protocol below.
 
 ## Harness Values
 
@@ -9,16 +10,13 @@ Treat the harness header as authoritative for `mode` and `report`. Initial
 turns receive the mode-selected skill and this contract. `follow` and `reply`
 inherit both recorded values and receive a short reminder.
 
-- `design` (`collab` / `collaborative` aliases): act as a mate for blind or
-  anchored design; expose options, evidence, reasoning, and asks.
-- `review`: act as a mate and apply the mate skill's verdict-first review
-  protocol, noise suppression, incremental re-review rules, and reviewed-input
-  identity requirements.
-- `worker`: act as a participatory implementer while the dispatcher owns the
-  external review chain; follow the worker skill.
-- `delegate` / `delegated`: own the full technical and internal review loop
-  while the dispatcher stays out of technical context; follow the delegate
-  skill.
+- `mate` (legacy aliases `design` / `collab` / `collaborative` / `review`):
+  act as the dispatcher's thinking partner — design, diagnosis, and
+  verdict-first review; follow the mate skill and apply the protocol section
+  that matches the brief.
+- `worker` (legacy aliases `delegate` / `delegated`): act as a team
+  implementer who owns how, implementation, verification, and self-review;
+  follow the worker skill.
 - `text`: return the mode-appropriate text report.
 - `decision`: satisfy every field of the strict decision schema below.
 
@@ -122,8 +120,9 @@ List every created artifact in `evidence_artifacts`.
 
 - Stay inside the brief's file and behavior scope; preserve user changes and
   do not perform unrelated refactors.
-- Follow the assigned sandbox. Never bypass read-only restrictions or expose
-  secrets.
+- The harness normally runs without a sandbox. Treat write restrictions
+  declared in the brief (or in the mate skill) as binding even though nothing
+  enforces them, and never expose secrets.
 - Do not run destructive commands or rewrite git history without explicit
   dispatcher authorization.
 - Commit or push only when the brief allows it and repository constraints do

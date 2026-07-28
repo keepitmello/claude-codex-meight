@@ -27,10 +27,8 @@ class ModelAliasTests(unittest.TestCase):
 
 class StartDefaultsTests(unittest.TestCase):
     EXPECTED = {
-        "design": ("gpt-5.6-sol", "high", "default", "text", "ro"),
-        "review": ("gpt-5.6-sol", "high", "default", "decision", "ro"),
+        "mate": ("gpt-5.6-sol", "medium", "default", "text", "full"),
         "worker": ("gpt-5.6-luna", "xhigh", "priority", "decision", "full"),
-        "delegate": ("gpt-5.6-sol", "high", "default", "decision", "full"),
     }
 
     def _args(self, command: str, mode: str, *options: str):
@@ -42,7 +40,8 @@ class StartDefaultsTests(unittest.TestCase):
     def _start_request(self, args):
         responses = (
             {"ok": True, "capabilities": [meight.PROTOCOL_EPOCH]},
-            {"ok": True, "thread_id": "thread-defaults", "mode": args.mode,
+            {"ok": True, "thread_id": "thread-defaults",
+             "mode": meight.normalize_mode(args.mode),
              "protocol_epoch": meight.PROTOCOL_EPOCH},
         )
         with patch.object(meight, "send_request", side_effect=responses) as send:
@@ -62,16 +61,28 @@ class StartDefaultsTests(unittest.TestCase):
                 )
                 self.assertEqual(request["mode"], mode)
 
+    def test_legacy_alias_modes_resolve_to_posture_defaults_on_the_wire(self):
+        for alias, canonical in (("design", "mate"), ("review", "mate"), ("delegate", "worker")):
+            with self.subTest(alias=alias):
+                request = self._start_request(self._args("start", alias))
+                model, effort, tier, report, sandbox = self.EXPECTED[canonical]
+                self.assertEqual(
+                    (request["model"], request["effort"], request["service_tier"],
+                     request["report"], request["sandbox"]),
+                    (model, effort, tier, report, sandbox),
+                )
+                self.assertEqual(request["mode"], canonical)
+
     def test_explicit_flags_override_every_mode_default(self):
         args = self._args(
-            "start", "design", "--model", "terra", "--effort", "max",
-            "--fast", "--report", "decision", "--sandbox", "full",
+            "start", "mate", "--model", "terra", "--effort", "max",
+            "--fast", "--report", "decision", "--sandbox", "ro",
         )
         request = self._start_request(args)
         self.assertEqual(
             (request["model"], request["effort"], request["service_tier"],
              request["report"], request["sandbox"]),
-            ("gpt-5.6-terra", "max", "priority", "decision", "full"),
+            ("gpt-5.6-terra", "max", "priority", "decision", "ro"),
         )
 
     def test_no_fast_overrides_worker_fast_default(self):
@@ -97,11 +108,29 @@ class StartDefaultsTests(unittest.TestCase):
             self.assertEqual(meight.cmd_dispatch(dispatch_args, Path("/tmp/meight-defaults")), 1)
         start.assert_called_once_with(dispatch_args, Path("/tmp/meight-defaults"))
         self.assertIn(
-            "mode=worker contract=participatory model=sol(set) "
+            "mode=worker model=sol(set) "
             "effort=xhigh(default) fast=off(set) report=decision(default) "
             "sandbox=full(default)",
             output.getvalue(),
         )
+
+
+class WaitClassificationTests(unittest.TestCase):
+    def test_question_wait_exits_3_immediately(self):
+        st = {"state": "needs_input", "needs_input_source": "question",
+              "updated_at": meight.now_iso()}
+        self.assertEqual(meight.classify_wait_state(st), 3)
+
+    def test_fresh_tool_wait_keeps_polling_but_stale_tool_wait_exits_3(self):
+        fresh = {"state": "needs_input", "needs_input_source": "tool",
+                 "updated_at": meight.now_iso()}
+        self.assertIsNone(meight.classify_wait_state(fresh))
+        stale_at = (meight.now_kst()
+                    - timedelta(seconds=meight.TOOL_WAIT_GRACE_SEC + 1)).isoformat(timespec="seconds")
+        stale = {"state": "needs_input", "needs_input_source": "tool", "updated_at": stale_at}
+        self.assertEqual(meight.classify_wait_state(stale), 3)
+        unparsable = {"state": "needs_input", "needs_input_source": "tool", "updated_at": None}
+        self.assertEqual(meight.classify_wait_state(unparsable), 3)
 
 
 class EffortTests(unittest.TestCase):
@@ -109,11 +138,12 @@ class EffortTests(unittest.TestCase):
         parser = meight.build_parser()
         for effort in ("ultra", "max"):
             args = parser.parse_args([
-                "start", f"effort-{effort}", "--mode", "delegate",
+                "start", f"effort-{effort}", "--mode", "worker",
                 "--brief", "Say OK", "--effort", effort,
             ])
-            responses = ({"ok": True, "capabilities": ["mode4"]},
-                         {"ok": True, "mode": "delegate", "protocol_epoch": "mode4"})
+            responses = ({"ok": True, "capabilities": [meight.PROTOCOL_EPOCH]},
+                         {"ok": True, "mode": "worker",
+                          "protocol_epoch": meight.PROTOCOL_EPOCH})
             with patch.object(meight, "send_request", side_effect=responses) as send:
                 meight.start_request(args, Path("/tmp/meight-test"))
             self.assertEqual(send.call_args.args[1]["effort"], effort)
@@ -1170,30 +1200,29 @@ class ModeLifecycleTests(unittest.TestCase):
 
     def test_each_mode_maps_to_expected_skill_and_common_contract(self):
         for mode, directory in (
+            ("mate", "meight-mate"),
             ("design", "meight-mate"),
-            ("delegate", "meight-delegate"),
             ("review", "meight-mate"),
             ("worker", "meight-worker"),
+            ("delegate", "meight-worker"),
         ):
             with self.subTest(mode=mode):
                 preamble = meight.build_preamble(mode, "decision")
                 self.assertIn(f"skills/{directory}/SKILL.md", preamble)
                 self.assertIn("skills/meight-common/CONTRACT.md", preamble)
-                self.assertIn(f"mode: {mode}", preamble)
+                self.assertIn(f"mode: {meight.normalize_mode(mode)}", preamble)
                 self.assertNotIn("role:", preamble)
-        review = meight.build_preamble("review", "decision")
-        for duty in ("verdict-first", "noise suppression", "incremental re-review", "reviewed-input identity"):
-            self.assertIn(duty, review)
 
-    def test_mode_aliases_normalize_and_review_has_no_alias(self):
-        self.assertEqual(meight.normalize_mode("design"), "design")
-        self.assertEqual(meight.normalize_mode("collab"), "design")
-        self.assertEqual(meight.normalize_mode("collaborative"), "design")
-        self.assertEqual(meight.normalize_mode("delegate"), "delegate")
-        self.assertEqual(meight.normalize_mode("delegated"), "delegate")
-        self.assertEqual(meight.normalize_mode("review"), "review")
+    def test_mode_aliases_normalize_onto_the_two_postures(self):
+        self.assertEqual(meight.normalize_mode("mate"), "mate")
+        self.assertEqual(meight.normalize_mode("design"), "mate")
+        self.assertEqual(meight.normalize_mode("collab"), "mate")
+        self.assertEqual(meight.normalize_mode("collaborative"), "mate")
+        self.assertEqual(meight.normalize_mode("review"), "mate")
         self.assertEqual(meight.normalize_mode("worker"), "worker")
-        for rejected in (None, "", "reviewer", "workers"):
+        self.assertEqual(meight.normalize_mode("delegate"), "worker")
+        self.assertEqual(meight.normalize_mode("delegated"), "worker")
+        for rejected in (None, "", "reviewer", "workers", "mates"):
             self.assertIsNone(meight.normalize_mode(rejected))
 
     def test_daemon_rejects_missing_or_invalid_mode_before_side_effects(self):
@@ -1293,9 +1322,9 @@ class ModeLifecycleTests(unittest.TestCase):
                 worker.consumer.join(timeout=2)
 
             self.assertTrue(response["ok"])
-            self.assertEqual(response["mode"], "review")
+            self.assertEqual(response["mode"], "mate")
             self.assertEqual(response["protocol_epoch"], meight.PROTOCOL_EPOCH)
-            self.assertEqual(worker.status["mode"], "review")
+            self.assertEqual(worker.status["mode"], "mate")
             self.assertEqual(thread.turn_kwargs[0], {
                 "model": "gpt-5.6-sol",
                 "effort": "high",
@@ -1304,16 +1333,11 @@ class ModeLifecycleTests(unittest.TestCase):
             })
             self.assertIn("skills/meight-mate/SKILL.md", thread.inputs[0])
             self.assertIn("skills/meight-common/CONTRACT.md", thread.inputs[0])
-            for duty in ("verdict-first", "noise-suppressed", "incremental review",
-                         "reviewed-input identity"):
-                self.assertIn(duty, thread.inputs[0])
 
     def test_follow_preserves_each_canonical_mode_and_epoch(self):
         expected_skills = {
-            "design": "meight-mate",
-            "review": "meight-mate",
+            "mate": "meight-mate",
             "worker": "meight-worker",
-            "delegate": "meight-delegate",
         }
         for mode, skill in expected_skills.items():
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
@@ -1519,7 +1543,7 @@ class ModeLifecycleTests(unittest.TestCase):
                             meight, "send_request",
                             return_value={
                                 "ok": True,
-                                "mode": "delegate",
+                                "mode": "worker",
                                 "protocol_epoch": meight.PROTOCOL_EPOCH,
                             },
                         ) as send,
@@ -1548,12 +1572,12 @@ class ModeLifecycleTests(unittest.TestCase):
             meight.print_status_table([status])
         self.assertNotIn("ROLE", output.getvalue().splitlines()[0])
         self.assertIn("MODE", output.getvalue().splitlines()[0])
-        self.assertIn("review", output.getvalue().splitlines()[1])
+        self.assertIn("mate", output.getvalue().splitlines()[1])
 
-    def test_status_serializes_all_four_canonical_modes(self):
+    def test_status_serializes_both_canonical_postures(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo_home = Path(tmp)
-            for idx, mode in enumerate(("design", "review", "worker", "delegate")):
+            for idx, mode in enumerate(("mate", "worker")):
                 with self.subTest(mode=mode):
                     worker = meight.Worker(
                         f"status-{idx}", repo_home, "/repo", "repo-key", "/repo",
@@ -1567,14 +1591,14 @@ class ModeLifecycleTests(unittest.TestCase):
 
     def test_start_output_echoes_resolved_defaults_and_provenance(self):
         cases = (
-            ("worker", "participatory",
+            ("worker",
              "model=luna(default) effort=xhigh(default) fast=on(default) "
              "report=decision(default) sandbox=full(default)"),
-            ("delegate", "full-delegation",
-             "model=sol(default) effort=high(default) fast=off(default) "
-             "report=decision(default) sandbox=full(default)"),
+            ("mate",
+             "model=sol(default) effort=medium(default) fast=off(default) "
+             "report=text(default) sandbox=full(default)"),
         )
-        for mode, posture, settings in cases:
+        for mode, settings in cases:
             with self.subTest(mode=mode):
                 args = self._start_args("/repo", mode=mode)
                 output = io.StringIO()
@@ -1589,8 +1613,7 @@ class ModeLifecycleTests(unittest.TestCase):
                     contextlib.redirect_stdout(output),
                 ):
                     self.assertEqual(meight.cmd_start(args, Path("/tmp/meight-output")), 0)
-                self.assertIn(f"mode={mode} contract={posture}", output.getvalue())
-                self.assertIn(settings, output.getvalue())
+                self.assertIn(f"mode={mode} {settings}", output.getvalue())
 
     def test_start_output_marks_explicit_flags_as_set(self):
         args = meight.build_parser().parse_args([
@@ -1615,7 +1638,7 @@ class ModeLifecycleTests(unittest.TestCase):
         )
 
     def test_legacy_rows_with_role_and_old_modes_render_without_crash(self):
-        for old_mode, expected in (("collaborative", "design"), ("delegated", "delegate")):
+        for old_mode, expected in (("collaborative", "mate"), ("delegated", "worker")):
             status = {
                 "name": "legacy",
                 "state": "completed",
@@ -1636,7 +1659,7 @@ class ModeLifecycleTests(unittest.TestCase):
         }
         self.assertEqual(meight.summary_line(role_only).split()[2], "-")
 
-    def test_missing_mode4_capability_fails_before_start_request(self):
+    def test_missing_protocol_capability_fails_before_start_request(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             args = self._start_args(tmp)
@@ -1644,14 +1667,14 @@ class ModeLifecycleTests(unittest.TestCase):
 
             def old_daemon(_home, req, timeout=meight.SOCKET_TIMEOUT_SEC):
                 requests.append(req)
-                return {"ok": True, "pid": 1234}
+                return {"ok": True, "pid": 1234, "capabilities": ["mode4"]}
 
             with patch.object(meight, "send_request", side_effect=old_daemon):
                 response = meight.start_request(args, home)
 
             self.assertEqual(response, {
                 "ok": False,
-                "error": "daemon predates --mode worker; restart required",
+                "error": f"daemon predates protocol {meight.PROTOCOL_EPOCH}; restart required",
             })
             self.assertEqual(requests, [{"cmd": "ping"}])
             self.assertFalse((home / "repos").exists())
@@ -1659,9 +1682,9 @@ class ModeLifecycleTests(unittest.TestCase):
     def test_missing_or_mismatched_start_mode_epoch_echo_fails_and_interrupts(self):
         echoes = (
             {},
-            {"mode": "delegate", "protocol_epoch": "mode4"},
-            {"mode": "review"},
-            {"mode": "review", "protocol_epoch": "mode3"},
+            {"mode": "worker", "protocol_epoch": meight.PROTOCOL_EPOCH},
+            {"mode": "mate"},
+            {"mode": "mate", "protocol_epoch": "mode4"},
         )
         for echo in echoes:
             with self.subTest(echo=echo), tempfile.TemporaryDirectory() as tmp:
@@ -1672,7 +1695,7 @@ class ModeLifecycleTests(unittest.TestCase):
                 def swapped_daemon(_home, req, timeout=meight.SOCKET_TIMEOUT_SEC):
                     requests.append(req)
                     if req["cmd"] == "ping":
-                        return {"ok": True, "capabilities": ["mode4"]}
+                        return {"ok": True, "capabilities": [meight.PROTOCOL_EPOCH]}
                     if req["cmd"] == "start":
                         response = {"ok": True, "thread_id": "old-daemon-worker"}
                         response.update(echo)
@@ -1690,14 +1713,15 @@ class ModeLifecycleTests(unittest.TestCase):
                 self.assertEqual(error.exception.code, 1)
                 self.assertEqual(
                     stderr.getvalue().strip(),
-                    "error: start protocol mismatch: expected mode=review epoch=mode4",
+                    "error: start protocol mismatch: "
+                    f"expected mode=mate epoch={meight.PROTOCOL_EPOCH}",
                 )
                 self.assertEqual([req["cmd"] for req in requests], ["ping", "start", "interrupt"])
                 self.assertEqual(requests[2]["name"], args.name)
                 for key in ("repo_root", "repo_key", "repo_home"):
                     self.assertEqual(requests[2][key], requests[1][key])
 
-    def test_swapped_daemon_same_token_delegate_epoch_mismatch_fails_closed(self):
+    def test_swapped_daemon_same_token_epoch_mismatch_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             args = self._start_args(tmp, mode="delegate")
@@ -1706,13 +1730,13 @@ class ModeLifecycleTests(unittest.TestCase):
             def swapped_daemon(_home, req, timeout=meight.SOCKET_TIMEOUT_SEC):
                 requests.append(req)
                 if req["cmd"] == "ping":
-                    return {"ok": True, "capabilities": ["mode4"]}
+                    return {"ok": True, "capabilities": [meight.PROTOCOL_EPOCH]}
                 if req["cmd"] == "start":
                     return {
                         "ok": True,
                         "thread_id": "same-token-old-contract",
-                        "mode": "delegate",
-                        "protocol_epoch": "mode3",
+                        "mode": "worker",
+                        "protocol_epoch": "mode4",
                     }
                 return {"ok": True}
 
@@ -1721,17 +1745,18 @@ class ModeLifecycleTests(unittest.TestCase):
 
             self.assertEqual(response, {
                 "ok": False,
-                "error": "start protocol mismatch: expected mode=delegate epoch=mode4",
+                "error": "start protocol mismatch: "
+                         f"expected mode=worker epoch={meight.PROTOCOL_EPOCH}",
             })
             self.assertEqual([req["cmd"] for req in requests], ["ping", "start", "interrupt"])
-            self.assertEqual(requests[1]["protocol_epoch"], "mode4")
+            self.assertEqual(requests[1]["protocol_epoch"], meight.PROTOCOL_EPOCH)
 
     def test_missing_or_mismatched_follow_mode_epoch_echo_fails_and_interrupts(self):
         echoes = (
             {},
-            {"mode": "delegate", "protocol_epoch": "mode4"},
-            {"mode": "review"},
-            {"mode": "review", "protocol_epoch": "mode3"},
+            {"mode": "worker", "protocol_epoch": meight.PROTOCOL_EPOCH},
+            {"mode": "mate"},
+            {"mode": "mate", "protocol_epoch": "mode4"},
         )
         for echo in echoes:
             with self.subTest(echo=echo), tempfile.TemporaryDirectory() as tmp:
@@ -1766,22 +1791,23 @@ class ModeLifecycleTests(unittest.TestCase):
 
                 self.assertEqual(response, {
                     "ok": False,
-                    "error": "follow protocol mismatch: expected mode=review epoch=mode4",
+                    "error": "follow protocol mismatch: "
+                             f"expected mode=mate epoch={meight.PROTOCOL_EPOCH}",
                 })
                 self.assertEqual([req["cmd"] for req in requests], ["follow", "interrupt"])
                 self.assertEqual(requests[1]["name"], args.name)
 
-    def test_ping_and_runtime_status_advertise_mode4_capability(self):
+    def test_ping_and_runtime_status_advertise_protocol_capability(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             daemon = meight.Daemon(home)
             ping = daemon._dispatch({"cmd": "ping"})
             runtime = daemon.cmd_runtime_status({"name": "unknown", **meight.repo_context(home, "/repo")})
-            self.assertEqual(ping["capabilities"], ["mode4"])
+            self.assertEqual(ping["capabilities"], [meight.PROTOCOL_EPOCH])
             self.assertEqual(ping["session_retention_sec"], 30 * 24 * 60 * 60)
-            self.assertEqual(runtime["capabilities"], ["mode4"])
+            self.assertEqual(runtime["capabilities"], [meight.PROTOCOL_EPOCH])
 
-    def test_advertised_mode4_capability_starts_and_records_mode_epoch(self):
+    def test_advertised_protocol_capability_starts_and_records_mode_epoch(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             daemon = meight.Daemon(home)
@@ -1824,13 +1850,13 @@ class ModeLifecycleTests(unittest.TestCase):
                 response = meight.start_request(args, home)
 
             self.assertTrue(response["ok"])
-            self.assertEqual(response["mode"], "review")
-            self.assertEqual(response["protocol_epoch"], "mode4")
+            self.assertEqual(response["mode"], "mate")
+            self.assertEqual(response["protocol_epoch"], meight.PROTOCOL_EPOCH)
             repo_home = Path(meight.repo_context(home)["repo_home"])
             status_path = repo_home / "workers" / "mode-test" / "status.json"
             status = json.loads(status_path.read_text(encoding="utf-8"))
             self.assertNotIn("role", status)
-            self.assertEqual(status["mode"], "review")
+            self.assertEqual(status["mode"], "mate")
             self.assertEqual(status["thread_source"], "subagent")
             self.assertFalse(status["thread_ephemeral"])
             self.assertIn("skills/meight-mate/SKILL.md", capture_thread.inputs[0])

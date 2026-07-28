@@ -1,4 +1,0 @@
-interface:
-  display_name: "Meight Delegate"
-  short_description: "Own implementation and independent review end to end."
-  default_prompt: "Use $meight-delegate to fully delegate this bounded technical task."

@@ -6,6 +6,10 @@
 
 [English](../README.md) | **한국어**
 
+> ⚠️ 이 번역은 2026-07-28 posture2 개편(4모드 → `--mode mate|worker` 2자세,
+> 샌드박스 강제 제거) 이전 기준이다. 최신 내용은 [README.md](../README.md)를
+> 본다.
+
 > **Codex 메이트가 계획에 도전하고, Codex 워커가 그것을 구현하는 양방향
 > 하네스.** Meight는 함께 설계하고, 위임하고, 조향하고, 리뷰하고, 근거로 승인하는
 > LLM 에이전트를 위해 만들었습니다. 공식 `openai-codex` Python SDK 위에서

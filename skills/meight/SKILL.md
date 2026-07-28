@@ -1,6 +1,6 @@
 ---
 name: meight
-description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-meight). Route blind and anchored design to design, verdict-first plan/diff review to review, participatory bounded implementation to worker, and dispatcher-free full delegation to delegate; `--mode` is required and each task is dispatched supervised or one-shot. Use whenever a dispatcher routes work to Codex. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임"
+description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-meight). Two postures: mate for design/diagnosis/verdict-first review, worker for team implementation with self-review; `--mode` is required and each task is dispatched supervised or one-shot. Use whenever a dispatcher routes work to Codex. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임"
 ---
 
 # meight (claude-codex-meight)
@@ -9,55 +9,59 @@ description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-mei
 
 기본 디스패처는 Claude Code 세션이다. Codex 앱/CLI 세션도 이 파일을 가리키는 얇은 `~/.codex/skills/meight` 바인딩으로 디스패처가 될 수 있다. 길고 다단계거나 방향이 민감한 작업은 Claude 디스패처가 낫다 — 교차 모델 디스패처는 감독하는 Codex 워커와 사각지대가 겹치지 않는다.
 
-계약 상세는 [`meight-mate`](../meight-mate/SKILL.md), [`meight-worker`](../meight-worker/SKILL.md), [`meight-delegate`](../meight-delegate/SKILL.md)에 있고, 셋의 공통 프로토콜은 [`meight-common/CONTRACT.md`](../meight-common/CONTRACT.md)다. 하네스 preamble이 모드에 맞는 스킬 + 공통 계약을 주입한다. 이 스킬은 디스패처 쪽 라우팅·감독의 SSOT다.
+계약 상세는 [`meight-mate`](../meight-mate/SKILL.md), [`meight-worker`](../meight-worker/SKILL.md)에 있고, 공통 프로토콜은 [`meight-common/CONTRACT.md`](../meight-common/CONTRACT.md)다. 하네스 preamble이 자세에 맞는 스킬 + 공통 계약을 주입한다. 이 스킬은 디스패처 쪽 라우팅·감독의 SSOT다.
 
-## 모드는 필수
+## 두 자세, --mode는 필수
 
-`start`와 `dispatch`는 `--mode design|review|worker|delegate`를 요구한다. `collab`, `collaborative`, `delegated`는 별칭. 기본값은 없고, 플래그를 빼면 안내 메시지와 함께 에러다.
+`start`와 `dispatch`는 `--mode mate|worker`를 요구한다. 기본값은 없고, 플래그를 빼면 안내 메시지와 함께 에러다. 구 이름들(`design`/`collab`/`collaborative`/`review` → mate, `delegate`/`delegated` → worker)은 별칭으로 살아 있다.
 
-- `--mode design` — 블라인드/앵커드 설계, 진단, 아키텍처, 대안, 트레이드오프, 계획, 방향 설정. 세션은 mate이고 선택지와 근거를 펼친다.
-- `--mode review` — verdict-first 플랜/디프/적대적/독트린 리뷰. 리뷰 의무가 명시된 mate.
-- `--mode worker` — bounded 구현, 수정, 테스트, 검증, 런타임/브라우저 QA, computer use, 탐색. 별도 리뷰 세션이 필요한지는 디스패처가 판단.
-- `--mode delegate` — 디스패처가 기술 컨텍스트에서 빠지는 완전 위임. delegate가 내부 fresh-context read-only 리뷰를 소유하며, 하드 게이트·돈 경로·동결된 디스패처 리뷰 체인은 worker로 fail-closed.
+- `--mode mate` — 생각·판단 상대. 블라인드/앵커드 설계, 진단, 방향, 그리고 verdict-first 플랜/디프/적대 리뷰까지. 어느 프로토콜을 적용할지는 브리프가 정한다 — 리뷰 브리프면 mate 스킬의 리뷰 섹션이 걸린다.
+- `--mode worker` — 실행 팀원. how·구현·검증·자기 리뷰를 소유하고, 브리프 밖 관찰과 이견을 `QUESTION:`/`risks[]`로 올린다. 별도 외부 리뷰 세션을 띄울지는 디스패처가 판단한다.
 
-design/review는 mate 계약, worker는 참여형 구현, delegate는 완전 위임이다. 정규화된 모드는 `status.json`에 기록되고 `MODE` 컬럼에 뜬다.
+샌드박스는 어느 자세도 강제하지 않는다 — read-only가 필요하면 브리프에 지시한다 (mate 스킬은 "브리프가 시키지 않으면 레포 파일을 고치지 않는다"를 기본으로 갖고 있다). `--sandbox`는 수동 선택용으로 남아 있다.
 
 `follow`와 `reply`는 모드 플래그를 받지 않는다. 세션에 기록된 mode/report를 물려받고, 전체 preamble 대신 한 줄짜리 하네스 리마인더만 받는다. `--model`, `--effort`, `--fast`/`--no-fast`를 생략하면 model·effort·Fast tier도 상속하고, 명시하면 그 턴에 적용되며 이후 턴이 상속하는 값이 된다.
 
-생략된 start/dispatch 설정은 wire request를 만들기 전에 CLI에서 모드로부터 해소된다:
+생략된 start/dispatch 설정은 wire request를 만들기 전에 CLI에서 자세로부터 해소된다:
 
 | Mode | Model | Effort | Fast | Report | Sandbox |
 |---|---|---|---|---|---|
-| `design` | `sol` | `high` | off | `text` | `ro` |
-| `review` | `sol` | `high` | off | `decision` | `ro` |
+| `mate` | `sol` | `medium` | off | `text` | `full` |
 | `worker` | `luna` | `xhigh` | on | `decision` | `full` |
-| `delegate` | `sol` | `high` | off | `decision` | `full` |
 
-표준은 조용하다 — 편차만 플래그로 주고, 명시한 플래그는 항상 모드 기본값을 이긴다. 이 표는 의도적으로 `meight.py` 안의 코드 전용 운영 정책이다. config 파일이나 환경변수 오버라이드 레이어는 없다. start echo가 해소된 값 전부를 `(default)` / `(set)` 출처와 함께 보여준다.
+표준은 조용하다 — 편차만 플래그로 주고, 명시한 플래그는 항상 기본값을 이긴다. 이 표는 의도적으로 `meight.py` 안의 코드 전용 운영 정책이다. config 파일이나 환경변수 오버라이드 레이어는 없다. start echo가 해소된 값 전부를 `(default)` / `(set)` 출처와 함께 보여준다.
 
-CLI는 `start` 전에 capability handshake를 한다. 살아있는 데몬이 capability `mode4`를 광고하지 않으면 start는 fail closed. 모든 start/follow는 epoch `mode4`를 싣고, 성공 시 정규화 모드와 epoch를 원자적으로 echo해야 한다 — 아니면 CLI가 best-effort interrupt 후 nonzero 종료.
+mate 기본 effort는 `medium`이다 — 정말 어려운 문제만 `--effort high`나 `xhigh`로 올린다. verdict 인코딩(APPROVE/REVISE → needs_input 라우팅)이 필요한 플랜 리뷰 루프는 `--report decision`을 명시한다; 설계 대화는 기본 `text`가 자연스럽다.
+
+CLI는 `start` 전에 capability handshake를 한다. 살아있는 데몬이 capability `posture2`를 광고하지 않으면 start는 fail closed. 모든 start/follow는 epoch `posture2`를 싣고, 성공 시 정규화 모드와 epoch를 원자적으로 echo해야 한다 — 아니면 CLI가 best-effort interrupt 후 nonzero 종료.
 
 ## 모델 선택 (GPT-5.6: sol / terra / luna)
 
-`--model`을 생략하면 위 모드 기본값. 편차일 때만 명시한다. 짧은 이름은 실제 별칭이다: `sol`, `terra`, `luna`가 현재 ChatGPT 계정 슬러그 `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`로 해소된다. 전체/커스텀 모델 문자열은 그대로 통과한다.
+`--model`을 생략하면 위 자세 기본값. 편차일 때만 명시한다. 짧은 이름은 실제 별칭이다: `sol`, `terra`, `luna`가 현재 ChatGPT 계정 슬러그 `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`로 해소된다. 전체/커스텀 모델 문자열은 그대로 통과한다.
 
 라우팅 원리: **실패 비용이 모델을 고른다.** 기본값은 의도적으로 넓다 — bounded 작업은 `luna` `xhigh`, 계정과 서비스가 Fast를 지원하면 `--fast`.
 
 | Model | 쓸 곳 | 통상 effort |
 |-------|------|---|
-| `luna` | worker 모드 구현·수정·테스트·검증, read-only 로그 파기, 브라우저/런타임 QA, computer use, 탐색의 기본 모델 | `xhigh` + 가능하면 `--fast` |
-| `sol` | design/review 방향·verdict 작업의 기본 모델, 그리고 하드 게이트 걸린 worker 구현 | `high`; `xhigh`는 정말 어려운 문제에만 |
+| `luna` | worker 자세 구현·수정·테스트·검증, read-only 로그 파기, 브라우저/런타임 QA, computer use, 탐색의 기본 모델 | `xhigh` + 가능하면 `--fast` |
+| `sol` | mate 자세 방향·verdict 작업의 기본 모델, 그리고 하드 게이트 걸린 worker 구현 | `medium`; 어려우면 `high`, `xhigh`는 정말 어려운 문제에만 |
 | `terra` | 기본 소유 영역 없음. 측정 근거가 뒷받침될 때 capability-specific 폴백 | 작업별 |
 
-`high`는 sol의 기본값이지 바닥이 아니다 — `high`가 과사고할 수 있어서 가벼운 mate 작업은 `medium`으로 내려도 된다. 다만 측정에서 나온 주의점: `medium`은 적대적 리뷰에서 severity를 과대 승격하는 경향을 보였다. 그래서 medium 강등은 verdict를 내는 리뷰보다 설계 사고·스코핑 쪽에 쓰는 게 낫다.
+측정에서 나온 주의점 하나: `medium`은 적대적 리뷰에서 severity를 과대 승격하는 경향을 보였다. verdict가 걸린 리뷰는 `--effort high`로 올리는 게 낫고, medium은 설계 사고·스코핑 쪽에 맞는다.
 
-하드 게이트 (계약 문구 그대로): **acceptance-critical한 부분이 concurrency, security, 공개 schema/API 계약 설계, 영속 데이터 마이그레이션, cross-cutting 리팩터에 materially 의존하거나 실패가 돈/데이터 손상·비가역·고임팩트 프로덕션 피해를 낳으면 sol로 하드 라우팅.** 일반 엔드포인트 구현은 `luna`, API 계약 설계·진화는 `sol`. read-only 프로덕션 로그 조사는 `luna`, 프로덕션 mutation이나 인시던트 remediation은 `luna` 작업이 아니고, 돈 경로는 기존 디스패처 sign-off 게이트를 유지한다. `luna` 작업 안의 모호함은 `QUESTION:` 에스컬레이션으로 처리한다.
+하드 게이트 (계약 문구 그대로): **acceptance-critical한 부분이 concurrency, security, 공개 schema/API 계약 설계, 영속 데이터 마이그레이션, cross-cutting 리팩터에 materially 의존하거나 실패가 돈/데이터 손상·비가역·고임팩트 프로덕션 피해를 낳으면 sol로 하드 라우팅.** 일반 엔드포인트 구현은 `luna`, API 계약 설계·진화는 `sol`. read-only 프로덕션 로그 조사는 `luna`, 프로덕션 mutation이나 인시던트 remediation은 `luna` 작업이 아니고, 돈 경로는 기존 디스패처 sign-off 게이트를 유지한다. `luna` 작업 안의 모호함은 `QUESTION:` 에스컬레이션으로 처리한다. worker 스킬도 같은 게이트 목록을 갖고 있어 브리프가 게이트를 건드리면 작업 전에 에스컬레이션한다.
 
 `terra`는 capability-specific 이유와 측정 근거가 있을 때 `luna` 에스컬레이션을 받을 수 있다. 근거가 쌓이면 기본 소유로 승격 가능하지만 baseline 전에는 승격 규칙을 가정하지 않는다. UX와 사용자 눈에 보이는 동작 판단은 디스패처가 갖고, brief에 수용 UX 계약을 명시한다.
 
-## 감독 인터페이스
+## 감독 인터페이스 — 턴 도중 소통
 
-`start`가 감독 세션을 연다. `status`, `steer`, `result`, `reply`로 다시 들여다본다 — 얼마나 자주 볼지는 정해두지 않는다.
+`start`가 감독 세션을 연다. `status`, `steer`, `result`, `reply`로 다시 들여다본다.
+
+턴 도중 채널 (v posture2):
+
+- **워커→디스패처**: `wait`/`dispatch`/`reply`가 워커의 plan 스텝 전환을 실시간으로 한 줄씩 출력한다 (`[HH:MM:SS] name ▶ <step>`). 워커 스킬은 plan 스텝을 결과 단위로 유지하라는 계약을 갖고 있어, 이 스트림이 워커의 중간 내레이션이다. 300초 heartbeat는 그대로 있다 (`--progress`, 0=off).
+- **디스패처→워커**: `meight steer <name> "correction"` — 도는 턴에 텍스트를 주입한다. plan 스트림에서 방향이 어긋나는 게 보이면 턴이 끝나길 기다리지 말고 steer한다.
+- **tool-wait 표면화**: 워커가 tool/approval 입력을 기다리며 15초 넘게 멈추면 wait가 exit 3으로 표면화한다 (전에는 타임아웃까지 invisible). `status <name>`의 `needs_input_source`가 `tool`이면 답할 방법이 없는 대기다 — interrupt 후 브리프를 고쳐 재시작한다.
 
 ```bash
 meight start <name> --mode worker --brief-file - --cwd <dir> <<'EOF'
@@ -85,7 +89,6 @@ meight result <name>         # decision.md가 있으면 그걸 우선
 meight result <name> --raw   # raw result.md 감사 기록
 meight reply <name> --brief "Use config-a.json and keep the legacy field."
 meight follow <name> --effort xhigh --fast --brief "Continue with more reasoning."
-meight reply <name> --effort high --no-fast --brief "Use the approved option."
 ```
 
 `status`는 pull-only이고 디스크를 읽는다. `steer`, `interrupt`, `follow`와 런타임 동작은 살아있는 데몬이 필요하다. 최종 질문과 terminal 결과는 app-server를 살려두지 않는다 — `reply`/`follow`는 데몬 재시작이나 registry GC 이후에도 영속된 `thread_id`를 새 런타임에서 재개한다.
@@ -97,15 +100,15 @@ meight reply <name> --effort high --no-fast --brief "Use the approved option."
 `dispatch`는 별도 감독 세션이 필요 없을 때 쓰는 블로킹 원샷이다.
 
 ```bash
-meight dispatch tiny-1 --mode worker --sandbox ro \
-  --brief "Check whether README mentions LICENSE."
+meight dispatch tiny-1 --mode worker \
+  --brief "Check whether README mentions LICENSE. Read-only: do not modify files."
 ```
 
 필요하면 데몬을 자동 기동하고, 워커를 시작해 기다렸다가 선호 결과(`decision.md` 있으면 그것, 없으면 `result.md`)를 출력한다. terminal 결과 후 다른 워커가 없을 때 데몬이 종료하길 원하면 `--shutdown-when-idle`.
 
 ## 리포트 모드
 
-모드별 기본값: design은 `text`, review/worker/delegate는 `decision`. `--report`가 항상 이긴다. text 리포트는 최종 메시지를 `result.md`에 쓴다.
+자세별 기본값: mate는 `text`, worker는 `decision`. `--report`가 항상 이긴다. text 리포트는 최종 메시지를 `result.md`에 쓴다.
 
 `--report decision`일 때:
 - SDK 턴이 `output_schema`를 쓴다.
@@ -124,4 +127,4 @@ brief에서 모달리티를 명시적으로 요구하고, 실제로 썼다는 �
 
 - 소유권 경계, phase 승인과 campaign identity, `QUESTION:` 라우팅, 학습 루프 원장(decisions/, preferences.md, lessons.md): [`references/ownership-and-escalation.md`](references/ownership-and-escalation.md)
 - 블라인드/앵커드 설계 브리프 예시, 플랜 리뷰 APPROVE/REVISE 인코딩, mate 리뷰, fresh-eyes UI 리뷰, 이견 처리: [`references/design-and-review.md`](references/design-and-review.md)
-- 데몬 재시작·mode4 마이그레이션 체크리스트, launchd, 상태 경로, 환경변수, 수명주기 caveat: [`references/daemon-ops.md`](references/daemon-ops.md)
+- 데몬 재시작·epoch 마이그레이션 체크리스트, launchd, 상태 경로, 환경변수, 수명주기 caveat: [`references/daemon-ops.md`](references/daemon-ops.md)

@@ -18,24 +18,24 @@ answers structured questions, and keeps final reports small enough to make
 user-facing decisions without drowning in implementation detail.
 
 The core idea is that a frontier model wasted as a silent executor is capability
-left on the table. So meight exposes four operating modes across three Codex
-session contracts:
+left on the table. So meight exposes two postures — two Codex session
+contracts:
 
-- A **mate** (`--mode design` or `--mode review`) is an independent challenger.
-  It reviews plans with a real verdict, hunts defects adversarially, and joins blind design —
-  its contract says *challenge the dispatcher, agreement is not the goal*.
-- A **worker** (`--mode worker`) is a bounded participatory implementer. It owns
-  code, tests, verification, and runtime QA while the dispatcher decides
-  whether and how to run an external review.
-- A **delegate** (`--mode delegate`) owns implementation and fresh-context
-  independent review end to end while the dispatcher stays outside technical
-  context. Hard-gated, money-path, and frozen dispatcher-review-chain work
-  fails closed back to worker mode.
+- A **mate** (`--mode mate`) is an independent thinking partner. It joins
+  blind/anchored design, diagnoses, reviews plans with a real verdict, and
+  hunts defects adversarially — its contract says *challenge the dispatcher,
+  agreement is not the goal*. The brief selects which protocol applies.
+- A **worker** (`--mode worker`) is a team implementer. It owns code, tests,
+  verification, and self-review, surfaces observations and better directions
+  instead of executing silently, and escalates dispatcher-sign-off gates
+  (security-sensitive, public API contracts, data migration, money paths,
+  frozen review chains) before acting. The dispatcher decides whether to run a
+  separate external review.
 
-Mate, worker, and delegate name the session contract, not the model; the mode picks the
+Mate and worker name the session contract, not the model; the mode picks the
 contract, and `--model` picks the brain. The dispatcher keeps direction,
-arbitration, integration, and final sign-off; nothing merges on a mate's,
-worker's, or delegate's word alone.
+arbitration, integration, and final sign-off; nothing merges on a mate's or
+worker's word alone.
 
 ```text
    dispatcher agent   <->   Codex mate(s) / worker(s)
@@ -59,10 +59,10 @@ review, implementation, and verification gates justified by the task's failure
 cost, then records that choice in one line.
 
 Blind or anchored design can clarify a real direction fork. Plan review and
-adversarial code review are available verdict tools, not default stages. Worker
-mode lets the dispatcher spawn a separate review session when warranted;
-delegate mode owns its contract's internal fresh-context review. A worker's
-`done` is still only a claim. For reviewed work, sign-off combines the review
+adversarial code review are available verdict tools, not default stages. The
+worker self-reviews by contract (spawning an internal fresh-context reviewer
+when warranted), and the dispatcher spawns a separate external review session
+when failure cost justifies it. A worker's `done` is still only a claim. For reviewed work, sign-off combines the review
 verdict with verification evidence; unreviewed work still requires verification
 evidence. Reading the entire diff is never a sign-off gate.
 
@@ -94,7 +94,7 @@ Compared with tmux/exec wrappers:
 | Two-way conversation | no | no | structured `QUESTION:` -> exit 3 -> `reply` |
 | Result delivery | scrape | tool return | exit-code contract + result files |
 | Machine-readable reports | no | wrapper-specific | `--report decision` via `output_schema` |
-| Session contracts | no | no | `--mode design\|review\|worker\|delegate`, harness-injected |
+| Session contracts | no | no | `--mode mate\|worker`, harness-injected |
 
 And because every judgment lands on disk — digests, decisions, preferences,
 lessons — the pairing gets more personal over time: the dispatcher learns
@@ -152,10 +152,10 @@ visible in `status.json` and `meight status`.
 meight reply impl-1 --brief "Use config-a.json and keep the legacy field."
 ```
 
-Blind design goes to a mate instead — read-only and collaborative:
+Blind design goes to a mate instead — advisory and collaborative:
 
 ```bash
-meight start design-auth --mode design \
+meight start design-auth --mode mate \
   --cwd ~/my-repo --brief-file - <<'EOF'
 We need to choose an auth-token refresh design.
 
@@ -235,7 +235,7 @@ For real work, run `wait --timeout` as the background shell call. The agent
 wakes at completion, question, failure, daemon death, or checkpoint timeout.
 
 ```text
-Bash(command: "meight start review-1 --mode review --brief-file - <<'EOF' ... EOF")
+Bash(command: "meight start review-1 --mode mate --report decision --brief-file - <<'EOF' ... EOF")
 Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 -> checkpoint exit 1
 -> meight status review-1
@@ -245,9 +245,8 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 A drop-in Claude orchestrator prompt ships as [`CLAUDE.md`](./CLAUDE.md). A
 Codex-as-orchestrator prompt ships as [`AGENTS.md`](./AGENTS.md). The full
 dispatcher-facing skill is [`skills/meight/`](./skills/meight/SKILL.md). The
-session contracts are [`skills/meight-mate/`](./skills/meight-mate/SKILL.md),
-[`skills/meight-worker/`](./skills/meight-worker/SKILL.md), and
-[`skills/meight-delegate/`](./skills/meight-delegate/SKILL.md), with their
+session contracts are [`skills/meight-mate/`](./skills/meight-mate/SKILL.md)
+and [`skills/meight-worker/`](./skills/meight-worker/SKILL.md), with their
 shared protocol in
 [`skills/meight-common/`](./skills/meight-common/CONTRACT.md).
 
@@ -279,9 +278,9 @@ protocol, two dispatcher runtimes.
 
 | Command | What it does |
 |---|---|
-| `meight start <name> --mode design\|review\|worker\|delegate [opts]` | Start a session and return immediately with the thread id plus resolved mode/contract/model/effort/Fast/report/sandbox values and their default/set provenance. Supervised workflow entry point. |
+| `meight start <name> --mode mate\|worker [opts]` | Start a session and return immediately with the thread id plus resolved mode/model/effort/Fast/report/sandbox values and their default/set provenance. Supervised workflow entry point. |
 | `meight wait <name> --timeout SEC` | Checkpoint wait: return on terminal state, replyable QUESTION, daemon death, or timeout. Timeout leaves the worker running. |
-| `meight dispatch <name> --mode design\|review\|worker\|delegate [opts]` | One-shot: auto-start daemon -> capability check -> start -> wait -> print preferred result. |
+| `meight dispatch <name> --mode mate\|worker [opts]` | One-shot: auto-start daemon -> capability check -> start -> wait -> print preferred result. |
 | `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | One-shot answer to a replyable question; inherits mode/report and omitted turn settings, applies explicit turn overrides, and prints the latest result. |
 | `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | Low-level: new turn on the same live thread; inherits mode/report and omitted turn settings, while explicit overrides become the defaults for later turns. |
 | `meight result <name> [--raw]` | Print `decision.md` when present; `--raw` prints raw `result.md`. |
@@ -292,11 +291,11 @@ protocol, two dispatcher runtimes.
 
 Common options:
 
-- `--mode design|review|worker|delegate` is required on `start` and `dispatch`.
-  `collab`, `collaborative`, and `delegated` are accepted aliases. Design and
-  review use the mate contract. Worker is participatory implementation with a
-  dispatcher-owned review choice. Delegate is full delegation with an internal
-  independent reviewer and strict forbidden-route fallback to worker.
+- `--mode mate|worker` is required on `start` and `dispatch`. Legacy names
+  `design`, `collab`, `collaborative`, `review` (→ mate) and `delegate`,
+  `delegated` (→ worker) are accepted aliases. Mate is the thinking-partner
+  contract; worker is team implementation with self-review and a
+  dispatcher-owned external-review choice.
 - `--report text|decision` uses the mode default below; `decision` writes
   `decision.json`/`decision.md`. Explicit flags always override.
 - `--cwd` sets the worker workdir. Use separate git worktrees for overlapping
@@ -317,10 +316,12 @@ sent:
 
 | Mode | Model | Effort | Fast | Report | Sandbox |
 |---|---|---|---|---|---|
-| `design` | `sol` | `high` | off | `text` | `ro` |
-| `review` | `sol` | `high` | off | `decision` | `ro` |
+| `mate` | `sol` | `medium` | off | `text` | `full` |
 | `worker` | `luna` | `xhigh` | on | `decision` | `full` |
-| `delegate` | `sol` | `high` | off | `decision` | `full` |
+
+Neither posture enforces a sandbox: read-only is brief-driven policy (the mate
+contract defaults to not modifying repository files), and `--sandbox` remains
+for manual selection.
 
 Standard is silent: specify only deviations. The table lives in `meight.py` as
 deliberately simple code-only operator policy; there is no config-file or
@@ -352,13 +353,13 @@ After a daemon crash/restart, orphaned active rows become
 resumable. Legacy ephemeral workers continue in a new persistent subagent
 thread with a bounded handoff built from their saved brief, result, and events.
 
-## Upgrading An Old Daemon To Mode4 Support
+## Upgrading An Old Daemon To A New Protocol Epoch
 
-The new CLI fails closed before `start` when `meight ping` does not advertise
-`capabilities=mode4`. Every start/follow request carries epoch `mode4`, and
-every successful response atomically echoes normalized mode plus epoch. The CLI
-validates both, so even a same-token delegate daemon swapped mid-handshake
-cannot silently use the old contract. Drain and restart manually:
+The CLI fails closed before `start` when `meight ping` does not advertise the
+current capability (`posture2`). Every start/follow request carries the epoch,
+and every successful response atomically echoes normalized mode plus epoch. The
+CLI validates both, so even a same-token daemon swapped mid-handshake cannot
+silently use an old contract. Drain and restart manually:
 
 1. Inspect `meight list --all-repos --json`; wait until no session across any
    repo is `starting`, `running`, or `needs_input`.
@@ -367,15 +368,12 @@ cannot silently use the old contract. Drain and restart manually:
 3. Branch on LaunchAgent state. If loaded, run `meight launchd install --load`
    and verify its bounded `bootout --wait` transfer selects the fresh daemon;
    if not loaded, start the daemon normally.
-4. Confirm `meight ping` shows `capabilities=mode4`, then verify the new daemon
-   PID and socket identity.
-5. Run a throwaway read-only `--mode worker` smoke and verify status mode plus
-   `meight-worker` and common preamble paths.
-6. Run the two read-only delegate smokes: (a) an intentionally non-trivial
-   brief whose evidence records the fresh-context/read-only internal reviewer,
-   verdict, round count, and final decision surface; (b) a trivial brief that
-   explicitly waives review and records the exemption. Verify `mode=delegate`
-   and `meight-delegate` plus common preamble paths for both.
+4. Confirm `meight ping` shows `capabilities=posture2`, then verify the new
+   daemon PID and socket identity.
+5. Run a throwaway `--mode worker` smoke (brief-directed read-only) and verify
+   status mode plus `meight-worker` and common preamble paths.
+6. Run a throwaway `--mode mate` smoke and verify `mode=mate` plus
+   `meight-mate` and common preamble paths.
 7. Resume real dispatches only after every smoke passes.
 
 ## Good To Know
