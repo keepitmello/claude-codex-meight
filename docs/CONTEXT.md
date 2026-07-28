@@ -27,9 +27,10 @@
   부작용보다 앞선다. start/follow 성공 응답의 normalized mode+epoch를 CLI가
   함께 검증하고 불일치 시 interrupt 클린업한다. 레거시 status 행은 계속
   무충돌 렌더한다.
-- **턴 도중 소통**: wait/dispatch/reply가 워커 plan 스텝 전환을 실시간
-  출력하고(워커→디스패처), steer가 역방향. tool-wait 15초 초과 시 exit 3
-  표면화.
+- **디스패치 패턴**: 디스패처는 dispatch/reply를 백그라운드 셸로 던지고 태스크
+  통지로 깨어난다 (포그라운드 wait는 사람용). plan 스텝 실시간 내레이션은
+  `--narrate` 옵트인. steer는 디스패처→워커 턴 중 주입. tool-wait 15초 초과
+  시 exit 3 표면화.
 - **테스트**: `tests/test_meight.py` 전체 unittest 진입점이 2자세, legacy
   alias, preamble, status/legacy, 상속, epoch, tool-wait 분류와
   swapped-daemon 회귀를 커버.

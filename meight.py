@@ -2564,13 +2564,13 @@ def classify_wait_state(st: dict) -> int | None:
 
 
 def wait_for_worker(home: Path, repo_home: Path, name: str, timeout: float | None,
-                    progress: float = 300.0) -> int:
+                    progress: float = 300.0, narrate: bool = False) -> int:
     sj = repo_home / "workers" / name / "status.json"
     now = time.monotonic()
     deadline = now + timeout if timeout else None
     next_progress = now + progress if progress and progress > 0 else None
     dead_strikes = 0  # avoid false positives from transient ping failures while the daemon is busy
-    last_plan_note = None  # mid-turn narration: surface each newly active worker plan step once
+    last_plan_note = None  # --narrate: surface each newly active worker plan step once
     while True:
         st = None
         if sj.is_file():
@@ -2579,15 +2579,17 @@ def wait_for_worker(home: Path, repo_home: Path, name: str, timeout: float | Non
             except (OSError, json.JSONDecodeError):
                 st = None
         if st is not None:
-            # The worker's own plan steps are the only mid-turn text it authors;
-            # printing each transition lets the dispatcher watch progress (and
-            # steer) without waiting for the turn to end.
-            active_step = next(
-                (s for s in (st.get("plan") or []) if s.startswith("[active]")), None)
-            if active_step and active_step != last_plan_note:
-                print(f"  [{time.strftime('%H:%M:%S')}] {name} ▶ {active_step[len('[active] '):]}",
-                      flush=True)
-                last_plan_note = active_step
+            # The worker's own plan steps are the only mid-turn text it authors.
+            # Printing each transition is for a human watching a terminal; a
+            # backgrounded dispatcher reads the result on wake-up instead, so
+            # narration is opt-in to keep task output files quiet.
+            if narrate:
+                active_step = next(
+                    (s for s in (st.get("plan") or []) if s.startswith("[active]")), None)
+                if active_step and active_step != last_plan_note:
+                    print(f"  [{time.strftime('%H:%M:%S')}] {name} ▶ {active_step[len('[active] '):]}",
+                          flush=True)
+                    last_plan_note = active_step
             code = classify_wait_state(st)
             if code is not None:
                 print(summary_line(st))
@@ -2631,7 +2633,8 @@ def wait_for_worker(home: Path, repo_home: Path, name: str, timeout: float | Non
 
 
 def cmd_wait(args, home: Path) -> int:
-    return wait_for_worker(home, repo_home_for_cli(home), args.name, args.timeout, args.progress)
+    return wait_for_worker(home, repo_home_for_cli(home), args.name, args.timeout, args.progress,
+                           narrate=getattr(args, "narrate", False))
 
 
 def ensure_daemon(home: Path) -> bool:
@@ -2690,7 +2693,8 @@ def cmd_dispatch(args, home: Path) -> int:
         flush=True,
     )
     repo_home = repo_home_for_cli(home)
-    code = wait_for_worker(home, repo_home, args.name, args.timeout, args.progress)
+    code = wait_for_worker(home, repo_home, args.name, args.timeout, args.progress,
+                           narrate=getattr(args, "narrate", False))
     worker_dir = repo_home / "workers" / args.name
     decision = worker_dir / "decision.md"
     rp = decision if decision.is_file() else worker_dir / "result.md"
@@ -2711,7 +2715,8 @@ def cmd_reply(args, home: Path) -> int:
     resp = expect_ok(follow_request(args, home))
     print(f"reply turn #{resp.get('turns')} on worker '{args.name}'", flush=True)
     repo_home = repo_home_for_cli(home)
-    code = wait_for_worker(home, repo_home, args.name, args.timeout, args.progress)
+    code = wait_for_worker(home, repo_home, args.name, args.timeout, args.progress,
+                           narrate=getattr(args, "narrate", False))
     worker_dir = repo_home / "workers" / args.name
     decision = worker_dir / "decision.md"
     rp = decision if decision.is_file() else worker_dir / "result.md"
@@ -3062,6 +3067,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--timeout", type=float, default=1800)
     sp.add_argument("--progress", type=float, default=300.0,
                     help="seconds between status heartbeats while waiting; 0=off")
+    sp.add_argument("--narrate", action="store_true",
+                    help="print worker plan-step transitions live (for a human watching a terminal)")
     sp.add_argument("--shutdown-when-idle", action="store_true",
                     help="after a terminal result, ask the global daemon to stop if no workers are active")
     sp.set_defaults(fn=cmd_dispatch)
@@ -3095,6 +3102,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--timeout", type=float, default=1800)
     sp.add_argument("--progress", type=float, default=300.0,
                     help="seconds between status heartbeats while waiting; 0=off")
+    sp.add_argument("--narrate", action="store_true",
+                    help="print worker plan-step transitions live (for a human watching a terminal)")
     sp.add_argument("--shutdown-when-idle", action="store_true",
                     help="after a terminal result, ask the global daemon to stop if no workers are active")
     sp.set_defaults(fn=cmd_reply)
@@ -3129,6 +3138,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--timeout", type=float, default=None)
     sp.add_argument("--progress", type=float, default=300.0,
                     help="seconds between status heartbeats while waiting; 0=off")
+    sp.add_argument("--narrate", action="store_true",
+                    help="print worker plan-step transitions live (for a human watching a terminal)")
     sp.set_defaults(fn=cmd_wait)
 
     sp = sub.add_parser("shutdown", help="shut down daemon")

@@ -133,6 +133,30 @@ class WaitClassificationTests(unittest.TestCase):
         self.assertEqual(meight.classify_wait_state(unparsable), 3)
 
 
+class WaitNarrationTests(unittest.TestCase):
+    def _repo_home_with_status(self, tmp):
+        repo_home = Path(tmp)
+        wdir = repo_home / "workers" / "narrate-1"
+        wdir.mkdir(parents=True)
+        (wdir / "status.json").write_text(json.dumps({
+            "name": "narrate-1", "state": "completed",
+            "plan": ["[done] read code", "[active] write fix"],
+            "started_at": meight.now_iso(), "updated_at": meight.now_iso(),
+        }), encoding="utf-8")
+        return repo_home
+
+    def test_plan_step_narration_is_opt_in(self):
+        for narrate, expect in ((False, False), (True, True)):
+            with self.subTest(narrate=narrate), tempfile.TemporaryDirectory() as tmp:
+                repo_home = self._repo_home_with_status(tmp)
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    code = meight.wait_for_worker(
+                        Path(tmp), repo_home, "narrate-1", timeout=5, narrate=narrate)
+                self.assertEqual(code, 0)
+                self.assertEqual("▶" in output.getvalue(), expect)
+
+
 class EffortTests(unittest.TestCase):
     def test_ultra_and_max_parse_and_reach_start_request(self):
         parser = meight.build_parser()

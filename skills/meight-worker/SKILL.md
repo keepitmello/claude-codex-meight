@@ -58,9 +58,9 @@ Treat a guard, fallback, retry, watchdog, timeout, cache clear, or alternate
 path as containment unless the primary path is corrected too. Verify the
 primary path, not only containment behavior.
 
-Keep the worker plan (TODO) steps current while working: the dispatcher
-watches them live and can steer mid-turn. Write steps as outcomes, not
-mechanics.
+Keep the worker plan (TODO) steps current while working: they are surfaced
+through `status` and live narration, and a steer can arrive mid-turn based on
+them. Write steps as outcomes, not mechanics.
 
 ## Self-Review
 

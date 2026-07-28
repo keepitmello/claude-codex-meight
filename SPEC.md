@@ -186,7 +186,7 @@ The command table must match the `python3 meight.py --help` subcommand list exac
 | `status [name] [--json] [--all-repos]` | Does not require the daemon. Read repo-scoped `status.json` directly. With no name, print a table including `MODE`; `--all-repos` reads every repo namespace. Legacy rows with a role field or long-form mode values remain readable. |
 | `list [--json] [--all-repos]` | Alias for `status` with no worker name. |
 | `result <name> [--raw]` | Print `decision.md` when present. `--raw` prints `result.md`. |
-| `wait <name> [--timeout SEC]` | Poll `status.json` once per second. Terminal states return `completed=0`, `failed=2`, `interrupted=2`. A durable final `QUESTION:` returns `3` even after its runtime is released and can accept `reply` after daemon restart. Daemon death during a live turn returns `4`. Timeout returns `1`. Print one final status summary line to stdout. |
+| `wait <name> [--timeout SEC] [--progress SEC] [--narrate]` | Poll `status.json` once per second. `--narrate` additionally prints each newly active worker plan step (opt-in; for a human watching a terminal). Terminal states return `completed=0`, `failed=2`, `interrupted=2`. A durable final `QUESTION:` returns `3` even after its runtime is released and can accept `reply` after daemon restart. Daemon death during a live turn returns `4`. Timeout returns `1`. Print one final status summary line to stdout. |
 | `shutdown [--force]` | Refuse shutdown while active workers exist. With `--force`, interrupt live turns, mark final `QUESTION:` waits interrupted, and then shut down. |
 
 ## Harness Preamble, Mode, and QUESTION Protocol

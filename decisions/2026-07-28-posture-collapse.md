@@ -27,11 +27,18 @@ DECISION:
    fresh-context 리뷰어 스폰 가능, 2라운드 캡), `QUESTION:`/`better-direction`
    반문, `risks[]` 관찰 보고. 구 delegate의 Forbidden Routes는 "작업 전
    에스컬레이션 게이트" 목록으로 worker 계약에 흡수된다.
-5. 턴 도중 소통: (a) `wait`/`dispatch`/`reply`가 워커 plan 스텝 전환을
-   실시간 한 줄씩 출력한다 (워커→디스패처 중간 내레이션; steer가 역방향).
-   (b) tool/approval 대기가 15초(`TOOL_WAIT_GRACE_SEC`)를 넘으면 exit 3으로
-   표면화한다 — 전에는 needs_input_source="tool"이 wait 루프에서 invisible해
-   타임아웃까지 걸렸다.
+5. 턴 도중 소통: (a) 워커 plan 스텝 전환의 실시간 출력 — 단, 같은 날
+   AMENDMENT로 `--narrate` 옵트인으로 강등 (사용자 결정: 디스패처 컨텍스트에
+   노이즈고, 배경 실행+통지 패턴에선 포그라운드로 지켜보는 주체가 없다 —
+   사람이 터미널에서 지켜볼 때만 의미). (b) tool/approval 대기가
+   15초(`TOOL_WAIT_GRACE_SEC`)를 넘으면 exit 3으로 표면화한다 — 전에는
+   needs_input_source="tool"이 wait 루프에서 invisible해 타임아웃까지 걸렸다.
+7. (AMENDMENT 2026-07-28) 디스패처 기본 패턴은 백그라운드 dispatch + 태스크
+   통지다: `dispatch`/`reply`를 run_in_background로 던지고, 프로세스 종료
+   (완료·실패·exit 3)가 통지로 디스패처를 깨우면 `result`를 읽고 필요시
+   `reply`. 포그라운드 wait 서술은 사람용 터미널 사용법으로 강등.
+   `--timeout 1800`은 안전망 체크포인트로, `--progress 300`은 파일 전용
+   heartbeat로 유지 (긴 세션은 `--progress 0`).
 6. epoch를 `posture2`로 올린다. 검증·에코 메커니즘은 mode4와 동일.
 
 REVISIT WHEN: 브리프 지시만으로 read-only가 지켜지지 않는 실측 사례가

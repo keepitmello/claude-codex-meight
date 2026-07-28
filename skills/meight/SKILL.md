@@ -53,15 +53,26 @@ CLI는 `start` 전에 capability handshake를 한다. 살아있는 데몬이 cap
 
 `terra`는 capability-specific 이유와 측정 근거가 있을 때 `luna` 에스컬레이션을 받을 수 있다. 근거가 쌓이면 기본 소유로 승격 가능하지만 baseline 전에는 승격 규칙을 가정하지 않는다. UX와 사용자 눈에 보이는 동작 판단은 디스패처가 갖고, brief에 수용 UX 계약을 명시한다.
 
-## 감독 인터페이스 — 턴 도중 소통
+## 디스패치 패턴 — 백그라운드 + 통지
 
-`start`가 감독 세션을 연다. `status`, `steer`, `result`, `reply`로 다시 들여다본다.
+디스패처는 포그라운드에서 기다리지 않는다. `dispatch`(또는 `reply`)를 Bash의 `run_in_background`로 던지고 즉시 다른 일을 한다. 프로세스가 끝나면 — 완료든 실패든 exit 3(needs_input)이든 — 하네스가 태스크 통지로 디스패처를 깨운다. 통지 시점에 결과는 이미 디스크에 있다.
 
-턴 도중 채널 (v posture2):
+```text
+Bash(command: "meight dispatch fix-auth --mode worker --cwd ~/repo --brief-file /tmp/brief.md",
+     run_in_background: true)
+→ 다른 작업 계속
+→ 태스크 통지 도착 → meight result fix-auth        # decision.md 우선
+→ exit 3이면 → Bash(command: "meight reply fix-auth --brief '...'", run_in_background: true)
+```
 
-- **워커→디스패처**: `wait`/`dispatch`/`reply`가 워커의 plan 스텝 전환을 실시간으로 한 줄씩 출력한다 (`[HH:MM:SS] name ▶ <step>`). 워커 스킬은 plan 스텝을 결과 단위로 유지하라는 계약을 갖고 있어, 이 스트림이 워커의 중간 내레이션이다. 300초 heartbeat는 그대로 있다 (`--progress`, 0=off).
-- **디스패처→워커**: `meight steer <name> "correction"` — 도는 턴에 텍스트를 주입한다. plan 스트림에서 방향이 어긋나는 게 보이면 턴이 끝나길 기다리지 말고 steer한다.
-- **tool-wait 표면화**: 워커가 tool/approval 입력을 기다리며 15초 넘게 멈추면 wait가 exit 3으로 표면화한다 (전에는 타임아웃까지 invisible). `status <name>`의 `needs_input_source`가 `tool`이면 답할 방법이 없는 대기다 — interrupt 후 브리프를 고쳐 재시작한다.
+- `--timeout`(기본 1800)은 안전망 체크포인트다: 타임아웃으로 깨어나도 워커는 계속 돈다 — `status <name>` 보고 백그라운드 `wait`를 다시 건다.
+- `--progress`(기본 300) heartbeat는 백그라운드에선 태스크 출력 파일에만 쌓인다 (한 줄/5분). 아주 긴 세션이면 `--progress 0`.
+- 중간 개입 가능성이 있는 작업은 `start`로 열고 백그라운드 `wait <name> --timeout`을 별도로 건다 — 그 사이 `meight steer <name> "correction"`으로 도는 턴에 텍스트를 주입할 수 있다.
+- **tool-wait 표면화**: 워커가 tool/approval 입력을 기다리며 15초 넘게 멈추면 wait가 exit 3으로 끝나 통지가 온다 (전에는 타임아웃까지 invisible). `status <name>`의 `needs_input_source`가 `tool`이면 답할 방법이 없는 대기다 — interrupt 후 브리프를 고쳐 재시작한다.
+
+### 사람용 터미널 사용법
+
+포그라운드 `wait`/`dispatch`는 사람이 터미널에서 직접 지켜볼 때의 사용법이다. `--narrate`를 주면 워커의 plan 스텝 전환이 실시간으로 출력된다 (`[HH:MM:SS] name ▶ <step>`) — 디스패처 세션에서는 노이즈라 기본 off다.
 
 ```bash
 meight start <name> --mode worker --brief-file - --cwd <dir> <<'EOF'
@@ -93,18 +104,9 @@ meight follow <name> --effort xhigh --fast --brief "Continue with more reasoning
 
 `status`는 pull-only이고 디스크를 읽는다. `steer`, `interrupt`, `follow`와 런타임 동작은 살아있는 데몬이 필요하다. 최종 질문과 terminal 결과는 app-server를 살려두지 않는다 — `reply`/`follow`는 데몬 재시작이나 registry GC 이후에도 영속된 `thread_id`를 새 런타임에서 재개한다.
 
-장기 실행 체크포인트 셸은 기본 오케스트레이션 경로가 아니다. 멈춘 백그라운드 셸은 워커 실패가 아니라 셸 라이프사이클 이벤트로 취급한다.
+멈춘 백그라운드 셸은 워커 실패가 아니라 셸 라이프사이클 이벤트로 취급한다 — `status`가 진실이다.
 
-## 원샷 디스패치
-
-`dispatch`는 별도 감독 세션이 필요 없을 때 쓰는 블로킹 원샷이다.
-
-```bash
-meight dispatch tiny-1 --mode worker \
-  --brief "Check whether README mentions LICENSE. Read-only: do not modify files."
-```
-
-필요하면 데몬을 자동 기동하고, 워커를 시작해 기다렸다가 선호 결과(`decision.md` 있으면 그것, 없으면 `result.md`)를 출력한다. terminal 결과 후 다른 워커가 없을 때 데몬이 종료하길 원하면 `--shutdown-when-idle`.
+`dispatch`는 데몬 자동 기동 → start → wait → 선호 결과(`decision.md` 있으면 그것, 없으면 `result.md`) 출력까지 한 번에 하는 블로킹 원샷이다 — 위 패턴대로 백그라운드로 던진다. terminal 결과 후 다른 워커가 없을 때 데몬이 종료하길 원하면 `--shutdown-when-idle`.
 
 ## 리포트 모드
 
