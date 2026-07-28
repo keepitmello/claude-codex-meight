@@ -66,9 +66,9 @@ when failure cost justifies it. A worker's `done` is still only a claim. For rev
 verdict with verification evidence; unreviewed work still requires verification
 evidence. Reading the entire diff is never a sign-off gate.
 
-The included operator-policy template routes bounded work to `luna` and treats
-failure cost as a judgment rather than a catalogue: raise the brain when failure
-can damage money or data, cannot be undone, or spreads across production. When
+The included operator-policy template routes bounded work to `luna` and gates on
+failure cost: raise the brain when failure can damage money or data, cannot be
+undone, or spreads across production. When
 work is hard, the template adds a stage instead of a bigger worker — a `sol`
 mate plan handed to a `luna` worker — and reserves `sol` in worker mode for
 implementation that stays hard with a plan in hand. Those model and money-path gates

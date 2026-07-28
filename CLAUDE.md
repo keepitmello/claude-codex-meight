@@ -58,14 +58,15 @@ requirements.
 | `sol high` in either posture | costliest combination; confirm with the user before launching |
 | Capability-specific fallback | either posture with `terra` only when measured evidence supports it |
 
-Failure cost is the gate, and it is a judgment rather than a list: raise the
-brain when failure can damage money or data, cannot be undone, or spreads across
-production; otherwise stay on `luna`. Do not keep a catalogue of qualifying work
-types - a heavy-sounding task that is well defined is often fine on `luna` or
-`sol medium` - but say in one line what you saw when you do raise it. Money
-paths retain dispatcher sign-off, and the worker contract still escalates its
-own do-not-decide-alone list before acting. `luna` can escalate ambiguity;
-`luna` to `terra` remains an evidence-backed capability fallback.
+Failure cost is the gate: raise the brain when failure can damage money or data,
+cannot be undone, or spreads across production; otherwise stay on `luna`. Judge
+by what failure would actually do, since the name of the work is a weak signal -
+concurrency, migrations, and contract design all run fine on `luna` or `sol
+medium` when the boundary is clear and the result is verifiable. Say in one line
+what you saw whenever you raise it. Money paths retain dispatcher sign-off, and
+the worker contract escalates its own do-not-decide-alone list before acting.
+`luna` can escalate ambiguity; `luna` to `terra` remains an evidence-backed
+capability fallback.
 
 When work gets hard, add a stage before upgrading the worker: take a plan from a
 `sol` mate, freeze it, and let a `luna` worker implement it. Most difficulty

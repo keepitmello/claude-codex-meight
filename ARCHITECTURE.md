@@ -144,13 +144,12 @@ main orchestrator.
 | `sol high` in either posture | costliest combination; confirm with the user before launching |
 | Capability-specific fallback | either posture with `terra`; no default ownership, re-promotable on measured evidence |
 
-- **Failure cost is the gate, as a judgment and not a list**: raise the brain
-  when failure can damage money or data, cannot be undone, or spreads across
-  production; otherwise stay on `luna`. The template keeps no catalogue of
-  qualifying work types, since a heavy-sounding task that is well defined is
-  often fine on `luna` or `sol medium`. Money paths retain dispatcher sign-off,
-  and the worker contract escalates its own do-not-decide-alone list before
-  acting.
+- **Failure cost is the gate**: raise the brain when failure can damage money or
+  data, cannot be undone, or spreads across production; otherwise stay on
+  `luna`. The judgment reads what failure would do rather than what the work is
+  called, since well-bounded concurrency, migration, and contract work runs fine
+  on `luna` or `sol medium`. Money paths retain dispatcher sign-off, and the
+  worker contract escalates its own do-not-decide-alone list before acting.
 - **Difficulty is answered with a stage, not a bigger worker**: a `sol` mate
   plan feeding a `luna` worker is the cheapest strong combination. `sol` in
   worker mode is the exception, and `sol high` takes one user confirmation.
