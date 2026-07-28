@@ -53,7 +53,7 @@ worker's word alone.
 
 ## Judgment Before Process
 
-Meight provides four session modes, not a mandatory development pipeline.
+Meight provides two session postures, not a mandatory development pipeline.
 Avoiding overengineering comes first: the dispatcher chooses only the design,
 review, implementation, and verification gates justified by the task's failure
 cost, then records that choice in one line.
@@ -73,9 +73,9 @@ corrupt money/data or cause irreversible harm. Those model and money-path gates
 are explicitly adjustable operator policy, not meight interface requirements.
 
 Effort follows the same economics: `luna` runs `xhigh` because it is cheap,
-`sol` defaults to `high` (it can overthink; the dispatcher may drop light mate
-work to `medium`) and reserves `xhigh` for genuinely hard problems — the
-dispatcher judges what qualifies.
+`sol` defaults to `medium` for mate work (raise to `high` for verdict-bearing
+review) and reserves `xhigh` for genuinely hard problems — the dispatcher
+judges what qualifies.
 
 ## Why This Exists
 
