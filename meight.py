@@ -105,22 +105,35 @@ OMITTED_START_SETTING = object()
 INHERIT_TURN_SETTING = object()
 
 
-def allow_dynamic_sdk_effort(effort: str) -> None:
-    """Bridge older SDK bindings to the app-server's extensible effort string."""
-    if effort not in {"ultra", "max"}:
+_sdk_effort_field_relaxed = False
+
+
+def relax_sdk_effort_field() -> None:
+    """Accept every effort string the app-server accepts.
+
+    Codex app-server advertises ReasoningEffort as a non-empty string, but SDK
+    0.1.0b3 generated a closed enum ending at xhigh. The enum is a client-side
+    artifact, so widen the local pydantic field once per process before
+    Thread.turn constructs TurnStartParams. Widening by value (rather than for a
+    known list like ultra/max) keeps future server-side tiers working without a
+    code change here.
+    """
+    global _sdk_effort_field_relaxed
+    if _sdk_effort_field_relaxed:
         return
 
-    # Codex app-server advertises ReasoningEffort as a non-empty string. SDK
-    # 0.1.0b3 generated a closed enum ending at xhigh, so update that stale
-    # local pydantic field before Thread.turn constructs TurnStartParams.
-    from openai_codex.generated.v2_all import TurnStartParams
+    try:
+        from openai_codex.generated.v2_all import TurnStartParams
+    except ImportError:
+        # Nothing to widen without the SDK. Let the turn itself report the
+        # missing dependency instead of failing the whole follow here.
+        return
 
     field = TurnStartParams.model_fields["effort"]
-    try:
-        TurnStartParams(thread_id="probe", input=[], effort=effort)
-    except ValueError:
+    if field.annotation != (str | None):
         field.annotation = str | None
         TurnStartParams.model_rebuild(force=True)
+    _sdk_effort_field_relaxed = True
 
 
 def relax_sdk_effort_echo() -> None:
@@ -1871,7 +1884,7 @@ class Daemon:
             with w.lock:
                 w.status["thread_id"] = thread.id
             extra = {"output_schema": REPORT_SCHEMA} if report == "decision" else {}
-            allow_dynamic_sdk_effort(effort)
+            relax_sdk_effort_field()
             w.handle = thread.turn(
                 turn_input,
                 model=model, effort=effort, service_tier=service_tier,
@@ -2022,7 +2035,7 @@ class Daemon:
                         service_tier=service_tier,
                     )
             extra = {"output_schema": REPORT_SCHEMA} if w.report == "decision" else {}
-            allow_dynamic_sdk_effort(effort)
+            relax_sdk_effort_field()
             w.handle = w.thread.turn(
                 turn_input,
                 model=model, effort=effort, service_tier=service_tier,

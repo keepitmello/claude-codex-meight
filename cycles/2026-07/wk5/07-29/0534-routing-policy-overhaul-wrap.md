@@ -22,7 +22,7 @@ consult(GPT-5.6 Pro)로 공개 벤치마크를 받아 디스패처가 원본 검
 
 `MODE_START_DEFAULTS` `luna max` `sol medium` `Coding Agent Index v1.3`
 `DeepSWE 63` `SWE-Atlas-QnA 33` `HiL-Bench` `Artificial Analysis`
-`allow_dynamic_sdk_effort` `chatgpt2codex` `prompt-keyword-detector.sh`
+`relax_sdk_effort_field` `chatgpt2codex` `prompt-keyword-detector.sh`
 `3a1e5d5` `c7b83ec` `71f1e01`
 
 ## Context
@@ -248,7 +248,19 @@ consult가 `Safe-pass`, `Harmful confident action rate`, `QUESTION precision`,
 (EXPECTED, start echo ×2). follow에서 명시적으로 `xhigh`를 주는 테스트는 오버라이드
 검증이라 그대로 뒀다.
 
-### 7. `~/.claude/tech-lead.md` (레포 밖)
+### 7. effort 완화를 정식 경로로 (커밋 `2c3a...` 참조 — 아래 Files Changed)
+`max`가 기본이 되며 예외 우회가 상시 경로가 되자 정식화했다.
+- `allow_dynamic_sdk_effort(effort)` → `relax_sdk_effort_field()`:
+  `{"ultra","max"}` 하드코딩 제거, 매 턴 try/except probe 제거, 프로세스당 1회
+  모듈 전역 플래그로 위젠. 서버가 새 티어를 열어도 코드 변경 불필요.
+- `ImportError` 흡수 — 초기 구현이 이걸 안 잡아 SDK 없는 테스트 환경에서 follow가
+  전부 죽었다(`response["ok"] is False`). 기존 함수는 effort 값 가드 덕에 우연히
+  import를 피하고 있었을 뿐이다.
+- 테스트: 스텁 모듈 주입으로 **SDK 없이도** 위젠·idempotent·이미-위젠 케이스를
+  검증하고, 실제 SDK 검증은 `skipUnless(find_spec("openai_codex"))`로 분리.
+  세션 내내 빨간불이던 `ModuleNotFoundError` 실패가 정리됐다.
+
+### 8. `~/.claude/tech-lead.md` (레포 밖)
 - **Three rails**: Agent(Claude) / meight(Codex) / consult(GPT-5.6 Pro)
 - consult ↔ 워커 경계 = **레포 접근이 필요한가** (사용자 표현이 내 "패킷에
   담기나"보다 판정이 즉시 돼서 채택)
@@ -260,23 +272,22 @@ consult가 `Safe-pass`, `Harmful confident action rate`, `QUESTION precision`,
 - 죽은 플래그 `meight --mode review` → `--mode mate --report decision --effort high`
   (`~/.claude/hooks/prompt-keyword-detector.sh:37`도 같이)
 
-### 8. consult 스킬 게이트 개방 (레포 밖)
+### 9. consult 스킬 게이트 개방 (레포 밖)
 `scripts/run_agbrowse_code.py`의 "사용자가 명시할 때만" 게이트 제거, description을
 최후수단 톤에서 적극 활용 톤으로, Workflow에 백그라운드 실행 안내 추가.
 
 ## Verification
 
-- `python3 -m pytest tests/test_meight.py -q` → **68 passed, 1 failed**.
-  실패는 `EffortTests::test_dynamic_efforts_are_accepted_by_installed_sdk_params`
-  — `openai_codex` 모듈 미설치(ModuleNotFoundError)로, 이번 변경과 무관하며 세션
-  내내 동일했다.
+- `python3 -m pytest tests/test_meight.py -q` → **70 passed, 1 skipped, 0 failed**.
+  세션 내내 빨간불이던 `openai_codex` 미설치 실패는 effort 완화 정식화 작업에서
+  `skipUnless`로 정리됐다.
 - `WebFetch`로 Artificial Analysis 페이지 **2회 직접 조회** — consult가 인용한
   수치가 원본과 일치함을 확인(전체 모델 비교 1회, 설정별 row 1회).
 - `meight ping` → `pong (daemon pid 16587, capabilities=posture2)`.
-- **안 한 것**: `luna max` 라이브 스모크. `max`는 `EFFORT_CHOICES`에 있고
-  `allow_dynamic_sdk_effort`(meight.py:108)가 SDK 0.1.0b3의 닫힌 enum을 우회하는
-  브리지를 start/follow 양쪽(1874, 2025)에 이미 걸어두고 있어 위험은 낮다고
-  판단했다. 다음 세션의 첫 워커가 사실상 스모크가 된다.
+- **`luna max` 라이브 스모크 통과** (세션 말미에 실시). 데몬 non-force shutdown →
+  `dispatch`가 새 코드로 자동 기동 → `model=luna(default) effort=max(default)
+  fast=off(default)`로 13초 만에 `OUTCOME: done · SUMMARY: OK`. 새 기본값이
+  실제 wire에 실리고 app-server가 `max`를 수용함을 확인했다.
 - Fable/Opus 보조 지표(HiL-Bench, WebDev Arena, AA-Briefcase, Design Arena)는
   **consult 인용만 있고 원본 미검증** — 문서에 그렇게 표기했다.
 
@@ -285,9 +296,12 @@ consult가 `Safe-pass`, `Harmful confident action rate`, `QUESTION precision`,
 - **데몬 재시작 불필요**: 기본값 해소는 CLI의 `resolve_start_options`에서 일어나
   wire request에 실린다. 데몬은 받은 값을 쓸 뿐이고, `allow_dynamic_sdk_effort`는
   기존 코드라 구 데몬도 `max`를 처리한다.
-- **`max`가 기본이 되면서 모든 워커가 dynamic-effort 브리지 경로를 탄다.** 첫
-  호출에서 `TurnStartParams` 필드를 `str | None`으로 rebuild하는 방식이라
-  idempotent하지만, SDK를 올릴 때 이 경로를 확인할 것.
+- **effort 완화가 정식 경로가 됐다.** `max`가 기본이 되면서 예외 우회를 상시로
+  타게 되자 `allow_dynamic_sdk_effort`(값 목록 기반, 매 턴 try/except probe)를
+  `relax_sdk_effort_field`(값 무관, 프로세스당 1회)로 바꿨다. 서버가 새 티어를
+  열어도 코드 변경이 필요 없다. SDK 부재 시 `ImportError`를 흡수해 실제 turn이
+  보고하게 둔다 — 초기 구현은 이걸 안 잡아 SDK 없는 테스트 환경에서 follow 전체를
+  죽였다.
 - **`luna max`는 wall time이 제일 길다** (8.0분 / xhigh 6.6분 / sol medium 5.2분).
   백그라운드 dispatch라 대개 문제없지만 병렬 워커가 많으면 체감된다.
 - **하드게이트 목록을 걷어낸 대가**: 07-14에 sol이 남긴 잔여 반론 — "라우팅은
@@ -318,8 +332,8 @@ consult가 `Safe-pass`, `Harmful confident action rate`, `QUESTION precision`,
 
 | File | Change |
 |------|--------|
-| `meight.py` | worker 기본값 `fast` True→False, `effort` xhigh→max |
-| `tests/test_meight.py` | EXPECTED worker tier/effort, start echo 기대값, fast 오버라이드 테스트 방향 반전 |
+| `meight.py` | worker 기본값 `fast` True→False, `effort` xhigh→max; `allow_dynamic_sdk_effort` → `relax_sdk_effort_field`(값 무관 1회 위젠 + ImportError 흡수) |
+| `tests/test_meight.py` | EXPECTED worker tier/effort, start echo 기대값, fast 오버라이드 방향 반전, SDK 스텁 기반 위젠 테스트 2개 + skipUnless 실측 테스트, patch 대상 3곳 |
 | `skills/meight/SKILL.md` | 자세 기본값 표, 난이도=단계추가 문단, sol 행(깨진 파이프 복구 포함), 실측 근거 문단, 모델 보고 불릿 |
 | `CLAUDE.md` / `AGENTS.md` | 운영 정책 표 3행 개편, 실패비용 문단 긍정형 재작성, 난이도 문단 |
 | `ARCHITECTURE.md` | 기본값 표, 라우팅 표, 실패비용 불릿, mate/worker 모델 정렬 서술 |
@@ -332,17 +346,15 @@ consult가 `Safe-pass`, `Harmful confident action rate`, `QUESTION precision`,
 
 ## 미결
 
-1. **`luna max` 라이브 스모크** — 다음 세션 첫 워커가 실질 스모크. 실패하면
-   `allow_dynamic_sdk_effort` 경로부터 본다.
-2. **`QUESTION:` 품질 baseline** — 어느 모델도 공개 실측이 없다(HiL-Bench에 luna
+1. **`QUESTION:` 품질 baseline** — 어느 모델도 공개 실측이 없다(HiL-Bench에 luna
    row 없음, sol 수치도 ASK-F1이 아님). 하드게이트 목록을 걷어낸 지금 이 의존도가
    올라갔는데 품질을 모른다. consult가 준 A/B 설계가
    `docs/evidence/2026-07-29-consult-model-comparison.md` §6에 있다.
-3. **chatgpt2codex 격리 스모크** — 위 섹션.
-4. **보조 벤치마크 원본 미검증** — HiL-Bench, WebDev Arena, AA-Briefcase, Design
+2. **chatgpt2codex 격리 스모크** — 위 섹션.
+3. **보조 벤치마크 원본 미검증** — HiL-Bench, WebDev Arena, AA-Briefcase, Design
    Arena는 consult 인용만. Design Arena는 consult 자신이 "2차 static mirror"라고
    신뢰 등급을 낮춰 표기했다.
-5. **`terra` 라우팅** — 07-10 A/B(n=1) 기반 잠정 강등 그대로. 변화 없음.
+4. **`terra` 라우팅** — 07-10 A/B(n=1) 기반 잠정 강등 그대로. 변화 없음.
 
 ## Commit
 

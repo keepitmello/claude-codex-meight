@@ -1,4 +1,5 @@
 import contextlib
+import importlib.util
 import io
 import json
 import os
@@ -172,11 +173,56 @@ class EffortTests(unittest.TestCase):
                 meight.start_request(args, Path("/tmp/meight-test"))
             self.assertEqual(send.call_args.args[1]["effort"], effort)
 
-    def test_dynamic_efforts_are_accepted_by_installed_sdk_params(self):
+    def _stub_sdk_params(self):
+        """Stand in for the SDK's generated TurnStartParams with a closed enum."""
+        class Field:
+            annotation = str
+
+        class TurnStartParams:
+            model_fields = {"effort": Field()}
+            rebuilds = 0
+
+            @classmethod
+            def model_rebuild(cls, force=False):
+                cls.rebuilds += 1
+
+        module = types.ModuleType("openai_codex.generated.v2_all")
+        module.TurnStartParams = TurnStartParams
+        parents = {
+            "openai_codex": types.ModuleType("openai_codex"),
+            "openai_codex.generated": types.ModuleType("openai_codex.generated"),
+            "openai_codex.generated.v2_all": module,
+        }
+        return TurnStartParams, patch.dict(sys.modules, parents)
+
+    def test_effort_field_widens_once_for_every_server_side_tier(self):
+        params, patched = self._stub_sdk_params()
+        with patched, patch.object(meight, "_sdk_effort_field_relaxed", False):
+            meight.relax_sdk_effort_field()
+            self.assertEqual(params.model_fields["effort"].annotation, str | None)
+            self.assertEqual(params.rebuilds, 1)
+
+            # Widening is by value, not by an allowlist, so a tier the harness
+            # has never heard of needs no code change — and repeat turns must
+            # not rebuild the model again.
+            meight.relax_sdk_effort_field()
+            self.assertEqual(params.rebuilds, 1)
+
+    def test_already_widened_field_is_left_alone(self):
+        params, patched = self._stub_sdk_params()
+        params.model_fields["effort"].annotation = str | None
+        with patched, patch.object(meight, "_sdk_effort_field_relaxed", False):
+            meight.relax_sdk_effort_field()
+        self.assertEqual(params.rebuilds, 0)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("openai_codex"), "openai-codex SDK not installed"
+    )
+    def test_installed_sdk_accepts_dynamic_efforts_after_widening(self):
         from openai_codex.generated.v2_all import TurnStartParams
 
-        for effort in ("ultra", "max"):
-            meight.allow_dynamic_sdk_effort(effort)
+        meight.relax_sdk_effort_field()
+        for effort in ("ultra", "max", "unknown-future-tier"):
             params = TurnStartParams(thread_id="thread", input=[], effort=effort)
             self.assertEqual(params.model_dump(mode="json")["effort"], effort)
 
@@ -1054,7 +1100,7 @@ class ModeLifecycleTests(unittest.TestCase):
                 patch.object(meight, "system_codex_bin", return_value="/usr/bin/true"),
                 patch.object(meight, "install_computer_use_approval_bridge"),
                 patch.object(meight, "relax_sdk_effort_echo"),
-                patch.object(meight, "allow_dynamic_sdk_effort"),
+                patch.object(meight, "relax_sdk_effort_field"),
             ):
                 response = daemon.cmd_follow({
                     "name": worker.name,
@@ -1142,7 +1188,7 @@ class ModeLifecycleTests(unittest.TestCase):
                 patch.object(meight, "system_codex_bin", return_value="/usr/bin/true"),
                 patch.object(meight, "install_computer_use_approval_bridge"),
                 patch.object(meight, "relax_sdk_effort_echo"),
-                patch.object(meight, "allow_dynamic_sdk_effort"),
+                patch.object(meight, "relax_sdk_effort_field"),
             ):
                 response = daemon.cmd_follow({
                     "name": worker.name,
@@ -1869,7 +1915,7 @@ class ModeLifecycleTests(unittest.TestCase):
                 patch.object(meight, "system_codex_bin", return_value="/usr/bin/true"),
                 patch.object(meight, "install_computer_use_approval_bridge"),
                 patch.object(meight, "relax_sdk_effort_echo"),
-                patch.object(meight, "allow_dynamic_sdk_effort"),
+                patch.object(meight, "relax_sdk_effort_field"),
             ):
                 response = meight.start_request(args, home)
 
