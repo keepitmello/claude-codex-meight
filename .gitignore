@@ -2,9 +2,9 @@
 __pycache__/
 .meight/
 .codex/checkpoints/
-*-evidence.md
-result.md
-*-read.md
+/*-evidence.md
+/result.md
+/*-read.md
 
 # consult evidence (local only)
 .consult/
