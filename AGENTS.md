@@ -54,25 +54,28 @@ requirements.
 | Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` (defaults: `luna xhigh`; Fast is opt-in via `--fast`) |
 | Blind/anchored design and diagnosis | `--mode mate` (defaults: `sol medium`; `high` only for genuinely hard problems, and `sol` stops at `high`) |
 | Plan and adversarial review | `--mode mate --report decision --effort high` |
-| Difficult implementation - dispatcher's call | `--mode worker --model sol --effort medium` |
-| Hard-gated or genuinely hard implementation | `--mode worker --model sol --effort high` (costliest; confirm with the user before launching) |
+| Hard work of any kind | `--mode mate` for the plan first, then `--mode worker` (`luna`) on the frozen plan |
+| Implementation still hard with a plan in hand | `--mode worker --model sol --effort medium` |
+| `sol high` in either posture | costliest combination; confirm with the user before launching |
 | Capability-specific fallback | either posture with `terra` only when measured evidence supports it |
 
-Failure cost is the gate. Hard-route to `sol` when acceptance-critical work
-materially depends on concurrency, security, public schema/API contract design,
-persistent-data migration, or a cross-cutting refactor, or when failure can
-cause money/data damage, irreversible harm, or high-impact production damage.
-General endpoint implementation and read-only production log investigation
-remain `luna`; API contract design/evolution and production mutation or
-remediation do not. Money paths retain dispatcher sign-off. `luna` can escalate
-ambiguity; `luna` to `terra` remains an evidence-backed capability fallback.
+Failure cost is the gate, and it is a judgment rather than a list: raise the
+brain when failure can damage money or data, cannot be undone, or spreads across
+production; otherwise stay on `luna`. Do not keep a catalogue of qualifying work
+types - a heavy-sounding task that is well defined is often fine on `luna` or
+`sol medium` - but say in one line what you saw when you do raise it. Money
+paths retain dispatcher sign-off, and the worker contract still escalates its
+own do-not-decide-alone list before acting. `luna` can escalate ambiguity;
+`luna` to `terra` remains an evidence-backed capability fallback.
 
-Difficulty routes alongside failure cost, and the dispatcher judges it: ordinary
-work stays `luna xhigh`, work whose design judgment or state/edge reasoning is
-genuinely hard moves to `sol medium` without asking, and only the hardest cases
-reach `sol high` - the costliest combination, which takes one user confirmation
-before launch. Whenever a session starts, tell the user in one line which model
-and effort it is running on.
+When work gets hard, add a stage before upgrading the worker: take a plan from a
+`sol` mate, freeze it, and let a `luna` worker implement it. Most difficulty
+lives in the judgment rather than the typing, and this is the cheapest strong
+combination. Move the worker itself to `sol medium` only when design cannot come
+first or the implementation stays hard with a plan in hand; `sol high` is the
+costliest combination and takes one user confirmation before launch - needing it
+for implementation usually means the design stage was skipped. Whenever a
+session starts, tell the user in one line which model and effort it runs on.
 
 ## Durable Judgment
 

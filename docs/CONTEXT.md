@@ -5,7 +5,8 @@
 > 문서를 갱신할 것. (역사적 경위는 decisions/를, 운영 프로토콜은 skills/를
 > 신뢰 — 충돌 시 그쪽이 이긴다.)
 >
-> LAST UPDATED: 2026-07-29 (worker 기본 Fast off — `--fast` 옵트인)
+> LAST UPDATED: 2026-07-29 (worker 기본 Fast off, 모델 라우팅 하드게이트 목록
+> 폐지, 난이도는 mate 단계 추가로 대응)
 > 이전: 2026-07-28 (posture2 — 2자세 통합, 샌드박스 강제 제거)
 
 ## 현재 상태 스냅샷
@@ -19,12 +20,19 @@
   read-only는 브리프 지시.
 - **파이프라인**: blind design(방향 fork, mate) → plan-review 루프(mate
   `--report decision`, 최대 3라운드, PLAN.md 동결) → worker 구현(luna
-  xhigh 기본, Fast는 옵트인, failure-cost 하드게이트만 sol) → 적대 리뷰(mate, 2라운드
+  xhigh 기본, Fast는 옵트인, sol worker는 예외 경로) → 적대 리뷰(mate, 2라운드
   캡) → dispatcher 사인오프. 게이트는 작업 크기에 비례해 생략 가능하되 절대
   조용히는 불가.
-- **난이도 사다리(worker)**: 보통 `luna xhigh` → 어려우면 `sol medium`(디스패처
-  재량) → 진짜 어려우면 `sol high`(가장 비싼 조합, 띄우기 전 사용자 확인 1회).
-  세션을 띄우면 어떤 모델·effort로 띄웠는지 사용자에게 한 줄 보고.
+- **난이도 대응 = 모델 승급이 아니라 단계 추가**: 어려우면 `sol` mate 플랜 →
+  동결 → `luna` 워커 구현이 기본이자 가장 싼 조합. worker `sol`은 설계를 앞에
+  못 붙이거나 플랜을 쥐고도 구현이 어려울 때의 예외 경로이고 `medium`이 먼저다.
+  `sol high`는 가장 비싼 조합이라 띄우기 전 사용자 확인 1회 — 구현에 필요해
+  보이면 대개 앞단 설계가 빠졌다는 신호. 세션을 띄우면 어떤 모델·effort로
+  띄웠는지 사용자에게 한 줄 보고.
+- **모델 라우팅 하드게이트 목록 폐지**: 실패 비용 원칙 하나로 디스패처가 판단
+  (2026-07-29). 열거는 판단을 대체하지 못하고 무겁게 들리는 작업도 `luna`/`sol
+  medium`이 해내는 경우가 많다. 돈 경로 sign-off와 worker 스킬의
+  "혼자 결정 금지" 에스컬레이션 목록은 성격이 달라 그대로 유지.
 - **effort 정책**: luna=xhigh(Fast는 `--fast` 옵트인), sol=medium 기본이고 상한은
   high — 진짜 어려운 것만 high로 올린다(dispatcher 판단 + 사용자 확인; verdict
   리뷰는 high 권장). sol에 xhigh는 쓰지 않는다.
@@ -64,11 +72,11 @@
    결함(동시성·보안·비가역)은 사후 리뷰로 못 잡으니 사전 라우팅으로 막는다.
 3. 방향 fork는 blind로 (앵커링 방지), 방향 확정 후에만 anchored 루프.
 4. verdict는 자신이 리뷰한 대상을 명시한다 — stale verdict는 폐기.
-5. 게이트는 비례하되 생략은 절대 조용히 하지 않는다. 하드게이트·머니패스는
-   생략 불가.
+5. 게이트는 비례하되 생략은 절대 조용히 하지 않는다. 머니패스와 worker
+   에스컬레이션 목록은 생략 불가.
 6. 자동 학습보다 scorecard 먼저 — 지표 없이 규칙을 조이거나 풀지 않는다.
 7. mate/worker는 세션 계약(자세)명이지 모델 정체성이 아니다. 실무 정렬:
-   mate≈sol, worker≈luna, sol은 하드게이트 구현 시 worker로. 완전 위임은
+   mate≈sol, worker≈luna, sol이 worker로 내려오는 건 예외 경로. 완전 위임은
    별도 모드가 아니라 worker 계약의 자기 리뷰 + 브리프 스코프로 표현한다.
 
 ## 미결 사항 (다음 의사결정 대기)
@@ -78,8 +86,9 @@
   (luna→terra 승격 사례, capability별 성패)가 lessons.md에 쌓인 뒤 재결정할
   것 — 지금의 표는 확정이 아니다. 승격 규칙(luna→sol, luna→terra) 정교화도
   같은 이유로 defer.
-- **luna 게이트 튜닝**: 하드게이트 조항의 적정선은 미검증 가정. luna 결함률·
-  승격률·false-approve·게이트 생략 후 결함 지표가 기준선.
+- **luna 게이트 튜닝**: 목록을 걷어낸 뒤 실패 비용 판단만으로 충분한지는
+  미검증 가정 (2026-07-29). luna 결함률·승격률·false-approve·게이트 생략 후
+  결함 지표가 기준선.
 - **NEEDS_REWORK 3단 verdict**: plan-review 조기 탈출 신호 후보 — 도입 시
   plan 재승인 필요 (백로그).
 - **verdict 인코딩의 스키마 1급 필드화**: 현재는 문서 규약(APPROVE⇒done/GO,

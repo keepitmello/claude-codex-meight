@@ -1,6 +1,6 @@
 ---
 name: meight-worker
-description: Team-implementer operating contract selected by meight worker mode. Use when the harness assigns implementation, fixes, tests, verification, runtime or browser QA, computer use, exploration, or end-to-end delegated execution work, including hard-gated implementation run by sol in worker mode.
+description: Team-implementer operating contract selected by meight worker mode. Use when the harness assigns implementation, fixes, tests, verification, runtime or browser QA, computer use, exploration, or end-to-end delegated execution work, including implementation run by sol in worker mode.
 ---
 
 # Meight Worker

@@ -18,7 +18,7 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
    also inherit model/effort/service tier unless the caller overrides them at
    the new-turn boundary. Model stays independent: in practice mate work runs
    on `sol` and worker work on `luna`, and `sol` drops to the worker contract
-   for hard-gated implementation.
+   only for the exceptional implementation a frozen plan cannot make routine.
 5. **Two-way by protocol, not plumbing.** A preamble frames either contract as a
    teammate: sessions may commit/push completed verified work while the
    orchestrator owns integration and final sign-off; and rather than guessing or
@@ -139,18 +139,21 @@ main orchestrator.
 | Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` |
 | Blind/anchored design and diagnosis | `--mode mate` (`high` only for genuinely hard problems; `sol` stops at `high`) |
 | Plan and adversarial review | `--mode mate --report decision --effort high` |
-| Difficult implementation - dispatcher's call | `--mode worker --model sol --effort medium` |
-| Hard-gated or genuinely hard implementation | `--mode worker --model sol --effort high` (costliest; confirm with the user before launching) |
+| Hard work of any kind | `--mode mate` for the plan first, then `--mode worker` (`luna`) on the frozen plan |
+| Implementation still hard with a plan in hand | `--mode worker --model sol --effort medium` |
+| `sol high` in either posture | costliest combination; confirm with the user before launching |
 | Capability-specific fallback | either posture with `terra`; no default ownership, re-promotable on measured evidence |
 
-- **Failure cost is the hard gate**: route to `sol` when acceptance-critical
-  behavior materially depends on concurrency, security, public schema/API
-  contract design, persistent-data migration, or cross-cutting refactoring, or
-  when failure can cause money/data damage, irreversible harm, or high-impact
-  production damage. General endpoint implementation and read-only production
-  log investigation remain `luna`; API contract design/evolution and
-  production mutation/remediation do not. Money paths retain dispatcher
-  sign-off.
+- **Failure cost is the gate, as a judgment and not a list**: raise the brain
+  when failure can damage money or data, cannot be undone, or spreads across
+  production; otherwise stay on `luna`. The template keeps no catalogue of
+  qualifying work types, since a heavy-sounding task that is well defined is
+  often fine on `luna` or `sol medium`. Money paths retain dispatcher sign-off,
+  and the worker contract escalates its own do-not-decide-alone list before
+  acting.
+- **Difficulty is answered with a stage, not a bigger worker**: a `sol` mate
+  plan feeding a `luna` worker is the cheapest strong combination. `sol` in
+  worker mode is the exception, and `sol high` takes one user confirmation.
 - **Avoiding overengineering comes first**: design and review modes are tools,
   not a default chain. The dispatcher selects gates by failure cost and records
   the choice in one line.
