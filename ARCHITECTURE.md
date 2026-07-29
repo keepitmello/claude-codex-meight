@@ -14,7 +14,7 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
    diagnosis, verdict-first review — the brief picks the protocol). Worker
    selects team implementation with self-review and a dispatcher-owned
    external-review choice. The preamble injects the mode-selected skill plus
-   `meight-common/CONTRACT.md`. `follow`/`reply` inherit mode and report; they
+   `meight-common/CONTRACT.md`. `follow`/`reply` inherit mode; they
    also inherit model/effort/service tier unless the caller overrides them at
    the new-turn boundary. Model stays independent: in practice mate work runs
    on `sol` and worker work on `luna`, and `sol` drops to the worker contract
@@ -29,11 +29,9 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
    same primitives run the other way: the orchestrator can dispatch a read-only
    blind design to think a problem through with a mate, not just hand off
    work.
-6. **Decision reports contain technical context.** `--report decision` uses the
-   SDK `output_schema` to produce `decision.json` and rendered `decision.md`.
-   `result.md` remains the raw audit record, but `result`/`dispatch`/`reply`
-   prefer the decision surface so the orchestrator can communicate with the user
-   without absorbing every implementation detail.
+6. **Results stay human-readable.** Every turn writes its final text to
+   `result.md`. A final `QUESTION:` paragraph is the only special routing
+   format; there is no second structured-result channel.
 7. **Plans can be versioned review contracts.** When the dispatcher chooses to
    freeze an approved `PLAN.md`, later implementation and review evaluate that
    exact contract. A material scope, method, cost-envelope, or acceptance-path
@@ -51,7 +49,7 @@ meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  g
                                                                 │ released after terminal turn
 ~/.meight/repos/<repo-key>/workers/<name>/              ▼
    brief.md · status.json · events.log · result.md
-   decision.json · decision.md                    ◀── per-worker consumer thread
+                                                 ◀── per-worker consumer thread
 ```
 
 - **Daemon home** = `$MEIGHT_HOME` if set, otherwise `$XDG_STATE_HOME/meight` or `~/.meight` → one daemon shared across repos.
@@ -69,7 +67,7 @@ meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  g
   a role field or long-form mode values remain renderable.
 - The SDK spawns `codex app-server --listen stdio://` and speaks JSON-RPC. Meight owns one SDK runtime per active worker so terminal workers can close their app-server, MCP subprocesses, and stdio file descriptors without waiting for daemon shutdown.
 - The daemon holds `Thread` objects in a registry keyed by `(repo_key, worker_name)` only while a turn is starting or running. It keeps a `TurnHandle` only while a stream is live. Every completed stream, including a final `QUESTION:`, closes the worker-owned SDK runtime. `reply`/`follow` resumes the persisted `thread_id` into a fresh runtime before starting the next turn.
-- Workers start with `ephemeral=False` and `thread_source=ThreadSource.subagent` by default. Subagent source keeps them out of Codex Desktop's main user-thread list, while the persistent rollout makes later `follow`/`reply` possible. `--main-thread` changes the source to `ThreadSource.user` for tools that need a visible/main thread. Legacy ephemeral rows recover into a new persistent subagent thread from bounded saved artifacts because their original rollout cannot be resumed.
+- Workers always start with `ephemeral=False` and `thread_source=ThreadSource.subagent`. Subagent source keeps them out of Codex Desktop's main user-thread list, while the persistent rollout makes later `follow`/`reply` possible. Legacy ephemeral rows recover into a new persistent subagent thread from bounded saved artifacts because their original rollout cannot be resumed.
 - Lifecycle is explicit: `MEIGHT_IDLE_TIMEOUT_SEC` controls daemon idle shutdown (foreground default 1800s, `0` disables; `daemon --idle-timeout-sec` overrides). Managed `dispatch`/LaunchAgent starts pass idle disable through both env and daemon args; LaunchAgent jobs also infer managed mode from `XPC_SERVICE_NAME` if an older loaded job lacks the env. `MEIGHT_WORKER_GC_TTL_SEC` controls how long terminal worker status remains in daemon memory (default 3600s). Disk artifacts use a separate `MEIGHT_SESSION_RETENTION_SEC` window (default 30 days, `0` disables); pruning runs off the accept loop no more than hourly.
 - The daemon home and every state directory leaf are real owner-only directories (`0700`); worker state symlinks are rejected and the socket is `0600`. The daemon recomputes repo root/key/home and validates raw request fields, validates worker names at CLI and socket boundaries, and bounds one JSON request to 1 MiB. Privacy comes from parent/socket permissions, not a process-wide umask that would leak into Codex worker subprocesses.
 
@@ -79,7 +77,7 @@ meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  g
 
 - Transition priority: **preserve failed/interrupted > QUESTION promotion > completed**. A non-retryable `error` event marks the worker failed and a later `turn/completed(status=completed)` must not overwrite it.
 - Unknown/missing terminal turn status maps to `failed`, never `completed` (the wait contract depends on it).
-- `needs_input` carries a **source**: `"question"` (final-paragraph structured `QUESTION:` or `outcome=needs_decision` detected after a completed turn — a real, final state) vs `"tool"` (mid-turn tool/approval wait — transient). `classify_wait_state()` returns exit 3 **only for source=question**; a tool-wait that survives to stream-end is converted to `failed`. This distinction exists because an early review showed tool-waits masquerading as final states.
+- `needs_input` carries a **source**: `"question"` (final-paragraph `QUESTION:` detected after a completed turn — a real, final state) vs `"tool"` (mid-turn tool/approval wait — transient). `classify_wait_state()` returns exit 3 **only for source=question**; a tool-wait that survives to stream-end is converted to `failed`. This distinction exists because an early review showed tool-waits masquerading as final states.
 - Structured questions also carry `needs_input_target` (`dispatcher|user`) and
   `needs_input_kind` (`scope|ux|priority|risk|irreversible|acceptance|missing-info|better-direction|technical`) so a middle-layer agent can decide whether to answer or escalate.
 - Non-question terminal transitions clear `needs_input_detail`/`source` (stale-question bug, found in review).
@@ -138,7 +136,7 @@ main orchestrator.
 |---|---|
 | Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` |
 | Blind/anchored design and diagnosis | `--mode mate` (`high` only for genuinely hard problems; `sol` stops at `high`) |
-| Plan and adversarial review | `--mode mate --report decision --effort high` |
+| Plan and adversarial review | `--mode mate --effort high` |
 | Hard work of any kind | `--mode mate` for the plan first, then `--mode worker` (`luna`) on the frozen plan |
 | Implementation still hard with a plan in hand | `--mode worker --model sol --effort medium` (worker `sol` stays at `medium`) |
 | `sol high` | mate posture only, for genuinely hard design or verdict work; confirm with the user before launching |
@@ -161,25 +159,22 @@ main orchestrator.
   independent direction would add evidence; anchored design pressure-tests a
   direction already chosen.
 - **Plan review is available anchored refinement**: `REVISE` keeps the thread
-  alive for `reply` (text mode: a dispatcher-targeted structured `QUESTION:`;
-  decision mode: the encoding defined in `skills/meight/SKILL.md`), while
-  `APPROVE` is terminal. If approval freezes a versioned `PLAN.md`, a material
-  scope change reopens that decision.
+  alive for `reply` with a dispatcher-targeted `QUESTION:`, while `APPROVE` is
+  terminal. If approval freezes a versioned `PLAN.md`, a material scope change
+  reopens that decision.
 - **Review is verdict evidence, not a pipeline stage**: the worker contract
   owns self-review (spawning an internal fresh-context reviewer when
-  warranted), and the dispatcher spawns a separate `--mode mate --report
-  decision` session when failure cost justifies it. For reviewed work,
-  sign-off combines the verdict with verification evidence. Reading the entire
-  diff is never a sign-off gate.
+  warranted). For reviewed work, sign-off combines the text verdict with
+  verification evidence. Reading the entire diff is never a sign-off gate.
 - Sessions may commit/push completed verified work; the orchestrator still owns integration and final sign-off.
 - Briefs must point at *existing patterns* relevant to the task — detail-oriented reviewers flag absent context as defects otherwise.
 - The CLI resolves omitted start/dispatch settings from the selected mode
   before building the wire request. Explicit flags always win:
 
-  | Mode | Model | Effort | Fast | Report | Sandbox |
-  |---|---|---|---|---|---|
-  | `mate` | `sol` | `medium` | off | `text` | `full` |
-  | `worker` | `luna` | `max` | off | `decision` | `full` |
+  | Mode | Model | Effort | Fast | Sandbox |
+  |---|---|---|---|---|
+  | `mate` | `sol` | `medium` | off | `full` |
+  | `worker` | `luna` | `max` | off | `full` |
 
   Standard is silent and deviation is explicit. The table is deliberately
   code-only operator policy in `meight.py`; there is no config-file or

@@ -28,8 +28,8 @@ class ModelAliasTests(unittest.TestCase):
 
 class StartDefaultsTests(unittest.TestCase):
     EXPECTED = {
-        "mate": ("gpt-5.6-sol", "medium", "default", "text", "full"),
-        "worker": ("gpt-5.6-luna", "max", "default", "decision", "full"),
+        "mate": ("gpt-5.6-sol", "medium", "default", "full"),
+        "worker": ("gpt-5.6-luna", "max", "default", "full"),
     }
 
     def _args(self, command: str, mode: str, *options: str):
@@ -54,11 +54,11 @@ class StartDefaultsTests(unittest.TestCase):
         for mode, expected in self.EXPECTED.items():
             with self.subTest(mode=mode):
                 request = self._start_request(self._args("start", mode))
-                model, effort, tier, report, sandbox = expected
+                model, effort, tier, sandbox = expected
                 self.assertEqual(
                     (request["model"], request["effort"], request["service_tier"],
-                     request["report"], request["sandbox"]),
-                    (model, effort, tier, report, sandbox),
+                     request["sandbox"]),
+                    (model, effort, tier, sandbox),
                 )
                 self.assertEqual(request["mode"], mode)
 
@@ -66,24 +66,24 @@ class StartDefaultsTests(unittest.TestCase):
         for alias, canonical in (("design", "mate"), ("review", "mate"), ("delegate", "worker")):
             with self.subTest(alias=alias):
                 request = self._start_request(self._args("start", alias))
-                model, effort, tier, report, sandbox = self.EXPECTED[canonical]
+                model, effort, tier, sandbox = self.EXPECTED[canonical]
                 self.assertEqual(
                     (request["model"], request["effort"], request["service_tier"],
-                     request["report"], request["sandbox"]),
-                    (model, effort, tier, report, sandbox),
+                     request["sandbox"]),
+                    (model, effort, tier, sandbox),
                 )
                 self.assertEqual(request["mode"], canonical)
 
     def test_explicit_flags_override_every_mode_default(self):
         args = self._args(
             "start", "mate", "--model", "terra", "--effort", "max",
-            "--fast", "--report", "decision", "--sandbox", "ro",
+            "--fast", "--sandbox", "ro",
         )
         request = self._start_request(args)
         self.assertEqual(
             (request["model"], request["effort"], request["service_tier"],
-             request["report"], request["sandbox"]),
-            ("gpt-5.6-terra", "max", "priority", "decision", "ro"),
+             request["sandbox"]),
+            ("gpt-5.6-terra", "max", "priority", "ro"),
         )
 
     def test_fast_overrides_worker_fast_default(self):
@@ -110,8 +110,7 @@ class StartDefaultsTests(unittest.TestCase):
         start.assert_called_once_with(dispatch_args, Path("/tmp/meight-defaults"))
         self.assertIn(
             "mode=worker model=sol(set) "
-            "effort=max(default) fast=on(set) report=decision(default) "
-            "sandbox=full(default)",
+            "effort=max(default) fast=on(set) sandbox=full(default)",
             output.getvalue(),
         )
 
@@ -267,30 +266,25 @@ class TerminalErrorTests(unittest.TestCase):
             self.assertEqual(result.count(provider_message), 1)
 
 
-class DecisionRoutingTests(unittest.TestCase):
-    def test_needs_decision_routes_user_entry_before_dispatcher_fallback(self):
+class QuestionRoutingTests(unittest.TestCase):
+    def test_question_metadata_routes_user_entry_before_dispatcher_fallback(self):
         cases = (
             (
                 "dispatcher-first-user-later",
-                [
-                    {"target": "dispatcher", "kind": "technical"},
-                    {"target": "user", "kind": "scope"},
-                ],
+                "TARGET: dispatcher\nKIND: technical\n"
+                "TARGET: user\nKIND: scope",
                 "user",
                 "scope",
             ),
             (
                 "all-dispatcher",
-                [
-                    {"target": "dispatcher", "kind": "technical"},
-                    {"target": "dispatcher", "kind": "risk"},
-                ],
+                "TARGET: dispatcher\nKIND: technical",
                 "dispatcher",
                 "technical",
             ),
             (
                 "single-user",
-                [{"target": "user", "kind": "acceptance"}],
+                "TARGET: user\nKIND: acceptance",
                 "user",
                 "acceptance",
             ),
@@ -298,19 +292,16 @@ class DecisionRoutingTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             repo_home = Path(tmp)
-            for name, decisions, expected_target, expected_kind in cases:
+            for name, question, expected_target, expected_kind in cases:
                 with self.subTest(name=name):
                     worker = meight.Worker(
                         name, repo_home, "/repo", "repo-key", "/repo",
                         "workspace_write", "gpt-5.6-sol", "medium",
-                        mode="delegate", report="decision",
+                        mode="worker",
                     )
                     worker.dir.mkdir(parents=True)
                     worker.init_status(thread_id="thread-1")
-                    worker._last_agent_msg = json.dumps({
-                        "outcome": "needs_decision",
-                        "decisions": decisions,
-                    })
+                    worker._last_agent_msg = "The current implementation needs a decision.\n\nQUESTION:\n" + question
 
                     worker._on_turn_completed({"status": "completed"})
 
@@ -1057,7 +1048,6 @@ class ModeLifecycleTests(unittest.TestCase):
                 "high",
                 thread_ephemeral=False,
                 mode="review",
-                report="decision",
             )
             worker.dir.mkdir(parents=True)
             worker.init_status("thread-resume")
@@ -1277,10 +1267,11 @@ class ModeLifecycleTests(unittest.TestCase):
             ("delegate", "meight-worker"),
         ):
             with self.subTest(mode=mode):
-                preamble = meight.build_preamble(mode, "decision")
+                preamble = meight.build_preamble(mode)
                 self.assertIn(f"skills/{directory}/SKILL.md", preamble)
                 self.assertIn("skills/meight-common/CONTRACT.md", preamble)
-                self.assertIn(f"mode: {meight.normalize_mode(mode)}", preamble)
+                self.assertIn(f"mode={meight.normalize_mode(mode)}", preamble)
+                self.assertNotIn("Harness protocol", preamble)
                 self.assertNotIn("role:", preamble)
 
     def test_mode_aliases_normalize_onto_the_two_postures(self):
@@ -1371,7 +1362,7 @@ class ModeLifecycleTests(unittest.TestCase):
                 "inherit-mode", repo_home, context["repo_root"], context["repo_key"], "/repo",
                 "workspace_write", "gpt-5.6-sol", "high",
                 service_tier="priority",
-                mode="review", report="decision",
+                mode="review",
             )
             worker.dir.mkdir(parents=True)
             worker.init_status(thread_id="thread-mode-test")
@@ -1399,7 +1390,6 @@ class ModeLifecycleTests(unittest.TestCase):
                 "model": "gpt-5.6-sol",
                 "effort": "high",
                 "service_tier": "priority",
-                "output_schema": meight.REPORT_SCHEMA,
             })
             self.assertIn("skills/meight-mate/SKILL.md", thread.inputs[0])
             self.assertIn("skills/meight-common/CONTRACT.md", thread.inputs[0])
@@ -1663,10 +1653,10 @@ class ModeLifecycleTests(unittest.TestCase):
         cases = (
             ("worker",
              "model=luna(default) effort=max(default) fast=off(default) "
-             "report=decision(default) sandbox=full(default)"),
+             "sandbox=full(default)"),
             ("mate",
              "model=sol(default) effort=medium(default) fast=off(default) "
-             "report=text(default) sandbox=full(default)"),
+             "sandbox=full(default)"),
         )
         for mode, settings in cases:
             with self.subTest(mode=mode):
@@ -1689,7 +1679,7 @@ class ModeLifecycleTests(unittest.TestCase):
         args = meight.build_parser().parse_args([
             "start", "mode-test", "--mode", "worker", "--brief", "Implement.",
             "--model", "sol", "--effort", "high", "--fast",
-            "--report", "text", "--sandbox", "ro",
+            "--sandbox", "ro",
         ])
         response = {
             "ok": True, "thread_id": "thread-worker", "mode": "worker",
@@ -1703,7 +1693,7 @@ class ModeLifecycleTests(unittest.TestCase):
             self.assertEqual(meight.cmd_start(args, Path("/tmp/meight-output")), 0)
         self.assertIn(
             "model=sol(set) effort=high(set) fast=on(set) "
-            "report=text(set) sandbox=ro(set)",
+            "sandbox=ro(set)",
             output.getvalue(),
         )
 
@@ -1926,9 +1916,11 @@ class ModeLifecycleTests(unittest.TestCase):
             status_path = repo_home / "workers" / "mode-test" / "status.json"
             status = json.loads(status_path.read_text(encoding="utf-8"))
             self.assertNotIn("role", status)
+            self.assertNotIn("report", status)
             self.assertEqual(status["mode"], "mate")
             self.assertEqual(status["thread_source"], "subagent")
             self.assertFalse(status["thread_ephemeral"])
+            self.assertNotIn("output_schema", capture_thread.turn_kwargs[0])
             self.assertIn("skills/meight-mate/SKILL.md", capture_thread.inputs[0])
 
 

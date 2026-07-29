@@ -41,12 +41,12 @@ mate와 worker는 세션 계약의 이름이지 모델의 이름이 아니다. �
         |                       ^
         |-- start + brief ------|
         |
-        |<- QUESTION / decision report / result
+        |<- QUESTION / result
         |-- reply / steer / design / review
         |
         v
    global daemon -- official openai-codex SDK -- per-worker codex app-server
-        status.json · events.log · result.md · decision.json · decision.md
+        status.json · events.log · result.md
 ```
 
 ## 프로세스보다 판단 먼저
@@ -92,7 +92,7 @@ tmux/exec 래퍼들과 비교하면:
 | 진행 관찰 | stdout 긁기 | 불가 | 디스크 다이제스트, 필요할 때 pull |
 | 양방향 대화 | 불가 | 불가 | 구조화된 `QUESTION:` → exit 3 → `reply` |
 | 결과 전달 | 긁기 | 툴 리턴 | exit 코드 계약 + 결과 파일 |
-| 기계가 읽는 리포트 | 불가 | 래퍼마다 다름 | `output_schema` 기반 `--report decision` |
+| 결과 형식 | 불가 | 래퍼마다 다름 | 일반 텍스트 `result.md` |
 | 세션 계약 | 없음 | 없음 | `--mode mate\|worker`, 하네스가 주입 |
 
 그리고 모든 판단이 디스크에 남기 때문에 — 다이제스트, 결정 기록, 선호, 교훈 —
@@ -135,11 +135,10 @@ meight steer impl-1 "Stop refactoring the helper; only fix the bug."
 meight wait impl-1 --timeout 300
 ```
 
-terminal exit이면 선호 리포트를 읽는다. `--raw`는 감사용 원문이 필요할 때만:
+terminal exit이면 텍스트 결과를 읽는다:
 
 ```bash
 meight result impl-1
-meight result impl-1 --raw
 ```
 
 워커가 답할 수 있는 질문을 남겼다면(exit `3`)? 같은 target/kind가
@@ -194,8 +193,7 @@ KIND: scope | ux | priority | risk | irreversible | acceptance | missing-info | 
 
 `TARGET`은 누가 결정해야 하는지, `KIND`는 왜인지 말한다. 중간 레이어
 에이전트는 디스패처 소유 질문에 `meight reply`로 답하고, 사용자 소유
-질문(스코프, UX, 리스크 감내, 비가역 액션)은 그대로 올린다. decision 리포트
-모드에서는 같은 라우팅이 스키마의 `outcome=needs_decision`으로 돈다. 라우팅은
+질문(스코프, UX, 리스크 감내, 비가역 액션)은 그대로 올린다. 라우팅은
 효과 기준이다: 답이 새 워커, 새 phase, 플랜/부록, 선승인된 재리뷰를 넘는 리뷰
 정체성, 비싼 재실행, 실질적으로 다른 방법, campaign 캡 이후 추가 수리를
 승인하는 것이라면 `technical`이라고 라벨돼 있어도 사용자 소유다. 워커 이름을
@@ -228,7 +226,7 @@ KIND: scope | ux | priority | risk | irreversible | acceptance | missing-info | 
 완료, 질문, 실패, 데몬 사망, 체크포인트 타임아웃에 깨어난다.
 
 ```text
-Bash(command: "meight start review-1 --mode mate --report decision --brief-file - <<'EOF' ... EOF")
+Bash(command: "meight start review-1 --mode mate --brief-file - <<'EOF' ... EOF")
 Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 -> 체크포인트 exit 1
 -> meight status review-1
@@ -262,19 +260,19 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
   하네스가 주입한다 — `--mode`는 티칭 에러가 달린 필수 플래그고 데몬 경계에서
   재검증되므로, 낡은 CLI든 raw 소켓 클라이언트든 같은 계약을 받는다.
 - **결과는 디스크에 남는다.** `result.md`는 감사용 원문 기록으로 남고,
-  decision 리포트는 `decision.json`과 `decision.md`를 더한다.
+  `result.md`에 워커의 텍스트 결과를 남긴다.
 - **브리프는 stdin으로.** 여러 줄 브리프가 셸 인용 함정을 피한다.
 
 ## 커맨드 레퍼런스
 
 | 커맨드 | 하는 일 |
 |---|---|
-| `meight start <name> --mode mate\|worker [opts]` | 세션을 시작하고 thread id와 해소된 mode/model/effort/Fast/report/sandbox 값 + default/set 출처를 찍고 즉시 리턴. 감독 워크플로우 진입점. |
+| `meight start <name> --mode mate\|worker [opts]` | 세션을 시작하고 thread id와 해소된 mode/model/effort/Fast/sandbox 값 + default/set 출처를 찍고 즉시 리턴. 감독 워크플로우 진입점. |
 | `meight wait <name> --timeout SEC` | 체크포인트 대기: terminal 상태, 답할 수 있는 QUESTION, 데몬 사망, 타임아웃에 리턴. 타임아웃은 워커를 계속 돌게 둔다. |
 | `meight dispatch <name> --mode mate\|worker [opts]` | 원샷: 데몬 자동 기동 → capability 체크 → start → wait → 선호 결과 출력. |
-| `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | 답할 수 있는 질문에 원샷으로 답한다. mode/report와 생략한 턴 설정은 상속, 명시한 오버라이드는 적용, 최신 결과 출력. |
-| `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | 저수준: 같은 라이브 스레드에 새 턴. mode/report와 생략 설정은 상속, 명시 오버라이드는 이후 턴의 기본값이 된다. |
-| `meight result <name> [--raw]` | `decision.md` 있으면 그걸, `--raw`는 raw `result.md`. |
+| `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | 답할 수 있는 질문에 원샷으로 답한다. mode와 생략한 턴 설정은 상속, 명시한 오버라이드는 적용, 최신 결과 출력. |
+| `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | 저수준: 같은 라이브 스레드에 새 턴. mode와 생략 설정은 상속, 명시 오버라이드는 이후 턴의 기본값이 된다. |
+| `meight result <name>` | `result.md`를 출력한다. |
 | `meight status [name] [--json] [--all-repos]` | pull 다이제스트. 테이블에 `MODE` 포함, 구 role이나 장문 모드 값을 가진 레거시 행도 읽힌다. 디스크만 읽는다. |
 | `meight steer <name> "text"` | 도는 턴에 지시를 주입한다. |
 | `meight interrupt <name>` | 턴을 취소한다. 워커가 아직 시작 중이거나 reply 턴이 열리는 중에 도착한 인터럽트는 기록됐다가 턴이 커밋되는 순간 중단시킨다. |
@@ -286,8 +284,6 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
   `collab`, `collaborative`, `review`(→ mate)와 `delegate`, `delegated`
   (→ worker)는 별칭으로 받는다. mate는 생각 상대 계약, worker는 자기 리뷰를
   포함한 팀 구현 계약이고 외부 리뷰 선택은 디스패처 몫이다.
-- `--report text|decision`은 아래 모드 기본값을 쓴다. `decision`은
-  `decision.json`/`decision.md`를 쓴다. 명시한 플래그가 항상 이긴다.
 - `--cwd`는 워커 작업 디렉토리. 파일 스코프가 겹치는 병렬 워커는 별도 git
   worktree를 쓴다.
 - `--sandbox ws|ro|full`은 아래 모드 기본값을 쓴다.
@@ -298,15 +294,15 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
   `follow`/`reply`에서 `--model`, `--effort`, Fast 플래그를 생략하면 워커의
   현재 값을 상속하고, 명시하면 그 턴에 적용된 뒤 이후 턴이 상속하는 값이
   된다.
-- `--main-thread`는 눈에 보이는 user 스레드가 필요한 도구용이다. 기본 워커는
-  숨겨져 있지만 재개 가능한 persistent subagent 스레드를 쓴다.
+- 워커는 항상 메인 Codex Desktop 쓰레드 목록에 나타나지 않는 persistent
+  subagent 스레드를 사용하지만, 나중에 재개할 수 있다.
 
 생략된 `start`/`dispatch` 설정은 요청을 보내기 전에 CLI에서 해소된다:
 
-| Mode | Model | Effort | Fast | Report | Sandbox |
-|---|---|---|---|---|---|
-| `mate` | `sol` | `medium` | off | `text` | `full` |
-| `worker` | `luna` | `max` | off | `decision` | `full` |
+| Mode | Model | Effort | Fast | Sandbox |
+|---|---|---|---|---|
+| `mate` | `sol` | `medium` | off | `full` |
+| `worker` | `luna` | `max` | off | `full` |
 
 어느 자세도 샌드박스를 강제하지 않는다: read-only는 브리프가 정하는
 정책이고(mate 계약은 브리프가 시키지 않는 한 레포 파일을 고치지 않는 게
@@ -318,8 +314,7 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 출처와 함께 보여준다.
 
 워커 상태는 `<daemon-home>/repos/<repo-key>/workers/<name>/`에 산다:
-`brief.md`, `status.json`, `events.log`, `result.md`, decision 모드면
-`decision.json`과 `decision.md`. terminal 워커는 디스크 아티팩트를 남기고 SDK
+`brief.md`, `status.json`, `events.log`, `result.md`. terminal 워커는 디스크 아티팩트를 남기고 SDK
 런타임은 즉시 놓는다. 최종 구조화 `QUESTION:`도 런타임을 놓고 dormant 디스크
 행으로 남는다. `reply`/`follow`는 새 app-server를 열어 저장된 `thread_id`를
 재개하고, 데몬 재시작이나 인메모리 워커 GC 이후에도 같은 스레드를 잇는다.
@@ -368,7 +363,7 @@ subagent 스레드에서 이어진다.
   터미널에서 `codex`가 되면 `meight`도 된다.
 - meight는 SDK에 번들된 런타임 대신 현재 시스템의 `codex` 실행 파일을 쓴다.
   명시적 오버라이드가 필요할 때만 `MEIGHT_CODEX_BIN`을 설정한다.
-- 세션은 기본적으로 숨은 persistent Codex subagent 스레드로 시작한다:
+- 세션은 항상 숨은 persistent Codex subagent 스레드로 시작한다:
   `thread_source=subagent`, `thread_ephemeral=false`.
 - 포그라운드 `meight daemon`은 활성 워커가 없으면 기본
   `MEIGHT_IDLE_TIMEOUT_SEC`초 후 종료한다. 관리형 `dispatch` 자동 기동과

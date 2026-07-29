@@ -43,12 +43,12 @@ worker's word alone.
         |                       ^
         |-- start + brief ------|
         |
-        |<- QUESTION / decision report / result
+        |<- QUESTION / result
         |-- reply / steer / design / review
         |
         v
    global daemon -- official openai-codex SDK -- per-worker codex app-server
-        status.json · events.log · result.md · decision.json · decision.md
+        status.json · events.log · result.md
 ```
 
 ## Judgment Before Process
@@ -98,7 +98,7 @@ Compared with tmux/exec wrappers:
 | Progress observation | scrape stdout | no | disk digest, pull on demand |
 | Two-way conversation | no | no | structured `QUESTION:` -> exit 3 -> `reply` |
 | Result delivery | scrape | tool return | exit-code contract + result files |
-| Machine-readable reports | no | wrapper-specific | `--report decision` via `output_schema` |
+| Result format | no | wrapper-specific | plain text `result.md` |
 | Session contracts | no | no | `--mode mate\|worker`, harness-injected |
 
 And because every judgment lands on disk — digests, decisions, preferences,
@@ -142,12 +142,10 @@ meight steer impl-1 "Stop refactoring the helper; only fix the bug."
 meight wait impl-1 --timeout 300
 ```
 
-On terminal exits, read the preferred report. Use `--raw` only when you need the
-audit message:
+On terminal exits, read the text result:
 
 ```bash
 meight result impl-1
-meight result impl-1 --raw
 ```
 
 The worker asked a replyable question (exit `3`)? The same target/kind is also
@@ -203,8 +201,7 @@ KIND: scope | ux | priority | risk | irreversible | acceptance | missing-info | 
 
 `TARGET` says who must decide; `KIND` says why. A middle-layer agent answers
 dispatcher-owned questions with `meight reply` and escalates user-owned ones
-(scope, UX, risk appetite, irreversible actions) verbatim. In decision-report
-mode the same routing runs through `outcome=needs_decision` in the schema.
+(scope, UX, risk appetite, irreversible actions) verbatim.
 Routing is impact-based: an answer that starts a new worker, phase,
 plan/addendum, review identity beyond a preauthorized re-review, expensive
 rerun, materially different method, or additional repair after the campaign
@@ -240,7 +237,7 @@ For real work, run `wait --timeout` as the background shell call. The agent
 wakes at completion, question, failure, daemon death, or checkpoint timeout.
 
 ```text
-Bash(command: "meight start review-1 --mode mate --report decision --brief-file - <<'EOF' ... EOF")
+Bash(command: "meight start review-1 --mode mate --brief-file - <<'EOF' ... EOF")
 Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 -> checkpoint exit 1
 -> meight status review-1
@@ -269,26 +266,25 @@ protocol, two dispatcher runtimes.
   letter or digit; the CLI and daemon both reject path syntax.
 - **Sparse checkpoints, not busy polling.** `wait --timeout` is a wake-up dial;
   it does not kill the worker.
-- **Status is pre-digested.** `status` returns mode, report type, current
-  item, changed files, needs-input target/kind, and last-message tail.
-- **Policy cannot be forgotten.** Mode, mode-skill loading, the shared
-  contract, and report shape are injected by the harness — `--mode` is a
+- **Status is pre-digested.** `status` returns mode, current item, changed
+  files, needs-input target/kind, and last-message tail.
+- **Policy cannot be forgotten.** Mode, mode-skill loading, and the shared
+  contract are injected by the harness — `--mode` is a
   required flag with a teaching error, validated at the daemon
   boundary too, so a stale CLI or a raw socket client gets the same contract.
-- **Results survive on disk.** `result.md` remains the raw audit record;
-  decision reports add `decision.json` and `decision.md`.
+- **Results survive on disk.** `result.md` contains the worker's text result.
 - **Briefs go through stdin.** Multi-line briefs avoid shell quoting traps.
 
 ## Command Reference
 
 | Command | What it does |
 |---|---|
-| `meight start <name> --mode mate\|worker [opts]` | Start a session and return immediately with the thread id plus resolved mode/model/effort/Fast/report/sandbox values and their default/set provenance. Supervised workflow entry point. |
+| `meight start <name> --mode mate\|worker [opts]` | Start a session and return immediately with the thread id plus resolved mode/model/effort/Fast/sandbox values and their default/set provenance. Supervised workflow entry point. |
 | `meight wait <name> --timeout SEC` | Checkpoint wait: return on terminal state, replyable QUESTION, daemon death, or timeout. Timeout leaves the worker running. |
 | `meight dispatch <name> --mode mate\|worker [opts]` | One-shot: auto-start daemon -> capability check -> start -> wait -> print preferred result. |
-| `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | One-shot answer to a replyable question; inherits mode/report and omitted turn settings, applies explicit turn overrides, and prints the latest result. |
-| `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | Low-level: new turn on the same live thread; inherits mode/report and omitted turn settings, while explicit overrides become the defaults for later turns. |
-| `meight result <name> [--raw]` | Print `decision.md` when present; `--raw` prints raw `result.md`. |
+| `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | One-shot answer to a replyable question; inherits mode and omitted turn settings, applies explicit turn overrides, and prints the latest result. |
+| `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | Low-level: new turn on the same live thread; inherits mode and omitted turn settings, while explicit overrides become the defaults for later turns. |
+| `meight result <name>` | Print `result.md`. |
 | `meight status [name] [--json] [--all-repos]` | Pull digest. Table includes `MODE`; legacy rows with old role or long-form mode values remain readable. Reads disk. |
 | `meight steer <name> "text"` | Inject instruction into the running turn. |
 | `meight interrupt <name>` | Cancel the turn. An interrupt that arrives while a worker is still starting — or while a reply turn is being opened — is recorded, and aborts the turn the moment it would commit. |
@@ -301,8 +297,6 @@ Common options:
   `delegated` (→ worker) are accepted aliases. Mate is the thinking-partner
   contract; worker is team implementation with self-review and a
   dispatcher-owned external-review choice.
-- `--report text|decision` uses the mode default below; `decision` writes
-  `decision.json`/`decision.md`. Explicit flags always override.
 - `--cwd` sets the worker workdir. Use separate git worktrees for overlapping
   file scopes.
 - `--sandbox ws|ro|full` uses the mode default below.
@@ -313,16 +307,16 @@ Common options:
   On `follow`/`reply`, omitting `--model`, `--effort`, and Fast flags inherits
   the worker's current values; an explicit override applies to that new turn
   and becomes the value inherited by later turns.
-- `--main-thread` uses a visible user thread for tools that need one. Default
-  workers use persistent subagent threads, which remain hidden but resumable.
+- Workers use persistent subagent threads, which remain hidden from the main
+  Codex Desktop thread list but remain resumable.
 
 Omitted `start`/`dispatch` settings resolve in the CLI before the request is
 sent:
 
-| Mode | Model | Effort | Fast | Report | Sandbox |
-|---|---|---|---|---|---|
-| `mate` | `sol` | `medium` | off | `text` | `full` |
-| `worker` | `luna` | `max` | off | `decision` | `full` |
+| Mode | Model | Effort | Fast | Sandbox |
+|---|---|---|---|---|
+| `mate` | `sol` | `medium` | off | `full` |
+| `worker` | `luna` | `max` | off | `full` |
 
 Neither posture enforces a sandbox: read-only is brief-driven policy (the mate
 contract defaults to not modifying repository files), and `--sandbox` remains
@@ -335,8 +329,7 @@ environment override layer. Start output echoes every resolved value with
 
 Worker state lives in
 `<daemon-home>/repos/<repo-key>/workers/<name>/`: `brief.md`, `status.json`,
-`events.log`, `result.md`, and, in decision mode, `decision.json` and
-`decision.md`. Terminal workers keep disk artifacts but release their SDK
+`events.log`, and `result.md`. Terminal workers keep disk artifacts but release their SDK
 runtime immediately. A final structured `QUESTION:` also releases its runtime
 and remains as a dormant disk row. `reply`/`follow` opens a fresh app-server,
 resumes the stored `thread_id`, and continues the same thread even after daemon

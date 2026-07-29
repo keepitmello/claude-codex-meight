@@ -39,7 +39,6 @@ h = th.turn(
     model=None,
     effort="low|medium|high|xhigh|ultra|max",
     approval_mode=None,
-    output_schema=None,
     service_tier=None,
 )                                      # -> TurnHandle
 h.steer("text")
@@ -96,8 +95,6 @@ LaunchAgent umask: worker subprocess repository file modes must not change.
       status.json    # digest; schema below
       events.log     # append-only meaningful event lines
       result.md      # final agent message at turn completion
-      decision.json   # structured decision report when --report decision is used
-      decision.md     # rendered decision surface when --report decision is used
 ```
 
 The repository `.gitignore` should ignore `.venv/`. Historical repo-local
@@ -120,7 +117,6 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   "cwd": "...",
   "sandbox": "workspace-write",
   "mode": "mate|worker",
-  "report": "decision",
   "model": null,
   "effort": "medium",
   "thread_source": "subagent",
@@ -158,7 +154,6 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   `worker`. `follow`/`reply` inherit mode.
   Legacy rows with a `role` field or old long-form mode values must render
   without crashing.
-- `report` is `text` or `decision`.
 - `needs_input_target` is `dispatcher|user|null`; missing `TARGET` in a parsed
   question defaults to `dispatcher`.
 - `needs_input_kind` is
@@ -177,22 +172,22 @@ The command table must match the `python3 meight.py --help` subcommand list exac
 | `daemon [--idle-timeout-sec SEC]` | Run the foreground global daemon. The orchestrator starts it in the background. If a live daemon already exists, return exit `1`. `0` disables idle shutdown. |
 | `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid, runtime `idle_timeout_sec`, `session_retention_sec`, and advertised `capabilities=["posture2"]`. |
 | `launchd install [--load]` / `launchd status` / `launchd uninstall` | Manage the optional macOS LaunchAgent. The plist uses `RunAtLoad=true` and crash-only `KeepAlive={SuccessfulExit=false}`. `install --load` non-force drains a live daemon, waits boundedly for its acknowledged PID/socket exit, runs `launchctl bootout --wait` with a subprocess timeout for a loaded job, writes/bootstraps the plist, and requires a fresh ping/PID. Active sessions or timeouts refuse transfer. |
-| `start <name> --mode mate\|worker (--brief-file F\|- \| --brief TEXT) [--report text\|decision] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--main-thread]` | Start a new hidden, persistent Codex session with `thread_start(ephemeral=False, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--mode` is required; legacy names `design`, `collab`, `collaborative`, `review`, `delegate`, and `delegated` are accepted aliases. Before sending `start`, the CLI requires capability `posture2`. The request carries `protocol_epoch=posture2`; success atomically echoes normalized mode plus epoch, both validated by the CLI. The visible start line includes resolved mode, model, effort, Fast, report, and sandbox values with provenance. Omitted settings use the mode defaults. Other defaults are `cwd=current directory`, `thread_source=subagent`, and `thread_ephemeral=false`. `--report decision` supplies `output_schema`. `--main-thread` changes the source to a visible persistent user thread. Reject duplicate active names inside the same repo namespace. |
-| `dispatch <name> --mode mate\|worker (--brief-file F\|- \| --brief TEXT) [start opts] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, capability-check, `start`, `wait`, then print `decision.md` or `result.md`. Mode is required. Default timeout is `1800` seconds. Exit code matches `wait`. |
-| `follow <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble]` | Start a new turn on the same persisted thread for a terminal session or one waiting on a final `QUESTION:`. It inherits recorded mode, report, and omitted turn settings. Every completed stream releases its SDK runtime; follow restores metadata and calls `thread_resume` with the stored `thread_id`. A legacy `thread_ephemeral=true` row has no resumable rollout, so follow starts a persistent hidden subagent thread and injects a bounded handoff from saved brief, result, and recent events. |
-| `reply <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot answer path: `follow`, `wait`, then print the latest preferred result. It has the same mode/report inheritance and per-turn setting override semantics as `follow`. Default timeout is `1800` seconds. |
+| `start <name> --mode mate\|worker (--brief-file F\|- \| --brief TEXT) [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble]` | Start a new hidden, persistent Codex session with `thread_start(ephemeral=False, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--mode` is required; legacy names `design`, `collab`, `collaborative`, `review`, `delegate`, and `delegated` are accepted aliases. Before sending `start`, the CLI requires capability `posture2`. The request carries `protocol_epoch=posture2`; success atomically echoes normalized mode plus epoch, both validated by the CLI. The visible start line includes resolved mode, model, effort, Fast, and sandbox values with provenance. Omitted settings use the mode defaults. Other defaults are `cwd=current directory`, `thread_source=subagent`, and `thread_ephemeral=false`. All workers use the hidden subagent source. Reject duplicate active names inside the same repo namespace. |
+| `dispatch <name> --mode mate\|worker (--brief-file F\|- \| --brief TEXT) [start opts] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, capability-check, `start`, `wait`, then print `result.md`. Mode is required. Default timeout is `1800` seconds. Exit code matches `wait`. |
+| `follow <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble]` | Start a new turn on the same persisted thread for a terminal session or one waiting on a final `QUESTION:`. It inherits recorded mode and omitted turn settings. Every completed stream releases its SDK runtime; follow restores metadata and calls `thread_resume` with the stored `thread_id`. A legacy `thread_ephemeral=true` row has no resumable rollout, so follow starts a persistent hidden subagent thread and injects a bounded handoff from saved brief, result, and recent events. |
+| `reply <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot answer path: `follow`, `wait`, then print `result.md`. It inherits mode and per-turn setting overrides from `follow`. Default timeout is `1800` seconds. |
 | `steer <name> TEXT` | Inject mid-turn text into a running turn. Return an error unless the worker is currently running. |
 | `interrupt <name>` | Interrupt the active turn. For `ACTIVE` workers without a live `TurnHandle` yet, including the initial starting/SDK phase and follow/reply SDK phase, set `interrupt_requested`, return ok with a recorded-interrupt note, and let the atomic post-SDK commit abort the turn. |
 | `status [name] [--json] [--all-repos]` | Does not require the daemon. Read repo-scoped `status.json` directly. With no name, print a table including `MODE`; `--all-repos` reads every repo namespace. Legacy rows with a role field or long-form mode values remain readable. |
 | `list [--json] [--all-repos]` | Alias for `status` with no worker name. |
-| `result <name> [--raw]` | Print `decision.md` when present. `--raw` prints `result.md`. |
+| `result <name>` | Print `result.md`. |
 | `wait <name> [--timeout SEC] [--progress SEC] [--narrate]` | Poll `status.json` once per second. `--narrate` additionally prints each newly active worker plan step (opt-in; for a human watching a terminal). Terminal states return `completed=0`, `failed=2`, `interrupted=2`. A durable final `QUESTION:` returns `3` even after its runtime is released and can accept `reply` after daemon restart. Daemon death during a live turn returns `4`. Timeout returns `1`. Print one final status summary line to stdout. |
 | `shutdown [--force]` | Refuse shutdown while active workers exist. With `--force`, interrupt live turns, mark final `QUESTION:` waits interrupted, and then shut down. |
 
 ## Harness Preamble, Mode, and QUESTION Protocol
 
-By default, `start`, `dispatch`, `follow`, and `reply` prepend the harness
-protocol preamble to the brief. `--no-preamble` disables this.
+By default, `start`, `dispatch`, `follow`, and `reply` prepend runtime contract
+context to the brief. `--no-preamble` disables this.
 
 `start` and `dispatch` build a mode-specific preamble at dispatch time. Mode
 selects the session contract and skill (protocol epoch `posture2`):
@@ -208,14 +203,13 @@ selects the session contract and skill (protocol epoch `posture2`):
   frozen review chain) before acting.
 
 Both preambles also inject `skills/meight-common/CONTRACT.md`, the sole shared
-source for decision fields, question routing, evidence artifacts, sandbox, and
-commit discipline.
+source for question routing, evidence artifacts, sandbox, and commit discipline.
 
-The preamble includes normalized mode and report type. All skill paths
-resolve relative to `meight.py`, not the invoking cwd.
+The preamble includes normalized mode. All skill paths resolve relative to
+`meight.py`, not the invoking cwd.
 
 `follow` and `reply` do not accept a mode flag. They inherit the existing
-session's mode and report and use a one-line reminder. Their model, effort, and
+session's mode and use a one-line reminder. Their model, effort, and
 service tier are inherited only when the corresponding CLI option is omitted.
 The CLI omits those request keys rather than sending defaults. The daemon
 validates any raw override before resetting the worker, passes the selected
@@ -258,52 +252,6 @@ unknown `KIND` leaves `needs_input_kind=null` while preserving the raw
 `wait` returns exit `3` for this durable state without requiring a live worker
 runtime. `follow` and `reply` continue on the same Codex thread after runtime
 release, registry GC, daemon restart, or interruption.
-
-## Decision Report Schema
-
-`--report decision` asks the SDK to constrain the final worker message through
-`output_schema`. The daemon writes raw `result.md`, parsed `decision.json`, and
-rendered `decision.md`. `meight result`, `dispatch`, and `reply` prefer
-`decision.md`; `meight result --raw` prints `result.md`.
-
-Required fields:
-
-```json
-{
-  "outcome": "done|blocked|needs_decision|failed",
-  "verdict": "GO|NO-GO|PARTIAL|N/A",
-  "summary": "...",
-  "verification": [
-    {"check": "...", "status": "PASS|FAIL|NOT_RUN", "evidence": "..."}
-  ],
-  "remaining_p1": [],
-  "decisions": [
-    {
-      "target": "dispatcher|user",
-      "kind": "scope|ux|priority|risk|irreversible|acceptance|missing-info|better-direction|technical",
-      "question": "...",
-      "recommendation": "..."
-    }
-  ],
-  "changed_files": [],
-  "commits": [],
-  "evidence_artifacts": [],
-  "risks": []
-}
-```
-
-The schema is strict (`additionalProperties: false` on every object): every
-field above is required on every object, nested objects included. Workers use
-empty arrays or `"N/A"` where a field does not apply; omitting a field fails
-SDK schema validation and the turn.
-
-If `outcome=needs_decision`, `decisions[]` must contain at least one entry.
-The daemon routes the worker to `needs_input` / exit `3` using the first
-user-targeted decision anywhere in the array, falling back to `decisions[0]`;
-it uses that entry's `target` and `kind`. Decision-report workers cannot emit a
-text `QUESTION:` paragraph; `outcome=needs_decision` + `decisions[]` is their
-escalation channel, and the harness preamble teaches whichever channel matches
-the worker's report mode.
 
 ## Daemon Internals
 
@@ -402,9 +350,7 @@ the worker's report mode.
 - Agent-message deltas are accumulated in memory and finalized on
   `item/completed`.
 - `result.md` is written once per turn with the last agent message, or with a
-  structured terminal error when no agent message exists.
-  In decision report mode, `decision.json` and `decision.md` are written for
-  the same turn after schema validation/rendering.
+  terminal error when no agent message exists.
 
 ## Beta SDK Defenses
 

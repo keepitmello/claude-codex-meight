@@ -16,22 +16,22 @@ description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-mei
 `start`와 `dispatch`는 `--mode mate|worker`를 요구한다. 기본값은 없고, 플래그를 빼면 안내 메시지와 함께 에러다. 구 이름들(`design`/`collab`/`collaborative`/`review` → mate, `delegate`/`delegated` → worker)은 별칭으로 살아 있다.
 
 - `--mode mate` — 생각·판단 상대. 블라인드/앵커드 설계, 진단, 방향, 그리고 verdict-first 플랜/디프/적대 리뷰까지. 어느 프로토콜을 적용할지는 브리프가 정한다 — 리뷰 브리프면 mate 스킬의 리뷰 섹션이 걸린다.
-- `--mode worker` — 실행 팀원. how·구현·검증·자기 리뷰를 소유하고, 브리프 밖 관찰과 이견을 `QUESTION:`/`risks[]`로 올린다. 별도 외부 리뷰 세션을 띄울지는 디스패처가 판단한다.
+- `--mode worker` — 실행 팀원. how·구현·검증·자기 리뷰를 소유하고, 브리프 밖 관찰과 이견을 텍스트와 `QUESTION:`으로 올린다. 별도 외부 리뷰 세션을 띄울지는 디스패처가 판단한다.
 
 샌드박스는 어느 자세도 강제하지 않는다 — read-only가 필요하면 브리프에 지시한다 (mate 스킬은 "브리프가 시키지 않으면 레포 파일을 고치지 않는다"를 기본으로 갖고 있다). `--sandbox`는 수동 선택용으로 남아 있다.
 
-`follow`와 `reply`는 모드 플래그를 받지 않는다. 세션에 기록된 mode/report를 물려받고, 전체 preamble 대신 한 줄짜리 하네스 리마인더만 받는다. `--model`, `--effort`, `--fast`/`--no-fast`를 생략하면 model·effort·Fast tier도 상속하고, 명시하면 그 턴에 적용되며 이후 턴이 상속하는 값이 된다.
+`follow`와 `reply`는 모드 플래그를 받지 않는다. 세션에 기록된 mode를 물려받고, 전체 preamble 대신 한 줄짜리 리마인더만 받는다. `--model`, `--effort`, `--fast`/`--no-fast`를 생략하면 model·effort·Fast tier도 상속하고, 명시하면 그 턴에 적용되며 이후 턴이 상속하는 값이 된다.
 
 생략된 start/dispatch 설정은 wire request를 만들기 전에 CLI에서 자세로부터 해소된다:
 
-| Mode | Model | Effort | Fast | Report | Sandbox |
-|---|---|---|---|---|---|
-| `mate` | `sol` | `medium` | off | `text` | `full` |
-| `worker` | `luna` | `max` | off | `decision` | `full` |
+| Mode | Model | Effort | Fast | Sandbox |
+|---|---|---|---|---|
+| `mate` | `sol` | `medium` | off | `full` |
+| `worker` | `luna` | `max` | off | `full` |
 
 표준은 조용하다 — 편차만 플래그로 주고, 명시한 플래그는 항상 기본값을 이긴다. 이 표는 의도적으로 `meight.py` 안의 코드 전용 운영 정책이다. config 파일이나 환경변수 오버라이드 레이어는 없다. start echo가 해소된 값 전부를 `(default)` / `(set)` 출처와 함께 보여준다.
 
-mate 기본 effort는 `medium`이다 — 정말 어려운 문제만 `--effort high`로 올린다 (`sol`의 상한은 `high`다). verdict 인코딩(APPROVE/REVISE → needs_input 라우팅)이 필요한 플랜 리뷰 루프는 `--report decision`을 명시한다; 설계 대화는 기본 `text`가 자연스럽다.
+mate 기본 effort는 `medium`이다 — 정말 어려운 문제만 `--effort high`로 올린다 (`sol`의 상한은 `high`다). 리뷰도 일반 텍스트로 판단을 반환하며, 외부 라우팅이 필요하면 마지막에 `QUESTION:`을 남긴다.
 
 CLI는 `start` 전에 capability handshake를 한다. 살아있는 데몬이 capability `posture2`를 광고하지 않으면 start는 fail closed. 모든 start/follow는 epoch `posture2`를 싣고, 성공 시 정규화 모드와 epoch를 원자적으로 echo해야 한다 — 아니면 CLI가 best-effort interrupt 후 nonzero 종료.
 
@@ -77,7 +77,7 @@ worker 자세를 `sol`로 올리는 건 그 다음이다 — 설계를 앞에 �
 Bash(command: "meight dispatch fix-auth --mode worker --cwd ~/repo --brief-file /tmp/brief.md",
      run_in_background: true)
 → 다른 작업 계속
-→ 태스크 통지 도착 → meight result fix-auth        # decision.md 우선
+→ 태스크 통지 도착 → meight result fix-auth
 → exit 3이면 → Bash(command: "meight reply fix-auth --brief '...'", run_in_background: true)
 ```
 
@@ -98,23 +98,22 @@ meight start <name> --mode worker --brief-file - --cwd <dir> <<'EOF'
 ## Approval   <approved phase/method/cost envelope; campaign + round number>
 ## Scope      <file/dir boundary; do not exceed>
 ## Existing patterns  <file:line pointers; required for good review>
-## Constraints <domain rules only; mode/QUESTION/report policy is injected>
+## Constraints <domain rules only; mode/QUESTION policy is injected>
 ## Stop / Escalate <failed gate, cap, or phase-change conditions>
 ## Verification <commands to run + expected outcome>
-## Report     <decision surface; details in a worker-unique evidence artifact>
+## Verification <commands to run + expected outcome>
 EOF
 ```
 
-mode/report/QUESTION 정책은 preamble이 주입하므로 brief에 붙이지 않는다. brief에는 도메인 규칙과 작업별 제약만 넣는다.
+mode/QUESTION 정책은 preamble이 주입하므로 brief에 붙이지 않는다. brief에는 도메인 규칙과 작업별 제약만 넣는다.
 
 ```bash
 meight status                # 이 레포의 한 줄 테이블, MODE 포함
 meight list --all-repos      # 레포 네임스페이스 전역 테이블
-meight status <name>         # 상세 — mode/report/needs_input target+kind 포함
+meight status <name>         # 상세 — mode/needs_input target+kind 포함
 meight steer <name> "correction"
 meight interrupt <name>
-meight result <name>         # decision.md가 있으면 그걸 우선
-meight result <name> --raw   # raw result.md 감사 기록
+meight result <name>         # result.md 출력
 meight reply <name> --brief "Use config-a.json and keep the legacy field."
 meight follow <name> --effort xhigh --fast --brief "Continue with more reasoning."
 ```
@@ -123,20 +122,12 @@ meight follow <name> --effort xhigh --fast --brief "Continue with more reasoning
 
 멈춘 백그라운드 셸은 워커 실패가 아니라 셸 라이프사이클 이벤트로 취급한다 — `status`가 진실이다.
 
-`dispatch`는 데몬 자동 기동 → start → wait → 선호 결과(`decision.md` 있으면 그것, 없으면 `result.md`) 출력까지 한 번에 하는 블로킹 원샷이다 — 위 패턴대로 백그라운드로 던진다. terminal 결과 후 다른 워커가 없을 때 데몬이 종료하길 원하면 `--shutdown-when-idle`.
+`dispatch`는 데몬 자동 기동 → start → wait → `result.md` 출력까지 한 번에 하는 블로킹 원샷이다 — 위 패턴대로 백그라운드로 던진다. terminal 결과 후 다른 워커가 없을 때 데몬이 종료하길 원하면 `--shutdown-when-idle`.
 
-## 리포트 모드
+## 결과
 
-자세별 기본값: mate는 `text`, worker는 `decision`. `--report`가 항상 이긴다. text 리포트는 최종 메시지를 `result.md`에 쓴다.
-
-`--report decision`일 때:
-- SDK 턴이 `output_schema`를 쓴다.
-- 데몬이 턴마다 `decision.json`과 렌더된 `decision.md`를 쓴다.
-- `meight result`, `dispatch`, `reply`는 `decision.md`를 우선한다. `meight result --raw`는 raw `result.md`.
-- `result.md`는 감사 기록으로 남는다.
-- `outcome=needs_decision`은 `needs_input` / exit `3`으로 라우팅되며 첫 user-targeted 항목을 우선한다.
-
-정확한 스키마와 필드 의미는 [공통 계약](../meight-common/CONTRACT.md)에만 있다.
+모든 세션은 일반 텍스트 결과를 `result.md`에 남긴다. 외부 결정이나 진짜 블로커가
+있을 때만 마지막 문단에 공통 계약의 `QUESTION:` 형식을 사용한다.
 
 ## Codex 워커 능력
 

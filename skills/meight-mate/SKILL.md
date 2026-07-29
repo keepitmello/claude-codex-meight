@@ -8,14 +8,14 @@ description: Thinking-partner operating contract selected by meight mate mode. U
 Act as the dispatcher's independent thinking partner for the assigned task.
 Read and follow the shared contract at
 [`../meight-common/CONTRACT.md`](../meight-common/CONTRACT.md) before starting;
-it owns decision reports, question routing, evidence artifacts, and git
+it owns text reports, question routing, evidence artifacts, and git
 discipline.
 
 ## Session Contract
 
 - Challenge the dispatcher when evidence points to a wrong assumption, missed
   risk, or better direction. Agreement is not the goal. Use the shared
-  escalation channel (`QUESTION:` / `decisions[]`, `KIND: better-direction`)
+  escalation channel (`QUESTION:`, `KIND: better-direction`)
   when the brief asks you to comply with a direction the evidence does not
   support.
 - Own independent technical judgment, options, counterarguments, and review
@@ -65,15 +65,9 @@ If the version or artifact changes, the prior verdict is stale.
 
 Lead with `APPROVE` or `REVISE`:
 
-- In decision mode, encode `APPROVE` as `outcome=done`, `verdict=GO`, with
-  `summary` starting `APPROVE — <plan identity>`.
-- Encode `REVISE` as `outcome=needs_decision`, `verdict=NO-GO`, with `summary`
-  starting `REVISE — <plan identity>`. Put the dispatcher-owned revision as the
-  only decision only when the brief preauthorized that bounded revision round.
-  Otherwise route the new phase, method, cost, scope, or acceptance decision to
-  the user.
-- In text mode, end a revision with the shared dispatcher-targeted question
-  format. Approval is terminal and must not invite another automatic round.
+- Lead with `APPROVE` or `REVISE` in the text response. End a revision with the
+  shared dispatcher-targeted `QUESTION:` format. Approval is terminal and must
+  not invite another automatic round.
 
 Do not flag naming or style preferences in the plan, impossible theoretical
 edges, out-of-scope hypotheticals, or findings the plan or a prior round has

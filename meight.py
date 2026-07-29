@@ -87,11 +87,11 @@ EFFORT_CHOICES = ["low", "medium", "high", "xhigh", "ultra", "max"]
 MODE_START_DEFAULTS = {
     "mate": {
         "model": "sol", "effort": "medium", "fast": False,
-        "report": "text", "sandbox": "full",
+        "sandbox": "full",
     },
     "worker": {
         "model": "luna", "effort": "max", "fast": False,
-        "report": "decision", "sandbox": "full",
+        "sandbox": "full",
     },
 }
 
@@ -172,36 +172,34 @@ PROTOCOL_EPOCH_ERROR = (
     "restart or upgrade the CLI and daemon together"
 )
 
-# Initial turns receive runtime mode/report values plus mode/common SSOT paths.
+# Initial turns receive runtime mode plus mode/common SSOT paths.
 # All operating rules live in those files so the harness cannot drift into another contract.
-_PREAMBLE_TEMPLATE = """[Harness protocol — mode: {mode}; report: {report} — applies on top of the task below]
-Read and follow the {skill_name} skill at `{skill_path}`. It is the mode contract SSOT.
-Also read and follow the shared meight contract at `{common_path}`.
+_PREAMBLE_TEMPLATE = """Runtime contract: mode={mode}.
+Follow the {skill_name} contract at `{skill_path}` and the shared meight contract at `{common_path}`.
 """
 
 
-def build_preamble(mode: str, report: str = "text") -> str:
+def build_preamble(mode: str) -> str:
     normalized_mode = normalize_mode(mode)
     if normalized_mode is None:
         raise ValueError(f"invalid mode: {mode!r}")
     skill_path = MODE_SKILL_PATHS[normalized_mode]
     return _PREAMBLE_TEMPLATE.format(
         mode=normalized_mode,
-        report=report,
         skill_name=skill_path.parent.name,
         skill_path=skill_path,
         common_path=COMMON_CONTRACT_PATH,
     )
 
 
-def build_follow_reminder(mode: str, report: str = "text") -> str:
+def build_follow_reminder(mode: str) -> str:
     """Follow/reply turns get a one-line reminder instead of re-injecting the full preamble."""
     normalized_mode = normalize_mode(mode)
     if normalized_mode is None:
         raise ValueError(f"invalid mode: {mode!r}")
-    return (f"[Harness reminder — mode: {normalized_mode}; report: {report} — continue following "
-            f"the mode skill at `{MODE_SKILL_PATHS[normalized_mode]}` and shared contract at "
-            f"`{COMMON_CONTRACT_PATH}`.]\n")
+    return (f"Continue with runtime contract mode={normalized_mode}. "
+            f"Follow the mode skill at `{MODE_SKILL_PATHS[normalized_mode]}` and shared "
+            f"contract at `{COMMON_CONTRACT_PATH}`.\n")
 
 
 def install_computer_use_approval_bridge(codex, worker_name: str) -> None:
@@ -230,96 +228,6 @@ def install_computer_use_approval_bridge(codex, worker_name: str) -> None:
         return fallback(method, params)
 
     client._approval_handler = approval_handler
-
-
-# Structured decision-surface report (--report decision): the SDK forces the final agent message
-# to match this schema; the daemon renders decision.md and routes outcome=needs_decision to
-# needs_input so the dispatcher reads a decision surface instead of a technical log.
-REPORT_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "outcome": {"type": "string", "enum": ["done", "blocked", "needs_decision", "failed"]},
-        "verdict": {"type": "string", "enum": ["GO", "NO-GO", "PARTIAL", "N/A"]},
-        "summary": {"type": "string"},
-        "verification": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "check": {"type": "string"},
-                    "status": {"type": "string", "enum": ["PASS", "FAIL", "NOT_RUN"]},
-                    "evidence": {"type": "string"},
-                },
-                "required": ["check", "status", "evidence"],
-            },
-        },
-        "remaining_p1": {"type": "array", "items": {"type": "string"}},
-        "decisions": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "target": {"type": "string", "enum": ["dispatcher", "user"]},
-                    "kind": {"type": "string"},
-                    "question": {"type": "string"},
-                    "recommendation": {"type": "string"},
-                },
-                "required": ["target", "kind", "question", "recommendation"],
-            },
-        },
-        "changed_files": {"type": "array", "items": {"type": "string"}},
-        "commits": {"type": "array", "items": {"type": "string"}},
-        "evidence_artifacts": {"type": "array", "items": {"type": "string"}},
-        "risks": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": [
-        "outcome",
-        "verdict",
-        "summary",
-        "verification",
-        "remaining_p1",
-        "decisions",
-        "changed_files",
-        "commits",
-        "evidence_artifacts",
-        "risks",
-    ],
-}
-
-
-def render_decision(d: dict) -> str:
-    """Render decision.json into the short decision.md the dispatcher actually reads."""
-    head = f"OUTCOME: {d.get('outcome', '?')}"
-    if d.get("verdict"):
-        head += f" · VERDICT: {d['verdict']}"
-    lines = [head, f"SUMMARY: {d.get('summary', '')}"]
-    for v in d.get("verification") or []:
-        line = f"VERIFICATION: {v.get('status', '?')} - {v.get('check', '')}"
-        if v.get("evidence"):
-            line += f" ({v['evidence']})"
-        lines.append(line)
-    if d.get("remaining_p1"):
-        lines.append("P1 REMAINING: " + "; ".join(str(x) for x in d["remaining_p1"]))
-    decisions = d.get("decisions") or []
-    if decisions:
-        lines.append("DECISIONS NEEDED:")
-        for q in decisions:
-            rec = f" → recommend: {q['recommendation']}" if q.get("recommendation") else ""
-            lines.append(f"  [{q.get('target', 'dispatcher')}/{q.get('kind', '?')}] {q.get('question', '')}{rec}")
-    else:
-        lines.append("DECISIONS NEEDED: none")
-    if d.get("changed_files"):
-        lines.append("FILES: " + ", ".join(str(x) for x in d["changed_files"]))
-    if d.get("commits"):
-        lines.append("COMMITS: " + ", ".join(str(x) for x in d["commits"]))
-    if d.get("evidence_artifacts"):
-        lines.append("EVIDENCE: " + ", ".join(str(x) for x in d["evidence_artifacts"]))
-    if d.get("risks"):
-        lines.append("RISKS: " + "; ".join(str(x) for x in d["risks"]))
-    return "\n".join(lines) + "\n"
 
 
 def parse_question_metadata(question: str) -> tuple[str, str | None]:
@@ -705,7 +613,7 @@ class Worker:
     def __init__(self, name: str, repo_home: Path, repo_root: str, repo_key: str, cwd: str, sandbox: str,
                  model: str | None, effort: str, service_tier: str | None = None,
                  thread_source: str = "subagent", thread_ephemeral: bool = True,
-                 mode: str = "worker", report: str = "text"):
+                 mode: str = "worker"):
         self.name = name
         self.repo_home = repo_home
         self.repo_root = repo_root
@@ -721,7 +629,6 @@ class Worker:
         # Canonical posture; follow/reply turns inherit it. Normalizing here keeps
         # sessions recorded under legacy four-mode names resumable and echo-consistent.
         self.mode = normalize_mode(mode) or "worker"
-        self.report = report      # "text" | "decision" (decision = output_schema-forced final report)
         self.thread = None       # openai_codex.Thread (live only while starting/running a turn)
         self.handle = None       # TurnHandle
         self.codex = None        # openai_codex.Codex runtime owned by this worker
@@ -768,7 +675,6 @@ class Worker:
             "thread_source": self.thread_source,
             "thread_ephemeral": self.thread_ephemeral,
             "mode": self.mode,
-            "report": self.report,
             "current_item": None,
             "plan": [],
             "files_changed": [],
@@ -991,25 +897,6 @@ class Worker:
             return paragraphs[-1]
         return None
 
-    def _parse_decision(self) -> dict:
-        msg = (self._last_agent_msg or self._agent_msg_buf).strip()
-        if msg.startswith("```"):
-            msg = re.sub(r"^```(?:json)?\s*", "", msg, flags=re.IGNORECASE)
-            msg = re.sub(r"\s*```$", "", msg).strip()
-        parsed = json.loads(msg)
-        if not isinstance(parsed, dict):
-            raise ValueError("decision report is not a JSON object")
-        return parsed
-
-    def _write_decision(self, decision: dict) -> str:
-        atomic_write_json(self.dir / "decision.json", decision)
-        rendered = render_decision(decision)
-        path = self.dir / "decision.md"
-        tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
-        tmp.write_text(rendered, encoding="utf-8")
-        os.replace(tmp, path)
-        return rendered
-
     def _on_turn_completed(self, turn: dict) -> None:
         turn_status = turn.get("status")  # completed | interrupted | failed | (future SDK values)
         prior = self.status.get("state")
@@ -1022,40 +909,17 @@ class Worker:
             self.status["state"] = "interrupted"
         elif turn_status == "completed":
             # Promote QUESTION only for normally completed turns so it cannot conflict with interrupted/failed.
-            decision = None
-            rendered = None
-            if self.report == "decision":
-                try:
-                    decision = self._parse_decision()
-                    rendered = self._write_decision(decision)
-                except Exception as e:
-                    self.log_event("decision/parse-failed", f"{type(e).__name__}: {e}")
-            if decision is not None:
-                decisions = decision.get("decisions") or []
-                if decision.get("outcome") == "needs_decision" and decisions:
-                    routed = next((d for d in decisions if d.get("target") == "user"), decisions[0])
-                    self.status["state"] = "needs_input"
-                    self.status["needs_input_detail"] = truncate(rendered or render_decision(decision), 500)
-                    self.status["needs_input_source"] = "question"
-                    self.status["needs_input_target"] = (
-                        "user" if routed.get("target") == "user" else "dispatcher"
-                    )
-                    self.status["needs_input_kind"] = routed.get("kind")
-                    self.log_event("decision/needs-decision", self.status["needs_input_detail"])
-                else:
-                    self.status["state"] = "completed"
+            question = self._extract_question()
+            if question:
+                target, kind = parse_question_metadata(question)
+                self.status["state"] = "needs_input"
+                self.status["needs_input_detail"] = truncate(question, 500)
+                self.status["needs_input_source"] = "question"
+                self.status["needs_input_target"] = target
+                self.status["needs_input_kind"] = kind
+                self.log_event("question", question)
             else:
-                question = self._extract_question()
-                if question:
-                    target, kind = parse_question_metadata(question)
-                    self.status["state"] = "needs_input"
-                    self.status["needs_input_detail"] = truncate(question, 500)
-                    self.status["needs_input_source"] = "question"
-                    self.status["needs_input_target"] = target
-                    self.status["needs_input_kind"] = kind
-                    self.log_event("question", question)
-                else:
-                    self.status["state"] = "completed"
+                self.status["state"] = "completed"
         elif turn_status == "failed":
             self.status["state"] = "failed"
             detail = failure_detail({"error": turn.get("error") or {}})
@@ -1132,6 +996,11 @@ class Worker:
                 f.write(sep + brief + "\n")
             with open(self.dir / "events.log", "a", encoding="utf-8") as f:
                 f.write(f"--- turn {turns} ({now_iso()}) ---\n")
+            for fname in ("decision.json", "decision.md"):
+                try:
+                    (self.dir / fname).unlink()
+                except FileNotFoundError:
+                    pass
             self.status.update({
                 "turn_id": None,
                 "state": "starting",
@@ -1150,11 +1019,6 @@ class Worker:
                 "error_detail": None,
                 "turns": turns,
             })
-            for fname in ("decision.json", "decision.md"):
-                try:
-                    (self.dir / fname).unlink()
-                except FileNotFoundError:
-                    pass
             self.write_status(force=True)
 
     def legacy_recovery_context(self) -> str:
@@ -1745,9 +1609,12 @@ class Daemon:
             str(status.get("thread_source") or "subagent"),
             bool(status.get("thread_ephemeral", True)),
             mode=str(status.get("mode") or "worker"),
-            report=str(status.get("report") or "text"),
         )
         worker.status = dict(status)
+        # Drop fields from pre-text-only sessions so status/result stay on the
+        # current plain-text contract after a daemon restart or follow.
+        worker.status.pop("report", None)
+        worker.status.pop("output_schema", None)
         worker.generation = max(0, int(status.get("turns") or 0))
         if worker.current_state() in TERMINAL_STATES or worker.is_dormant_question():
             worker.terminal_since = time.monotonic()
@@ -1806,8 +1673,7 @@ class Daemon:
         wid = self._worker_key(repo_key, name)
         brief = req["brief"]
         use_preamble = not req.get("no_preamble")
-        report = "decision" if req.get("report") == "decision" else "text"
-        preamble = build_preamble(mode, report)
+        preamble = build_preamble(mode)
         turn_input = f"{preamble}\n{brief}" if use_preamble else brief
         file_brief = f"{preamble}\n---\n\n{brief}" if use_preamble else brief
         cwd = req.get("cwd") or os.getcwd()
@@ -1818,10 +1684,11 @@ class Daemon:
         model = normalize_model(req.get("model"))
         effort = req.get("effort") or "medium"
         service_tier = req.get("service_tier")
-        main_thread = bool(req.get("main_thread"))
-        thread_source_label = "user" if main_thread else "subagent"
-        # Persistent subagent threads remain hidden from the main user-thread list,
-        # but keep a rollout that thread_resume can reopen after runtime cleanup.
+        # All workers are persistent subagent threads. They stay out of the main
+        # user-thread list while retaining a rollout that thread_resume can reopen
+        # after runtime cleanup. Legacy clients may still send main_thread, but it
+        # is intentionally ignored so they cannot reintroduce visible workers.
+        thread_source_label = "subagent"
         thread_ephemeral = False
         if ThreadSource is None:
             return {"ok": False, "error": "openai-codex SDK does not expose ThreadSource"}
@@ -1850,7 +1717,6 @@ class Daemon:
                 thread_source_label,
                 thread_ephemeral,
                 mode=mode,
-                report=report,
             )
             ensure_worker_state_dir(self.home, repo_home, name)
             # Restarting the same name creates a new worker, so reset prior outputs.
@@ -1878,17 +1744,15 @@ class Daemon:
                 cwd=cwd,
                 ephemeral=thread_ephemeral,
                 sandbox=getattr(Sandbox, sandbox_key),
-                thread_source=(ThreadSource.user if main_thread else ThreadSource.subagent),
+                thread_source=ThreadSource.subagent,
             )
             w.thread = thread
             with w.lock:
                 w.status["thread_id"] = thread.id
-            extra = {"output_schema": REPORT_SCHEMA} if report == "decision" else {}
             relax_sdk_effort_field()
             w.handle = thread.turn(
                 turn_input,
                 model=model, effort=effort, service_tier=service_tier,
-                **extra,
             )
         except Exception as e:
             # The failed placeholder stays registered so status/wait see a terminal state
@@ -1987,7 +1851,7 @@ class Daemon:
             legacy_ephemeral = bool(w.status.get("thread_ephemeral", w.thread_ephemeral))
             recovery_context = w.legacy_recovery_context() if legacy_ephemeral else ""
 
-            reminder = build_follow_reminder(w.mode, w.report)
+            reminder = build_follow_reminder(w.mode)
             turn_input = f"{reminder}{brief}" if use_preamble else brief
             file_brief = f"{reminder}---\n\n{brief}" if use_preamble else brief
             # reset_for_follow flips the worker back to "starting", which reserves it:
@@ -2034,12 +1898,10 @@ class Daemon:
                         sandbox=getattr(Sandbox, w.sandbox),
                         service_tier=service_tier,
                     )
-            extra = {"output_schema": REPORT_SCHEMA} if w.report == "decision" else {}
             relax_sdk_effort_field()
             w.handle = w.thread.turn(
                 turn_input,
                 model=model, effort=effort, service_tier=service_tier,
-                **extra,
             )
         except Exception as e:
             w.mark_failed(f"follow turn failed (was {prev_state}): {type(e).__name__}: {e}")
@@ -2272,7 +2134,11 @@ def load_statuses(repo_home: Path) -> list[dict]:
         sj = d / "status.json"
         if sj.is_file():
             try:
-                out.append(json.loads(sj.read_text(encoding="utf-8")))
+                status = json.loads(sj.read_text(encoding="utf-8"))
+                if isinstance(status, dict):
+                    status.pop("report", None)
+                    status.pop("output_schema", None)
+                    out.append(status)
             except (OSError, json.JSONDecodeError):
                 pass
     return out
@@ -2396,7 +2262,6 @@ def start_resolution_echo(args, mode: str | None = None) -> str:
         f"model={values['model']}({provenance['model']}) "
         f"effort={values['effort']}({provenance['effort']}) "
         f"fast={fast}({provenance['fast']}) "
-        f"report={values['report']}({provenance['report']}) "
         f"sandbox={values['sandbox']}({provenance['sandbox']})"
     )
 
@@ -2419,9 +2284,7 @@ def start_request(args, home: Path) -> dict:
         "effort": resolved["effort"],
         "service_tier": service_tier,
         "no_preamble": args.no_preamble,
-        "main_thread": getattr(args, "main_thread", False),
         "mode": normalize_mode(args.mode),
-        "report": resolved["report"],
         "protocol_epoch": PROTOCOL_EPOCH,
     }
     req.update(request_repo_context(home))
@@ -2513,6 +2376,9 @@ def cmd_status(args, home: Path) -> int:
             print(f"no status for worker '{name}'", file=sys.stderr)
             return 1
         st = json.loads(sj.read_text(encoding="utf-8"))
+        if isinstance(st, dict):
+            st.pop("report", None)
+            st.pop("output_schema", None)
         if getattr(args, "json", False):
             print(json.dumps(st, ensure_ascii=False, indent=2))
         else:
@@ -2520,7 +2386,7 @@ def cmd_status(args, home: Path) -> int:
             for key in ("thread_id", "turn_id", "repo_root", "repo_key", "cwd",
                         "sandbox", "model", "effort", "service_tier", "thread_source",
                         "thread_ephemeral", "daemon_pid", "started_at", "updated_at",
-                        "terminal_at", "turns", "mode", "report", "needs_input_source",
+                        "terminal_at", "turns", "mode", "needs_input_source",
                         "needs_input_target", "needs_input_kind", "needs_input_detail",
                         "runtime_lost_detail", "error_detail"):
                 print(f"  {key}: {st.get(key)}")
@@ -2546,13 +2412,11 @@ def cmd_status(args, home: Path) -> int:
 
 def cmd_result(args, home: Path) -> int:
     worker_dir = repo_home_for_cli(home) / "workers" / args.name
-    decision = worker_dir / "decision.md"
     result = worker_dir / "result.md"
-    rp = result if getattr(args, "raw", False) or not decision.is_file() else decision
-    if not rp.is_file():
+    if not result.is_file():
         print(f"no result for worker '{args.name}'", file=sys.stderr)
         return 1
-    print(rp.read_text(encoding="utf-8"), end="")
+    print(result.read_text(encoding="utf-8"), end="")
     return 0
 
 
@@ -2709,8 +2573,7 @@ def cmd_dispatch(args, home: Path) -> int:
     code = wait_for_worker(home, repo_home, args.name, args.timeout, args.progress,
                            narrate=getattr(args, "narrate", False))
     worker_dir = repo_home / "workers" / args.name
-    decision = worker_dir / "decision.md"
-    rp = decision if decision.is_file() else worker_dir / "result.md"
+    rp = worker_dir / "result.md"
     if code in (0, 2, 3) and rp.is_file():
         print("--- result ---")
         print(rp.read_text(encoding="utf-8"), end="", flush=True)
@@ -2731,14 +2594,12 @@ def cmd_reply(args, home: Path) -> int:
     code = wait_for_worker(home, repo_home, args.name, args.timeout, args.progress,
                            narrate=getattr(args, "narrate", False))
     worker_dir = repo_home / "workers" / args.name
-    decision = worker_dir / "decision.md"
-    rp = decision if decision.is_file() else worker_dir / "result.md"
+    rp = worker_dir / "result.md"
     if code in (0, 2, 3) and rp.is_file():
         text = rp.read_text(encoding="utf-8")
-        if rp.name == "result.md":
-            marker = "\n---\n## Turn "
-            if marker in text:
-                text = "## Turn " + text.rsplit(marker, 1)[1]
+        marker = "\n---\n## Turn "
+        if marker in text:
+            text = "## Turn " + text.rsplit(marker, 1)[1]
         print("--- result ---")
         print(text, end="", flush=True)
     if getattr(args, "shutdown_when_idle", False) and code in (0, 2, 3):
@@ -3051,9 +2912,6 @@ def build_parser() -> argparse.ArgumentParser:
             help=("required: mate|worker (legacy aliases: "
                   "design|collab|collaborative|review → mate; delegate|delegated → worker)"),
         )
-        sp.add_argument("--report", choices=["text", "decision"],
-                        default=OMITTED_START_SETTING,
-                        help="report format; omitted uses the mode default")
         sp.add_argument("--sandbox", choices=sorted(SANDBOX_MAP.keys()),
                         default=OMITTED_START_SETTING,
                         help="sandbox posture; omitted uses the mode default")
@@ -3065,9 +2923,7 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--fast", action=argparse.BooleanOptionalAction,
                         default=OMITTED_START_SETTING,
                         help="select or disable Fast; omitted uses the mode default")
-        sp.add_argument("--no-preamble", action="store_true", help="disable prepending the harness protocol preamble")
-        sp.add_argument("--main-thread", action="store_true",
-                        help="use ThreadSource.user instead of the default hidden ThreadSource.subagent — only for tools that require a visible/main Codex Desktop thread")
+        sp.add_argument("--no-preamble", action="store_true", help="disable injecting runtime contract context")
 
     sp = sub.add_parser("start", help="start a new worker")
     sp.add_argument("name", type=worker_name_arg)
@@ -3141,9 +2997,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--all-repos", action="store_true", help="show workers from every repo namespace")
     sp.set_defaults(fn=cmd_status, name=None)
 
-    sp = sub.add_parser("result", help="print decision.md when present, else result.md")
+    sp = sub.add_parser("result", help="print result.md")
     sp.add_argument("name", type=worker_name_arg)
-    sp.add_argument("--raw", action="store_true", help="print raw result.md even when decision.md exists")
     sp.set_defaults(fn=cmd_result)
 
     sp = sub.add_parser("wait", help="poll until terminal state")

@@ -6,9 +6,9 @@ protocol below.
 
 ## Harness Values
 
-Treat the harness header as authoritative for `mode` and `report`. Initial
-turns receive the mode-selected skill and this contract. `follow` and `reply`
-inherit both recorded values and receive a short reminder.
+Treat the runtime contract header as authoritative for `mode`. Initial turns
+receive the mode-selected skill and this contract. `follow` and `reply` inherit
+the recorded mode and receive a short reminder.
 
 - `mate` (legacy aliases `design` / `collab` / `collaborative` / `review`):
   act as the dispatcher's thinking partner — design, diagnosis, and
@@ -17,59 +17,7 @@ inherit both recorded values and receive a short reminder.
 - `worker` (legacy aliases `delegate` / `delegated`): act as a team
   implementer who owns how, implementation, verification, and self-review;
   follow the worker skill.
-- `text`: return the mode-appropriate text report.
-- `decision`: satisfy every field of the strict decision schema below.
-
-If a brief conflicts with the harness values, follow the harness and record the
-conflict. Escalate only when the conflict changes user-owned direction or blocks
-the assigned session contract.
-
-## Decision Report
-
-When `report: decision` is active, return this complete shape:
-
-```json
-{
-  "outcome": "done|blocked|needs_decision|failed",
-  "verdict": "GO|NO-GO|PARTIAL|N/A",
-  "summary": "...",
-  "verification": [
-    {"check": "...", "status": "PASS|FAIL|NOT_RUN", "evidence": "..."}
-  ],
-  "remaining_p1": [],
-  "decisions": [
-    {
-      "target": "dispatcher|user",
-      "kind": "scope|ux|priority|risk|irreversible|acceptance|missing-info|better-direction|technical",
-      "question": "...",
-      "recommendation": "..."
-    }
-  ],
-  "changed_files": [],
-  "commits": [],
-  "evidence_artifacts": [],
-  "risks": []
-}
-```
-
-Every top-level and nested field is required. Use empty arrays or `"N/A"`
-where appropriate.
-
-- `outcome=done`: no P1 blocker remains and verification is sufficient.
-- `outcome=needs_decision`: include at least one decision. The daemon routes
-  this to `needs_input` / exit `3`, preferring the first user-targeted entry.
-- `outcome=blocked`: external input or environment prevents progress.
-- `outcome=failed`: the requested result was not achieved.
-- `verdict=GO`: the dispatcher can accept subject to listed risks.
-- `verdict=NO-GO`: required verification failed or a P1 blocker remains.
-- `verdict=PARTIAL`: useful work landed but acceptance is incomplete.
-- `verdict=N/A`: a verdict is not meaningful for the assigned work.
-- Mark every check `PASS`, `FAIL`, or `NOT_RUN`. For `NOT_RUN`, state the
-  reason and next best check.
-
-Do not append a text `QUESTION:` in decision mode. Put the escalation in
-`outcome=needs_decision` and `decisions[]`. The daemon generates
-`decision.json` and `decision.md`; `result.md` remains the raw audit record.
+- Return a concise, mode-appropriate text report.
 
 ## Question Routing
 
@@ -84,8 +32,8 @@ rerun, materially different method or cost envelope, acceptance-path change,
 or additional repair after the campaign cap. Route it to the user even when
 the session labeled it `TARGET: dispatcher` or `KIND: technical`.
 
-In text mode, use a question only for an external decision or true blocker and
-make it the final paragraph with this exact shape:
+Use a question only for an external decision or true blocker and make it the
+final paragraph with this exact shape:
 
 ```text
 QUESTION:

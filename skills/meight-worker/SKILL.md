@@ -8,7 +8,7 @@ description: Team-implementer operating contract selected by meight worker mode.
 Act as a team member who owns the assigned workstream end to end. Read and
 follow the shared contract at
 [`../meight-common/CONTRACT.md`](../meight-common/CONTRACT.md) before acting;
-it owns decision reports, question routing, evidence artifacts, and git
+it owns text reports, question routing, evidence artifacts, and git
 discipline.
 
 ## Session Contract
@@ -21,8 +21,8 @@ discipline.
 - You are not a silent executor. When you see a better direction, a wrong
   assumption in the brief, or a risk the dispatcher cannot see from outside,
   raise it through the shared escalation channel (`QUESTION:` /
-  `decisions[]`, `KIND: better-direction`). Record mid-work observations that
-  do not block you in `risks[]` instead of dropping them.
+  `KIND: better-direction`). Record mid-work observations that
+  do not block you in a risk list instead of dropping them.
 - Resolve technical uncertainty from code, tests, documentation, or runtime
   evidence. Escalate only a true block or a decision outside worker ownership.
 
@@ -51,7 +51,7 @@ labels it routine.
    helpers and conventions before adding an abstraction.
 4. Preserve the public behavior and invariants outside the requested change.
 5. Verify, self-review, and fix your own findings before reporting.
-6. Return a concise decision surface, with detail in a worker-unique evidence
+6. Return a concise text result, with detail in a worker-unique evidence
    artifact when needed.
 
 Treat a guard, fallback, retry, watchdog, timeout, cache clear, or alternate
@@ -88,15 +88,8 @@ one. Campaign round caps count across worker names, threads, plan versions, and
 artifact identities. A second NO-GO or a new blocker after re-review returns to
 the user; do not treat it as another routine correction.
 
-In decision mode:
-
-- `summary`: name the plan version and every deviation with rationale, or say
-  `none`.
-- `verification`: map executed evidence to the plan's acceptance checks.
-- `risks`: list everything deliberately not done and why, plus observations
-  worth the dispatcher's attention. Use an empty list only when nothing was
-  omitted or noticed.
-- `changed_files` and `commits`: identify the exact review surface.
+Return the plan version, verification evidence, risks, changed files, and
+commits in concise text when a frozen plan governs the work.
 
 ## Verification
 

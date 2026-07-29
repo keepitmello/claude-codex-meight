@@ -19,7 +19,7 @@
   `skills/meight-common/CONTRACT.md`다. 샌드박스는 강제하지 않는다 —
   read-only는 브리프 지시.
 - **파이프라인**: blind design(방향 fork, mate) → plan-review 루프(mate
-  `--report decision`, 최대 3라운드, PLAN.md 동결) → worker 구현(luna
+  일반 텍스트, 최대 3라운드, PLAN.md 동결) → worker 구현(luna
   max 기본, Fast는 옵트인, sol worker는 예외 경로) → 적대 리뷰(mate, 2라운드
   캡) → dispatcher 사인오프. 게이트는 작업 크기에 비례해 생략 가능하되 절대
   조용히는 불가.

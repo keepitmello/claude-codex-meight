@@ -47,21 +47,16 @@ mate 대 mate 논쟁 루프는 돌리지 않는다. 두 설계가 다 나오기 
 
 verdict가 아직 방향을 바꾸거나 실패 비용을 실질적으로 줄일 수 있을 때 값을 한다. 구현의 선행 조건은 아니다. 쓸지 말지는 디스패처가 정하고 그 선택을 한 줄로 기록한다. 새 증거가 결정을 계속 바꾸는 동안에는 `reply`로 리뷰 스레드를 살려둘 수 있다.
 
-기본은 `--mode mate --report decision`으로 스키마 검증된 decision 리포트 (mate 기본 report는 text라 verdict 루프에는 `--report decision`을 명시한다; verdict가 걸리면 `--effort high`도 고려). 리뷰어는 `APPROVE`나 `REVISE`로 시작한다. strict decision 스키마에는 APPROVE/REVISE 리터럴 값이 없어서 인터페이스 인코딩은 이렇다:
-
-- `APPROVE` → `outcome=done`, `verdict=GO`, summary가 `"APPROVE — <plan identity>"`로 시작.
-- `REVISE` → `outcome=needs_decision`, `verdict=NO-GO`, summary가 `"REVISE — <plan identity>"`로 시작. 디스패처 소유의 개정 결정을 유일한 `decisions[]` 항목으로 넣되, bounded 개정 라운드가 이미 승인된 경우에만. 새 phase·방법·비용 범위·캡 연장은 사용자 소유다.
-
-text 모드에서 `REVISE`는 디스패처를 향한 구조화된 `QUESTION:`으로 끝난다. 두 리포트 모드 다 스레드를 `reply`용으로 보존하고, `APPROVE`는 terminal이다.
+기본은 일반 텍스트 결과다. 리뷰어는 `APPROVE`나 `REVISE`로 시작하고, `REVISE`는 필요한 경우 디스패처를 향한 `QUESTION:`으로 끝낸다. verdict가 걸리면 `--effort high`를 고려한다. 새 phase·방법·비용 범위·캡 연장은 사용자 소유다.
 
 리뷰어는 네이밍/스타일 취향, 불가능한 엣지 케이스, 스코프 밖 가정, 현재 플랜이나 증거로 이미 해소된 발견을 억제한다. 디스패처가 승인된 버전 `PLAN.md`를 동결하면 스코프 변경이 그 결정을 다시 연다.
 
 ## mate 리뷰
 
-실패 비용이 값을 할 때 디스패처가 별도 `--mode mate --report decision` 리뷰 세션을 띄운다. worker는 계약상 자기 리뷰(필요시 내부 fresh-context 리뷰어 스폰 포함)를 하지만, 그건 외부 리뷰의 대체가 아니라 별개 증거원이다. 리뷰는 고정된 구현 단계가 아니라 독립적인 증거원이다.
+실패 비용이 값을 할 때 디스패처가 별도 `--mode mate --effort high` 리뷰 세션을 띄운다. worker는 계약상 자기 리뷰(필요시 내부 fresh-context 리뷰어 스폰 포함)를 하지만, 그건 외부 리뷰의 대체가 아니라 별개 증거원이다. 리뷰는 고정된 구현 단계가 아니라 독립적인 증거원이다.
 
 ```bash
-meight start review-X --mode mate --report decision --cwd <repo root> --brief-file - <<'EOF'
+meight start review-X --mode mate --effort high --cwd <repo root> --brief-file - <<'EOF'
 Adversarial review. Target: <files>. Contract: <versioned PLAN.md>.
 Hunt for real defects: correctness, regressions, missing verification,
 security/data risk, edge cases, races. For each finding: severity P1/P2/P3,

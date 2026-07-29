@@ -41,13 +41,12 @@ LaunchAgent 감독은 crash-only다 (`RunAtLoad=true`, `KeepAlive={SuccessfulExi
 
 ## Hidden-session 불변식
 
-- 기본 워커는 `status.json` / `meight status <name> --json`에 `"thread_source": "subagent"`와 `"thread_ephemeral": false`를 가져야 한다.
-- 명시적 `--main-thread` 워커만 `"thread_source": "user"`를 가질 수 있다.
+- 모든 새 워커는 `status.json` / `meight status <name> --json`에 `"thread_source": "subagent"`와 `"thread_ephemeral": false`를 가져야 한다.
 - Codex Desktop에 새 meight 워커가 예기치 않게 보이면, 다른 home이나 프로세스에서 도는 옛 데몬을 의심한다.
 
 ## 상태 경로와 수명주기
 
-- 워커 아티팩트: `<daemon-home>/repos/<repo-key>/workers/<name>/{brief.md,status.json,events.log,result.md,decision.json,decision.md}`
+- 워커 아티팩트: `<daemon-home>/repos/<repo-key>/workers/<name>/{brief.md,status.json,events.log,result.md}`
 - 저수준 커맨드: daemon / start / result / list / shutdown `[--force]` / launchd.
 - 포그라운드 `MEIGHT_IDLE_TIMEOUT_SEC` 기본값은 1800s이고 `daemon --idle-timeout-sec 0`이 끈다. 관리형 `dispatch`/LaunchAgent 기동은 idle disable을 env와 daemon args 양쪽으로 넘긴다. LaunchAgent job은 옛 로드 job에 env가 없으면 `XPC_SERVICE_NAME=com.keepitmello.meight`로 관리형 모드를 추론한다. 실제 값은 `meight ping`/기동 로그를 믿는다.
 - Terminal 워커는 스트림 종료 직후 SDK 런타임을 놓는다. `MEIGHT_WORKER_GC_TTL_SEC`(기본 3600s)는 데몬 메모리에서 terminal 워커 상태만 제거한다. 디스크 아티팩트는 `MEIGHT_SESSION_RETENTION_SEC`(기본 30일, `0`이면 비활성)를 쓴다.
