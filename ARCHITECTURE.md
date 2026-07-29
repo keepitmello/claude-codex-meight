@@ -136,10 +136,10 @@ main orchestrator.
 |---|---|
 | Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` |
 | Blind/anchored design and diagnosis | `--mode mate` (`high` only for genuinely hard problems; `sol` stops at `high`) |
-| Plan and adversarial review | `--mode mate --effort high` |
+| Plan and adversarial review | `--mode mate --effort high` (`sol high`; standing reviewer route) |
 | Hard work of any kind | `--mode mate` for the plan first, then `--mode worker` (`luna`) on the frozen plan |
 | Implementation still hard with a plan in hand | `--mode worker --model sol --effort medium` (worker `sol` stays at `medium`) |
-| `sol high` | mate posture only, for genuinely hard design or verdict work; confirm with the user before launching |
+| `sol high` | reviewer default; for non-review mate work, only genuinely hard design and confirm with the user before launching |
 | Capability-specific fallback | either posture with `terra`; no default ownership, re-promotable on measured evidence |
 
 - **Failure cost is the gate**: raise the brain when failure can damage money or
@@ -150,8 +150,9 @@ main orchestrator.
   worker contract escalates its own do-not-decide-alone list before acting.
 - **Difficulty is answered with a stage, not a bigger worker**: a `sol` mate
   plan feeding a `luna` worker is the cheapest strong combination. `sol` in
-  worker mode is the exception and stays at `medium`; `sol high` is mate-only
-  and takes one user confirmation.
+  worker mode is the exception and stays at `medium`; `sol high` is the
+  reviewer default. Non-review design takes one user confirmation before using
+  it.
 - **Avoiding overengineering comes first**: design and review modes are tools,
   not a default chain. The dispatcher selects gates by failure cost and records
   the choice in one line.
@@ -162,10 +163,11 @@ main orchestrator.
   alive for `reply` with a dispatcher-targeted `QUESTION:`, while `APPROVE` is
   terminal. If approval freezes a versioned `PLAN.md`, a material scope change
   reopens that decision.
-- **Review is verdict evidence, not a pipeline stage**: the worker contract
-  owns self-review (spawning an internal fresh-context reviewer when
-  warranted). For reviewed work, sign-off combines the text verdict with
-  verification evidence. Reading the entire diff is never a sign-off gate.
+- **Review is verdict evidence, not a pipeline stage**: the worker owns its
+  self-review. When an independent internal read is warranted, it uses a
+  fresh-context `sol high` reviewer. For reviewed work, sign-off combines the
+  text verdict with verification evidence. Reading the entire diff is never a
+  sign-off gate.
 - Sessions may commit/push completed verified work; the orchestrator still owns integration and final sign-off.
 - Briefs must point at *existing patterns* relevant to the task — detail-oriented reviewers flag absent context as defects otherwise.
 - The CLI resolves omitted start/dispatch settings from the selected mode

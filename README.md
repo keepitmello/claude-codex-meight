@@ -60,10 +60,11 @@ cost, then records that choice in one line.
 
 Blind or anchored design can clarify a real direction fork. Plan review and
 adversarial code review are available verdict tools, not default stages. The
-worker self-reviews by contract (spawning an internal fresh-context reviewer
-when warranted), and the dispatcher spawns a separate external review session
-when failure cost justifies it. A worker's `done` is still only a claim. For reviewed work, sign-off combines the review
-verdict with verification evidence; unreviewed work still requires verification
+worker self-reviews by contract. When an independent internal read is warranted,
+it uses a fresh-context `sol high` reviewer; the dispatcher separately decides
+whether failure cost justifies an external review session. A worker's `done` is
+still only a claim. For reviewed work, sign-off combines the review verdict
+with verification evidence; unreviewed work still requires verification
 evidence. Reading the entire diff is never a sign-off gate.
 
 The included operator-policy template routes bounded work to `luna` and gates on
@@ -75,12 +76,10 @@ implementation that stays hard with a plan in hand. Those model and money-path g
 are explicitly adjustable operator policy, not meight interface requirements.
 
 Effort follows the same economics: `luna` runs `max`, which buys a measured
-four Index points over `xhigh` for a quarter more cost,
-`sol` defaults to `medium` and stays there in worker mode, and `high` is
-reserved for genuinely hard mate work such as verdict-bearing review — the
-dispatcher judges what qualifies, and `sol high` takes one user confirmation
-before launch because it is the costliest combination. `sol` never runs
-`xhigh`.
+four Index points over `xhigh` for a quarter more cost. `sol` defaults to
+`medium` and stays there in worker mode. Reviewers use `sol high`; non-review
+mate work uses `high` only when genuinely hard and after one user confirmation.
+`sol` never runs `xhigh`.
 
 ## Why This Exists
 

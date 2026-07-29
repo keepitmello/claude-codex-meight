@@ -45,12 +45,14 @@ CLI는 `start` 전에 capability handshake를 한다. 살아있는 데몬이 cap
 
 worker 자세를 `sol`로 올리는 건 그 다음이다 — 설계를 앞에 붙일 수 없거나, 플랜이 있어도 구현 자체가 `sol` 브레인을 요구할 때. **worker의 `sol`은 `medium`이다.** `medium`은 무겁게 들리는 작업도 해내고 `high`와의 실측 차이는 작아서, 코드 작업에 `high`를 태우면 값을 못 한다. 구현이 `medium`으로도 안 풀릴 것 같으면 브레인이 아니라 설계가 부족한 것이니 mate 한 판을 앞에 붙인다.
 
-`sol high`는 mate 자리 — 설계·verdict가 정말 어려울 때 — 에 남겨두고, 가장 비싼 조합이라 띄우기 전에 사용자 확인을 한 번 받는다 (비용 있는 실행은 사용자 소유 결정이다).
+`sol high`는 mate 자리다. plan·적대 리뷰에서는 reviewer 기본값으로 쓰고, 리뷰가
+아닌 설계에서는 정말 어려울 때만 사용자 확인을 한 번 받은 뒤 쓴다. worker에는
+쓰지 않는다.
 
 | Model | 쓸 곳 | 통상 effort |
 |-------|------|---|
 | `luna` | worker 자세 구현·수정·테스트·검증, read-only 로그 파기, 브라우저/런타임 QA, computer use, 탐색의 기본 모델 | `max` (Fast는 필요할 때 `--fast` 옵트인) |
-| `sol` | mate 자세 방향·verdict 작업의 기본 모델. worker에는 예외 경로 — 설계 선행이 불가능하거나 구현 자체가 어려울 때 | worker는 언제나 `medium`. `high`는 mate 자리의 정말 어려운 설계·verdict에만 쓰고 띄우기 전 사용자 확인을 받는다. `xhigh`는 쓰지 않는다 |
+| `sol` | mate 자세 방향·verdict 작업의 기본 모델. worker에는 예외 경로 — 설계 선행이 불가능하거나 구현 자체가 어려울 때 | worker는 언제나 `medium`. reviewer는 `high`; 비리뷰 설계의 `high`는 정말 어려울 때만 사용자 확인 후 사용. `xhigh`는 쓰지 않는다 |
 | `terra` | 기본 소유 영역 없음. 측정 근거가 뒷받침될 때 capability-specific 폴백 | 작업별 |
 
 실측이 이 사다리를 뒷받침한다 (Artificial Analysis Coding Agent Index v1.3, 종합 / DeepSWE / SWE-Atlas-QnA / 태스크당 비용):

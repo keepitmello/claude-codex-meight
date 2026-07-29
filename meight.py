@@ -555,7 +555,7 @@ def failure_detail(payload: dict) -> dict:
     )
     return {
         "message": str(message),
-        "status": status if isinstance(status, (int, str)) else str(status),
+        "status": status if isinstance(status, (int, str)) else None,
         "type": str(error_type) if error_type is not None else None,
     }
 
@@ -1080,6 +1080,7 @@ class Worker:
             with self.lock:
                 state = self.status.get("state")
                 source = self.status.get("needs_input_source")
+                error_detail = self.status.get("error_detail")
                 detachable = state in TERMINAL_STATES or (state == "needs_input" and source == "question")
                 if gen != self.generation or not detachable:
                     return
@@ -1089,9 +1090,14 @@ class Worker:
                 codex_to_close = self.codex
                 self.codex = None
             if had_refs:
+                outcome = f"state={state}"
+                if state == "failed" and isinstance(error_detail, dict):
+                    outcome += (
+                        f" error={truncate(format_failure_detail(error_detail), 300)!r}"
+                    )
                 daemon.log(
                     f"detached runtime refs worker={self.name} "
-                    f"repo={self.repo_key} reason={reason}"
+                    f"repo={self.repo_key} {outcome} reason={reason}"
                 )
         if codex_to_close is not None:
             try:

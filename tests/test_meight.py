@@ -227,6 +227,21 @@ class EffortTests(unittest.TestCase):
 
 
 class TerminalErrorTests(unittest.TestCase):
+    def test_error_without_http_status_stays_null(self):
+        detail = meight.failure_detail({
+            "error": {"message": "Selected model is at capacity. Please try a different model."},
+        })
+
+        self.assertEqual(detail, {
+            "message": "Selected model is at capacity. Please try a different model.",
+            "status": None,
+            "type": None,
+        })
+        self.assertEqual(
+            meight.format_failure_detail(detail),
+            "Selected model is at capacity. Please try a different model.",
+        )
+
     def test_non_retry_error_is_visible_and_late_completion_does_not_duplicate_result(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo_home = Path(tmp)
@@ -264,6 +279,34 @@ class TerminalErrorTests(unittest.TestCase):
             self.assertIn(f"HTTP 400 invalid_request_error: {provider_message}", result)
             self.assertNotIn("(no agent message)", result)
             self.assertEqual(result.count(provider_message), 1)
+
+    def test_runtime_detach_logs_terminal_state_and_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            worker = meight.Worker(
+                "error-log-test", home, "/repo", "repo-key", "/repo",
+                "workspace_write", "gpt-5.6-sol", "medium",
+            )
+            worker.dir.mkdir(parents=True)
+            worker.init_status(thread_id="thread-1")
+            worker.status["state"] = "failed"
+            worker.status["error_detail"] = {
+                "message": "Selected model is at capacity. Please try a different model.",
+                "status": None,
+                "type": None,
+            }
+            worker.thread = object()
+
+            worker.detach_runtime_refs_if_idle(
+                meight.Daemon(home), worker.generation, "stream ended"
+            )
+
+            log = (home / "daemon.log").read_text(encoding="utf-8")
+            self.assertIn(
+                "state=failed error='Selected model is at capacity. "
+                "Please try a different model.' reason=stream ended",
+                log,
+            )
 
 
 class QuestionRoutingTests(unittest.TestCase):

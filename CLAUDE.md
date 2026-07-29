@@ -52,10 +52,10 @@ requirements.
 |---|---|
 | Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` (defaults: `luna max`; Fast is opt-in via `--fast`) |
 | Blind/anchored design and diagnosis | `--mode mate` (defaults: `sol medium`; `high` only for genuinely hard problems, and `sol` stops at `high`) |
-| Plan and adversarial review | `--mode mate --effort high` |
+| Plan and adversarial review | `--mode mate --effort high` (`sol high`; standing reviewer route) |
 | Hard work of any kind | `--mode mate` for the plan first, then `--mode worker` (`luna`) on the frozen plan |
 | Implementation still hard with a plan in hand | `--mode worker --model sol --effort medium` (worker `sol` stays at `medium`) |
-| `sol high` | mate posture only, for genuinely hard design or verdict work; confirm with the user before launching |
+| `sol high` | reviewer default; for non-review mate work, only genuinely hard design and confirm with the user before launching |
 | Capability-specific fallback | either posture with `terra` only when measured evidence supports it |
 
 Failure cost is the gate: raise the brain when failure can damage money or data,
@@ -74,9 +74,10 @@ lives in the judgment rather than the typing, and this is the cheapest strong
 combination. Move the worker itself to `sol medium` only when design cannot come
 first or the implementation stays hard with a plan in hand, and keep worker `sol`
 at `medium`: the gap to `high` is small and code work does not repay it. `sol
-high` belongs to the mate posture, for genuinely hard design and verdict work,
-and takes one user confirmation before launch. Whenever a session starts, tell
-the user in one line which model and effort it runs on.
+high` belongs to the mate posture: it is the standing reviewer route, while
+non-review design uses it only when genuinely hard and after one user
+confirmation. Whenever a session starts, tell the user in one line which model
+and effort it runs on.
 
 ## Durable Judgment
 

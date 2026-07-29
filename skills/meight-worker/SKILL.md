@@ -68,13 +68,19 @@ Review your own diff before reporting: correctness, regressions, missing
 verification, security and data/state risk, edge cases, races. Fix what you
 find and re-run the checks the fix touches.
 
+## Internal Independent Review
+
 For non-trivial work, when an independent read would change your confidence in
 the result, spawn a fresh-context internal reviewer with
 `multi_agent_v1.spawn_agent(agent_type="reviewer", fork_context=false)`. Give
 it the exact diff and verification evidence, keep it read-only, and cap the
-internal loop at two rounds. Record the invocation, verdict, and accepted
-fixes in the evidence artifact. Skip this for small reversible changes; say in
-the report that you skipped it and why.
+internal loop at two rounds. Before spawning, verify that the reviewer resolves
+to `gpt-5.6-sol` at `high` effort; do not look for or substitute a Luna or Terra
+reviewer. If that exact reviewer is unavailable, record the review as `NOT_RUN`
+and return it to the dispatcher instead of silently weakening the model.
+Record the invocation, verdict, and accepted fixes in the evidence artifact.
+Skip this for small reversible changes; say in the report that you skipped it
+and why.
 
 Whether a separate external review session runs is the dispatcher's call; your
 self-review does not replace it, and its existence does not excuse skipping
