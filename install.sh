@@ -4,7 +4,7 @@ set -e
 
 REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN_DIR="${MEIGHT_BIN_DIR:-$HOME/.local/bin}"
-SDK_PIN="openai-codex==0.1.0b3"
+SDK_PIN="openai-codex==0.144.4"
 INSTALL_LAUNCHD=0
 LOAD_LAUNCHD=0
 

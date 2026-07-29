@@ -225,6 +225,21 @@ class EffortTests(unittest.TestCase):
             params = TurnStartParams(thread_id="thread", input=[], effort=effort)
             self.assertEqual(params.model_dump(mode="json")["effort"], effort)
 
+    @unittest.skipUnless(
+        importlib.util.find_spec("openai_codex"), "openai-codex SDK not installed"
+    )
+    def test_installed_sdk_accepts_nested_agent_thread_history(self):
+        from openai_codex.generated.v2_all import ThreadItem
+
+        item = ThreadItem.model_validate({
+            "type": "subAgentActivity",
+            "id": "activity",
+            "agentPath": "reviewer",
+            "agentThreadId": "review-thread",
+            "kind": "started",
+        })
+        self.assertEqual(item.root.type, "subAgentActivity")
+
 
 class TerminalErrorTests(unittest.TestCase):
     @staticmethod

@@ -378,7 +378,7 @@ subagent 스레드에서 이어진다.
   정체성을 요구한다. `launchctl` 결과가 모호하거나 unhealthy한 데몬이 싱글턴
   락을 쥐고 있으면 fail closed한다. 발행된 소켓이 삭제/교체되면 데몬은
   launchd가 재생성하도록 nonzero로 종료한다.
-- `openai-codex`는 핀 고정이다 (`0.1.0b3`, beta). SDK나 Codex CLI를 올릴 땐
+- `openai-codex`는 핀 고정이다 (`0.144.4`). SDK나 Codex CLI를 올릴 땐
   [`SPEC.md`](../SPEC.md)의 검증 스위트를 다시 돌린다.
 - 설계 상세, 상태 머신, 하드닝 이력, 수명주기 caveat은
   [`ARCHITECTURE.md`](../ARCHITECTURE.md)에 있다. 디스패처 프로토콜 전문은

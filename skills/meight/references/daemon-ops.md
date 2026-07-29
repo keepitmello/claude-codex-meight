@@ -52,5 +52,5 @@ LaunchAgent 감독은 crash-only다 (`RunAtLoad=true`, `KeepAlive={SuccessfulExi
 - Terminal 워커는 스트림 종료 직후 SDK 런타임을 놓는다. `MEIGHT_WORKER_GC_TTL_SEC`(기본 3600s)는 데몬 메모리에서 terminal 워커 상태만 제거한다. 디스크 아티팩트는 `MEIGHT_SESSION_RETENTION_SEC`(기본 30일, `0`이면 비활성)를 쓴다.
 - 오프루프 시간별 cleanup은 immutable `terminal_at`(레거시 폴백 `updated_at`)로 유효한 만료 terminal 행만 정리하고, registry lock 아래서 원자적으로 tombstone한 뒤 lock 밖에서 삭제한다. 복구는 tombstone 접두사만 믿지 않고 terminal 상태·만료·registry 소유권을 다시 확인한다. active/replyable, malformed, symlink, registered 세션은 건너뛴다.
 - 기동 시 고아 live 행은 `failed`/`runtime_lost_detail`로 전환된다. 최종 질문과 terminal persistent subagent 스레드는 계속 resumable하다.
-- Beta SDK (`openai-codex==0.1.0b3`, 핀 고정): 업그레이드하면 SPEC.md 검증 스위트를 다시 돌린다.
+- SDK (`openai-codex==0.144.4`, 핀 고정): 업그레이드하면 SPEC.md 검증 스위트를 다시 돌린다.
 - 소스와 문서: README.md, SPEC.md, ARCHITECTURE.md.

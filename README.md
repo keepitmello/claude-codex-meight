@@ -397,7 +397,7 @@ silently use an old contract. Drain and restart manually:
   Ambiguous `launchctl` results or an unhealthy daemon that still holds the
   singleton lock fail closed. If the published socket is deleted or replaced,
   the daemon exits nonzero so launchd can recreate it.
-- `openai-codex` is pinned (`0.1.0b3`, beta). When bumping the SDK or Codex
+- `openai-codex` is pinned (`0.144.4`). When bumping the SDK or Codex
   CLI, re-run the verification suite in [`SPEC.md`](./SPEC.md).
 - Design details, state machine, hardening history, and lifecycle caveats live
   in [`ARCHITECTURE.md`](./ARCHITECTURE.md). Full dispatcher protocol lives in

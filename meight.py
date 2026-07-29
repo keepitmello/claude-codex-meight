@@ -117,12 +117,12 @@ _sdk_effort_field_relaxed = False
 def relax_sdk_effort_field() -> None:
     """Accept every effort string the app-server accepts.
 
-    Codex app-server advertises ReasoningEffort as a non-empty string, but SDK
-    0.1.0b3 generated a closed enum ending at xhigh. The enum is a client-side
-    artifact, so widen the local pydantic field once per process before
-    Thread.turn constructs TurnStartParams. Widening by value (rather than for a
-    known list like ultra/max) keeps future server-side tiers working without a
-    code change here.
+    Codex app-server advertises ReasoningEffort as a non-empty string, but the
+    pinned SDK still generates a closed enum ending at xhigh. The enum is a
+    client-side artifact, so widen the local pydantic field once per process
+    before Thread.turn constructs TurnStartParams. Widening by value (rather
+    than for a known list like ultra/max) keeps future server-side tiers working
+    without a code change here.
     """
     global _sdk_effort_field_relaxed
     if _sdk_effort_field_relaxed:
@@ -145,7 +145,7 @@ def relax_sdk_effort_field() -> None:
 def relax_sdk_effort_echo() -> None:
     """Thread lifecycle responses echo the account-default reasoning effort
     (e.g. model_reasoning_effort = "ultra" in ~/.codex/config.toml), which the
-    closed ReasoningEffort enum in SDK 0.1.0b3 rejects regardless of the effort
+    pinned SDK's closed ReasoningEffort enum rejects regardless of the effort
     requested for the turn. Relax those response fields to plain strings."""
     from openai_codex.generated import v2_all
 
@@ -522,7 +522,7 @@ def read_text_tail(path: Path, limit: int = RECOVERY_ARTIFACT_MAX_CHARS) -> str:
 
 
 def dig(d: object, *keys: str, default=None):
-    """Chained dict.get helper for missing beta SDK payload fields."""
+    """Chained dict.get helper for missing SDK payload fields."""
     cur = d
     for k in keys:
         if not isinstance(cur, dict):
@@ -844,7 +844,7 @@ class Worker:
     def on_event(self, note, daemon: "Daemon", gen: int) -> None:
         method = note.method
         payload = note.payload
-        # mode="json": enum -> value strings, Path -> str (avoid exposing raw beta SDK enums)
+        # mode="json": enum -> value strings, Path -> str (avoid exposing raw SDK enums)
         p = payload.model_dump(mode="json") if hasattr(payload, "model_dump") else (
             payload if isinstance(payload, dict) else {})
 

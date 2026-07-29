@@ -16,7 +16,7 @@ This document is the implementation contract and verification record for
 ## Stack
 
 - Python 3.13 with a repository-local `.venv/`.
-- `openai-codex==0.1.0b3` beta SDK. Keep the SDK version pinned.
+- `openai-codex==0.144.4`. Keep the SDK version pinned.
 - SDK internals: the client spawns the current system
   `codex app-server --listen stdio://` selected by `system_codex_bin()` and
   talks JSON-RPC over stdio. `MEIGHT_CODEX_BIN` can explicitly select another
@@ -352,7 +352,7 @@ release, registry GC, daemon restart, or interruption.
 - `result.md` is written once per turn with the last agent message, or with a
   terminal error when no agent message exists.
 
-## Beta SDK Defenses
+## SDK Boundary Defenses
 
 - Always read payload fields through `model_dump()` followed by `dict.get()`
   chains. Missing fields must not crash a worker.
