@@ -88,6 +88,10 @@ Bash(command: "meight dispatch fix-auth --mode worker --cwd ~/repo --brief-file 
 - `--progress`(기본 300) heartbeat는 백그라운드에선 태스크 출력 파일에만 쌓인다 (한 줄/5분). 아주 긴 세션이면 `--progress 0`.
 - 중간 개입 가능성이 있는 작업은 `start`로 열고 백그라운드 `wait <name> --timeout`을 별도로 건다 — 그 사이 `meight steer <name> "correction"`으로 도는 턴에 텍스트를 주입할 수 있다.
 - **tool-wait 표면화**: 워커가 tool/approval 입력을 기다리며 15초 넘게 멈추면 wait가 exit 3으로 끝나 통지가 온다 (전에는 타임아웃까지 invisible). `status <name>`의 `needs_input_source`가 `tool`이면 답할 방법이 없는 대기다 — interrupt 후 브리프를 고쳐 재시작한다.
+- **capacity 재시도**: provider가 `Selected model is at capacity`로 턴을 끝내면
+  같은 model·effort·service tier와 같은 thread에서 5/10/20/40/60초 간격으로
+  최대 5회 이어간다. Fast로 승격하거나 다른 모델로 바꾸지 않으며, 다섯 번 모두
+  실패하면 원래 capacity 오류로 종료한다.
 
 ### 사람용 터미널 사용법
 

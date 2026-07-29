@@ -46,6 +46,12 @@ MANAGED_DAEMON_IDLE_TIMEOUT_SEC = "0"
 LAUNCHD_TRANSFER_TIMEOUT_SEC = 15.0
 WORKER_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 PRUNE_TOMBSTONE_PREFIX = ".meight-prune-"
+CAPACITY_RETRY_DELAYS_SEC = (5, 10, 20, 40, 60)
+CAPACITY_RETRY_PROMPT = (
+    "The previous turn ended because the selected model was at capacity. "
+    "Resume the same approved task from the current repository state. "
+    "Do not repeat work that is already complete."
+)
 
 # Mode contracts resolve relative to this file so any clone location works.
 _SKILLS_ROOT = Path(__file__).resolve().parent / "skills"
@@ -571,6 +577,10 @@ def format_failure_detail(detail: dict) -> str:
     return f"{prefix}: {detail['message']}" if prefix else str(detail["message"])
 
 
+def is_capacity_failure(detail: dict) -> bool:
+    return "selected model is at capacity" in str(detail.get("message", "")).lower()
+
+
 # ── Worker (Inside Daemon) ─────────────────────────────────────────────────
 
 def describe_item(item: dict) -> str:
@@ -642,6 +652,7 @@ class Worker:
         self._agent_msg_buf = ""       # accumulated in-flight agentMessage deltas
         self._last_agent_msg = ""      # last finalized agentMessage
         self._result_written = False    # one result block per turn, including terminal SDK errors
+        self._capacity_retry_pending = False
         self._current_item_label: str | None = None
         self._current_item_since: float | None = None
         # The public status.json field needs_input_source is the SSOT for needs_input:
@@ -686,6 +697,7 @@ class Worker:
             "needs_input_kind": None,
             "runtime_lost_detail": None,
             "error_detail": None,
+            "capacity_retries": 0,
             "turns": turns,
         }
         self.write_status(force=True)
@@ -730,12 +742,23 @@ class Worker:
 
     def consume_stream(self, daemon: "Daemon", gen: int, handle) -> None:
         try:
-            for note in handle.stream():
-                try:
-                    self.on_event(note, daemon, gen)
-                except Exception as e:  # one event handler failure must not kill the worker
-                    daemon.log(f"worker={self.name} event handler error: {e!r}")
-            self.on_stream_end(gen)
+            current_handle = handle
+            while True:
+                for note in current_handle.stream():
+                    try:
+                        self.on_event(note, daemon, gen)
+                    except Exception as e:  # one event handler failure must not kill the worker
+                        daemon.log(f"worker={self.name} event handler error: {e!r}")
+                with self.lock:
+                    retry_pending = gen == self.generation and self._capacity_retry_pending
+                if retry_pending:
+                    next_handle = self._retry_capacity_turn(daemon, gen)
+                    if next_handle is not None:
+                        current_handle = next_handle
+                        continue
+                else:
+                    self.on_stream_end(gen)
+                break
         except Exception as e:
             with self.lock:
                 state = self.status.get("state")
@@ -750,6 +773,73 @@ class Worker:
         finally:
             self.detach_runtime_refs_if_idle(daemon, gen, "stream ended")
             daemon.touch_activity()
+
+    def _retry_capacity_turn(self, daemon: "Daemon", gen: int):
+        with self.lock:
+            retry_count = int(self.status.get("capacity_retries", 0))
+            if gen != self.generation or not self._capacity_retry_pending:
+                return None
+            if retry_count >= len(CAPACITY_RETRY_DELAYS_SEC):
+                self._capacity_retry_pending = False
+                self.status["state"] = "failed"
+                self.log_event(
+                    "capacity/exhausted",
+                    f"failed after {retry_count} retries",
+                )
+                self.write_result()
+                self.write_status(force=True)
+                return None
+            retry_count += 1
+            delay = CAPACITY_RETRY_DELAYS_SEC[retry_count - 1]
+            self.status["capacity_retries"] = retry_count
+            self.log_event(
+                "capacity/retry",
+                f"attempt={retry_count}/{len(CAPACITY_RETRY_DELAYS_SEC)} delay={delay}s",
+            )
+            self.write_status(force=True)
+
+        deadline = time.monotonic() + delay
+        while time.monotonic() < deadline:
+            if self.interrupt_requested or daemon.shutting_down.is_set():
+                with self.lock:
+                    self._capacity_retry_pending = False
+                    self.status["state"] = "interrupted"
+                    self.write_result()
+                    self.write_status(force=True)
+                return None
+            time.sleep(min(0.5, deadline - time.monotonic()))
+
+        with self.ctl_lock:
+            if self.interrupt_requested or daemon.shutting_down.is_set() or self.thread is None:
+                with self.lock:
+                    self._capacity_retry_pending = False
+                    self.status["state"] = "interrupted"
+                    self.write_result()
+                    self.write_status(force=True)
+                return None
+            with self.lock:
+                self._capacity_retry_pending = False
+                self._agent_msg_buf = ""
+                self._last_agent_msg = ""
+                self.status["turn_id"] = None
+                self.status["state"] = "starting"
+                self.status["terminal_at"] = None
+                self.status["last_message_tail"] = ""
+                self.status["error_detail"] = None
+                self.write_status(force=True)
+            relax_sdk_effort_field()
+            next_handle = self.thread.turn(
+                CAPACITY_RETRY_PROMPT,
+                model=self.model,
+                effort=self.effort,
+                service_tier=self.service_tier,
+            )
+            self.handle = next_handle
+        daemon.log(
+            f"capacity retry worker={self.name} repo={self.repo_key} "
+            f"attempt={retry_count}/{len(CAPACITY_RETRY_DELAYS_SEC)}"
+        )
+        return next_handle
 
     def on_event(self, note, daemon: "Daemon", gen: int) -> None:
         method = note.method
@@ -829,10 +919,13 @@ class Worker:
             will_retry = bool(p.get("will_retry"))
             self.log_event(method, f"{msg} (will_retry={will_retry})")
             if not will_retry:
-                self.status["state"] = "failed"
                 self.status["error_detail"] = detail
-                self._clear_needs_input_locked()
-                self.write_result()
+                if is_capacity_failure(detail):
+                    self._capacity_retry_pending = True
+                else:
+                    self.status["state"] = "failed"
+                    self._clear_needs_input_locked()
+                    self.write_result()
                 self.write_status(force=True)
 
         elif method == "tool/requestUserInput" or method.endswith("/requestApproval"):
@@ -900,6 +993,13 @@ class Worker:
     def _on_turn_completed(self, turn: dict) -> None:
         turn_status = turn.get("status")  # completed | interrupted | failed | (future SDK values)
         prior = self.status.get("state")
+        if self._capacity_retry_pending:
+            self.log_event(
+                "turn/completed",
+                f"turn status {turn_status!r} deferred for capacity retry",
+            )
+            self.write_status(force=True)
+            return
         # Priority: preserve existing failed/interrupted > promote QUESTION > completed
         if prior in ("failed", "interrupted"):
             # A late completed event must not overwrite a failure already set by a non-retry error.
@@ -987,6 +1087,7 @@ class Worker:
             self._agent_msg_buf = ""
             self._last_agent_msg = ""
             self._result_written = False
+            self._capacity_retry_pending = False
             self._current_item_label = None
             self._current_item_since = None
             self.terminal_since = None
@@ -1017,6 +1118,7 @@ class Worker:
                 "needs_input_kind": None,
                 "runtime_lost_detail": None,
                 "error_detail": None,
+                "capacity_retries": 0,
                 "turns": turns,
             })
             self.write_status(force=True)

@@ -227,6 +227,37 @@ class EffortTests(unittest.TestCase):
 
 
 class TerminalErrorTests(unittest.TestCase):
+    @staticmethod
+    def _capacity_handle():
+        return types.SimpleNamespace(stream=lambda: iter((
+            types.SimpleNamespace(
+                method="error",
+                payload={
+                    "error": {
+                        "message": "Selected model is at capacity. Please try a different model."
+                    },
+                    "will_retry": False,
+                },
+            ),
+            types.SimpleNamespace(
+                method="turn/completed",
+                payload={"turn": {"status": "failed"}},
+            ),
+        )))
+
+    @staticmethod
+    def _completed_handle(message="OK"):
+        return types.SimpleNamespace(stream=lambda: iter((
+            types.SimpleNamespace(
+                method="item/completed",
+                payload={"item": {"type": "agentMessage", "text": message}},
+            ),
+            types.SimpleNamespace(
+                method="turn/completed",
+                payload={"turn": {"status": "completed"}},
+            ),
+        )))
+
     def test_error_without_http_status_stays_null(self):
         detail = meight.failure_detail({
             "error": {"message": "Selected model is at capacity. Please try a different model."},
@@ -307,6 +338,76 @@ class TerminalErrorTests(unittest.TestCase):
                 "Please try a different model.' reason=stream ended",
                 log,
             )
+
+    def test_capacity_failure_retries_same_thread_then_completes(self):
+        class RetryThread:
+            def __init__(self, handles):
+                self.handles = list(handles)
+                self.calls = []
+
+            def turn(self, turn_input, **kwargs):
+                self.calls.append((turn_input, kwargs))
+                return self.handles.pop(0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            worker = meight.Worker(
+                "capacity-retry", home, "/repo", "repo-key", "/repo",
+                "workspace_write", "gpt-5.6-sol", "medium", "default",
+            )
+            worker.dir.mkdir(parents=True)
+            worker.init_status(thread_id="thread-1")
+            worker.generation = 1
+            thread = RetryThread([self._completed_handle()])
+            worker.thread = thread
+
+            with patch.object(meight, "CAPACITY_RETRY_DELAYS_SEC", (0, 0, 0, 0, 0)):
+                worker.consume_stream(
+                    meight.Daemon(home), worker.generation, self._capacity_handle()
+                )
+
+            result = (worker.dir / "result.md").read_text(encoding="utf-8")
+            self.assertEqual(worker.status["state"], "completed")
+            self.assertEqual(worker.status["capacity_retries"], 1)
+            self.assertEqual(result.strip(), "OK")
+            self.assertEqual(len(thread.calls), 1)
+            self.assertEqual(thread.calls[0][0], meight.CAPACITY_RETRY_PROMPT)
+            self.assertEqual(thread.calls[0][1]["service_tier"], "default")
+
+    def test_capacity_failure_stops_after_five_retries(self):
+        class RetryThread:
+            def __init__(self, handles):
+                self.handles = list(handles)
+                self.calls = 0
+
+            def turn(self, turn_input, **kwargs):
+                self.calls += 1
+                return self.handles.pop(0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            worker = meight.Worker(
+                "capacity-exhausted", home, "/repo", "repo-key", "/repo",
+                "workspace_write", "gpt-5.6-sol", "high", "default",
+            )
+            worker.dir.mkdir(parents=True)
+            worker.init_status(thread_id="thread-1")
+            worker.generation = 1
+            thread = RetryThread([self._capacity_handle() for _ in range(5)])
+            worker.thread = thread
+
+            with patch.object(meight, "CAPACITY_RETRY_DELAYS_SEC", (0, 0, 0, 0, 0)):
+                worker.consume_stream(
+                    meight.Daemon(home), worker.generation, self._capacity_handle()
+                )
+
+            result = (worker.dir / "result.md").read_text(encoding="utf-8")
+            events = (worker.dir / "events.log").read_text(encoding="utf-8")
+            self.assertEqual(worker.status["state"], "failed")
+            self.assertEqual(worker.status["capacity_retries"], 5)
+            self.assertEqual(thread.calls, 5)
+            self.assertIn("Selected model is at capacity", result)
+            self.assertIn("[capacity/exhausted] failed after 5 retries", events)
 
 
 class QuestionRoutingTests(unittest.TestCase):
