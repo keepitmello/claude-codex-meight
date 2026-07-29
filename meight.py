@@ -60,7 +60,7 @@ MODE_SKILL_PATHS = {
     "worker": _SKILLS_ROOT / "meight-worker" / "SKILL.md",
 }
 COMMON_CONTRACT_PATH = _SKILLS_ROOT / "meight-common" / "CONTRACT.md"
-PROTOCOL_EPOCH = "posture2"
+PROTOCOL_EPOCH = "ephemeral3"
 DAEMON_CAPABILITIES = [PROTOCOL_EPOCH]
 
 # Every session runs in an explicit mode; the CLI requires it so the contract cannot be skipped.
@@ -637,7 +637,7 @@ class Worker:
         self.thread_source = thread_source
         self.thread_ephemeral = thread_ephemeral
         # Canonical posture; follow/reply turns inherit it. Normalizing here keeps
-        # sessions recorded under legacy four-mode names resumable and echo-consistent.
+        # sessions recorded under legacy four-mode names handoff-consistent.
         self.mode = normalize_mode(mode) or "worker"
         self.thread = None       # openai_codex.Thread (live only while starting/running a turn)
         self.handle = None       # TurnHandle
@@ -1123,14 +1123,14 @@ class Worker:
             })
             self.write_status(force=True)
 
-    def legacy_recovery_context(self) -> str:
-        """Build a bounded handoff when an old ephemeral rollout cannot resume."""
+    def handoff_context(self) -> str:
+        """Build bounded continuity for a fresh ephemeral follow/reply thread."""
         prior_brief = read_text_tail(self.dir / "brief.md")
         prior_result = read_text_tail(self.dir / "result.md")
         prior_events = read_text_tail(self.dir / "events.log", 12_000)
         return (
-            "The previous meight SDK thread was ephemeral and its rollout is no "
-            "longer available. Continue this worker from the durable handoff below. "
+            "Meight uses ephemeral Codex threads so worker sessions do not accumulate "
+            "in the Codex app. Continue this worker from the durable handoff below. "
             "Treat the current repository state as authoritative and inspect it before "
             "making changes.\n\n"
             "## Prior brief\n\n"
@@ -1305,7 +1305,7 @@ class Daemon:
                 pass
 
         # Ownership is now exclusive. Live turns from the previous daemon cannot
-        # be resumed safely; dormant persistent threads can be reopened on follow.
+        # be recovered safely; dormant questions can continue via artifact handoff.
         self._reconcile_startup_orphans()
 
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -1378,7 +1378,7 @@ class Daemon:
                     and status_obj["thread_id"]
                 ):
                     # Final questions are durable dormant states. Their runtime was
-                    # already closed and follow can resume the stored thread_id.
+                    # already closed and follow can continue via artifact handoff.
                     continue
                 timestamp = now_iso()
                 prior_state = status_obj.get("state")
@@ -1696,10 +1696,7 @@ class Daemon:
         name: str,
         status: dict,
     ) -> Worker:
-        """Reattach durable worker metadata; the Codex runtime resumes on follow."""
-        thread_id = status.get("thread_id")
-        if not isinstance(thread_id, str) or not thread_id:
-            raise ValueError(f"worker '{name}' has no resumable thread_id")
+        """Reattach durable worker metadata for an ephemeral follow handoff."""
         sandbox = str(status.get("sandbox") or "full-access").replace("-", "_")
         if sandbox not in set(SANDBOX_MAP.values()):
             raise ValueError(f"worker '{name}' has invalid recorded sandbox: {sandbox!r}")
@@ -1792,12 +1789,11 @@ class Daemon:
         model = normalize_model(req.get("model"))
         effort = req.get("effort") or "medium"
         service_tier = req.get("service_tier")
-        # All workers are persistent subagent threads. They stay out of the main
-        # user-thread list while retaining a rollout that thread_resume can reopen
-        # after runtime cleanup. Legacy clients may still send main_thread, but it
-        # is intentionally ignored so they cannot reintroduce visible workers.
+        # ThreadSource is analytics metadata, not a UI-hiding mechanism. Ephemeral
+        # threads are not materialized in Codex's stored thread listings. Legacy
+        # clients may still send main_thread, but it is intentionally ignored.
         thread_source_label = "subagent"
-        thread_ephemeral = False
+        thread_ephemeral = True
         if ThreadSource is None:
             return {"ok": False, "error": "openai-codex SDK does not expose ThreadSource"}
 
@@ -1954,10 +1950,9 @@ class Daemon:
             effort = w.effort if raw_effort is INHERIT_TURN_SETTING else raw_effort
             service_tier = (w.service_tier if raw_service_tier is INHERIT_TURN_SETTING
                             else raw_service_tier)
-            thread_id = w.status.get("thread_id")
-            resume_thread = w.thread is None
-            legacy_ephemeral = bool(w.status.get("thread_ephemeral", w.thread_ephemeral))
-            recovery_context = w.legacy_recovery_context() if legacy_ephemeral else ""
+            previous_thread_id = w.status.get("thread_id")
+            reuse_ephemeral_thread = w.thread is not None and w.thread_ephemeral
+            recovery_context = "" if reuse_ephemeral_thread else w.handoff_context()
 
             reminder = build_follow_reminder(w.mode)
             turn_input = f"{reminder}{brief}" if use_preamble else brief
@@ -1969,43 +1964,36 @@ class Daemon:
 
         # Data-plane phase — outside reg_lock for the same reason as cmd_start.
         try:
-            if resume_thread:
+            if not reuse_ephemeral_thread:
                 from openai_codex import Codex, CodexConfig, Sandbox
                 from openai_codex.types import ThreadSource
 
                 w.codex = Codex(config=CodexConfig(codex_bin=system_codex_bin()))
                 install_computer_use_approval_bridge(w.codex, w.name)
                 relax_sdk_effort_echo()
-                if legacy_ephemeral:
-                    old_thread_id = thread_id
-                    w.thread = w.codex.thread_start(
-                        cwd=w.cwd,
-                        ephemeral=False,
-                        sandbox=getattr(Sandbox, w.sandbox),
-                        service_tier=service_tier,
-                        thread_source=ThreadSource.subagent,
-                    )
-                    thread_id = w.thread.id
-                    turn_input = f"{recovery_context}{turn_input}"
-                    with w.lock:
-                        w.thread_ephemeral = False
-                        w.thread_source = "subagent"
-                        w.status["thread_id"] = thread_id
-                        w.status["thread_ephemeral"] = False
-                        w.status["thread_source"] = "subagent"
-                        w.status["recovered_from_thread_id"] = old_thread_id
-                        w.write_status(force=True)
-                    w.log_event(
-                        "thread/recovered",
-                        f"legacy ephemeral thread {old_thread_id} continued as {thread_id}",
-                    )
-                else:
-                    w.thread = w.codex.thread_resume(
-                        thread_id,
-                        cwd=w.cwd,
-                        sandbox=getattr(Sandbox, w.sandbox),
-                        service_tier=service_tier,
-                    )
+                w.thread = w.codex.thread_start(
+                    cwd=w.cwd,
+                    ephemeral=True,
+                    sandbox=getattr(Sandbox, w.sandbox),
+                    service_tier=service_tier,
+                    thread_source=ThreadSource.subagent,
+                )
+                thread_id = w.thread.id
+                turn_input = f"{recovery_context}{turn_input}"
+                with w.lock:
+                    w.thread_ephemeral = True
+                    w.thread_source = "subagent"
+                    w.status["thread_id"] = thread_id
+                    w.status["thread_ephemeral"] = True
+                    w.status["thread_source"] = "subagent"
+                    w.status["continued_from_thread_id"] = previous_thread_id
+                    w.write_status(force=True)
+                w.log_event(
+                    "thread/handoff",
+                    f"ephemeral handoff {previous_thread_id or '(none)'} -> {thread_id}",
+                )
+            else:
+                thread_id = previous_thread_id
             relax_sdk_effort_field()
             w.handle = w.thread.turn(
                 turn_input,

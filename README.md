@@ -306,8 +306,8 @@ Common options:
   On `follow`/`reply`, omitting `--model`, `--effort`, and Fast flags inherits
   the worker's current values; an explicit override applies to that new turn
   and becomes the value inherited by later turns.
-- Workers use persistent subagent threads, which remain hidden from the main
-  Codex Desktop thread list but remain resumable.
+- Workers use ephemeral threads so they are not added to Codex's stored thread
+  listings. `thread_source=subagent` is retained only as source metadata.
 
 Omitted `start`/`dispatch` settings resolve in the CLI before the request is
 sent:
@@ -328,11 +328,11 @@ environment override layer. Start output echoes every resolved value with
 
 Worker state lives in
 `<daemon-home>/repos/<repo-key>/workers/<name>/`: `brief.md`, `status.json`,
-`events.log`, and `result.md`. Terminal workers keep disk artifacts but release their SDK
-runtime immediately. A final structured `QUESTION:` also releases its runtime
-and remains as a dormant disk row. `reply`/`follow` opens a fresh app-server,
-resumes the stored `thread_id`, and continues the same thread even after daemon
-restart or in-memory worker GC.
+`events.log`, and `result.md`. Terminal workers keep disk artifacts but release
+their SDK runtime immediately. A final structured `QUESTION:` also releases its
+runtime and remains as a dormant disk row. `reply`/`follow` opens a fresh
+ephemeral thread and injects a bounded handoff from saved brief, result, and
+recent events, including after daemon restart or in-memory worker GC.
 
 The daemon derives and verifies the repo key and state home instead of trusting
 socket request paths. Its home, `repos/`, and repo/worker state directories are
@@ -347,25 +347,25 @@ never removes active, replyable, malformed, symlinked, or currently registered
 workers, and uses immutable `terminal_at` (`updated_at` only for legacy rows).
 After a daemon crash/restart, orphaned active rows become
 `failed`/`runtime_lost_detail`. Final questions and terminal workers remain
-resumable. Legacy ephemeral workers continue in a new persistent subagent
-thread with a bounded handoff built from their saved brief, result, and events.
+continuable through the same bounded artifact handoff.
 
 ## Upgrading An Old Daemon To A New Protocol Epoch
 
 The CLI fails closed before `start` when `meight ping` does not advertise the
-current capability (`posture2`). Every start/follow request carries the epoch,
+current capability (`ephemeral3`). Every start/follow request carries the epoch,
 and every successful response atomically echoes normalized mode plus epoch. The
 CLI validates both, so even a same-token daemon swapped mid-handshake cannot
 silently use an old contract. Drain and restart manually:
 
 1. Inspect `meight list --all-repos --json`; wait until no session across any
-   repo is `starting`, `running`, or `needs_input`.
+   repo has a live turn (`starting`, `running`, or tool-sourced `needs_input`).
+   A final `QUESTION:` row is dormant and does not block migration.
 2. Run non-force `meight shutdown`. If it refuses, finish draining; do not use
    `--force` for this migration.
 3. Branch on LaunchAgent state. If loaded, run `meight launchd install --load`
    and verify its bounded `bootout --wait` transfer selects the fresh daemon;
    if not loaded, start the daemon normally.
-4. Confirm `meight ping` shows `capabilities=posture2`, then verify the new
+4. Confirm `meight ping` shows `capabilities=ephemeral3`, then verify the new
    daemon PID and socket identity.
 5. Run a throwaway `--mode worker` smoke (brief-directed read-only) and verify
    status mode plus `meight-worker` and common preamble paths.
@@ -380,8 +380,9 @@ silently use an old contract. Drain and restart manually:
 - Meight uses the current system `codex` executable rather than the SDK's
   bundled runtime. Set `MEIGHT_CODEX_BIN` only when an explicit executable
   override is needed.
-- Sessions start as hidden persistent Codex subagent threads by default:
-  `thread_source=subagent`, `thread_ephemeral=false`.
+- Sessions start as non-persisted Codex threads:
+  `thread_source=subagent`, `thread_ephemeral=true`. The source value is
+  metadata; `ephemeral=true` is what prevents app/session-history accumulation.
 - Foreground `meight daemon` exits after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with
   no active workers by default. Managed `dispatch` auto-start and LaunchAgent
   starts disable idle shutdown; verify idle and retention values with

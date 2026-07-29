@@ -45,7 +45,6 @@ h.steer("text")
 h.interrupt()
 h.stream()                            # -> Iterator[Notification]
 h.run()
-codex.thread_resume(thread_id)        # restores a released worker runtime from durable status
 ```
 
 - `Notification` objects expose `.method` as a string and `.payload` as a
@@ -120,7 +119,7 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   "model": null,
   "effort": "medium",
   "thread_source": "subagent",
-  "thread_ephemeral": false,
+  "thread_ephemeral": true,
   "current_item": "commandExecution: pnpm typecheck:be (12s)",
   "plan": ["[done] step1", "[active] step2"],
   "files_changed": ["src/x.ts"],
@@ -170,11 +169,11 @@ The command table must match the `python3 meight.py --help` subcommand list exac
 | Command | Behavior |
 |---|---|
 | `daemon [--idle-timeout-sec SEC]` | Run the foreground global daemon. The orchestrator starts it in the background. If a live daemon already exists, return exit `1`. `0` disables idle shutdown. |
-| `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid, runtime `idle_timeout_sec`, `session_retention_sec`, and advertised `capabilities=["posture2"]`. |
+| `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid, runtime `idle_timeout_sec`, `session_retention_sec`, and advertised `capabilities=["ephemeral3"]`. |
 | `launchd install [--load]` / `launchd status` / `launchd uninstall` | Manage the optional macOS LaunchAgent. The plist uses `RunAtLoad=true` and crash-only `KeepAlive={SuccessfulExit=false}`. `install --load` non-force drains a live daemon, waits boundedly for its acknowledged PID/socket exit, runs `launchctl bootout --wait` with a subprocess timeout for a loaded job, writes/bootstraps the plist, and requires a fresh ping/PID. Active sessions or timeouts refuse transfer. |
-| `start <name> --mode mate\|worker (--brief-file F\|- \| --brief TEXT) [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble]` | Start a new hidden, persistent Codex session with `thread_start(ephemeral=False, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--mode` is required; legacy names `design`, `collab`, `collaborative`, `review`, `delegate`, and `delegated` are accepted aliases. Before sending `start`, the CLI requires capability `posture2`. The request carries `protocol_epoch=posture2`; success atomically echoes normalized mode plus epoch, both validated by the CLI. The visible start line includes resolved mode, model, effort, Fast, and sandbox values with provenance. Omitted settings use the mode defaults. Other defaults are `cwd=current directory`, `thread_source=subagent`, and `thread_ephemeral=false`. All workers use the hidden subagent source. Reject duplicate active names inside the same repo namespace. |
+| `start <name> --mode mate\|worker (--brief-file F\|- \| --brief TEXT) [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble]` | Start a new non-persisted Codex session with `thread_start(ephemeral=True, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--mode` is required; legacy names `design`, `collab`, `collaborative`, `review`, `delegate`, and `delegated` are accepted aliases. Before sending `start`, the CLI requires capability `ephemeral3`. The request carries `protocol_epoch=ephemeral3`; success atomically echoes normalized mode plus epoch, both validated by the CLI. The visible start line includes resolved mode, model, effort, Fast, and sandbox values with provenance. Omitted settings use the mode defaults. Other defaults are `cwd=current directory`, `thread_source=subagent`, and `thread_ephemeral=true`. Reject duplicate active names inside the same repo namespace. |
 | `dispatch <name> --mode mate\|worker (--brief-file F\|- \| --brief TEXT) [start opts] [--timeout SEC] [--shutdown-when-idle]` | One-shot command: auto-start daemon if needed, capability-check, `start`, `wait`, then print `result.md`. Mode is required. Default timeout is `1800` seconds. Exit code matches `wait`. |
-| `follow <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble]` | Start a new turn on the same persisted thread for a terminal session or one waiting on a final `QUESTION:`. It inherits recorded mode and omitted turn settings. Every completed stream releases its SDK runtime; follow restores metadata and calls `thread_resume` with the stored `thread_id`. A legacy `thread_ephemeral=true` row has no resumable rollout, so follow starts a persistent hidden subagent thread and injects a bounded handoff from saved brief, result, and recent events. |
+| `follow <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble]` | Continue a terminal session or one waiting on a final `QUESTION:`. It inherits recorded mode and omitted turn settings. Every completed stream releases its SDK runtime; follow restores metadata, starts a fresh ephemeral thread, and injects a bounded handoff from saved brief, result, and recent events. |
 | `reply <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--shutdown-when-idle]` | One-shot answer path: `follow`, `wait`, then print `result.md`. It inherits mode and per-turn setting overrides from `follow`. Default timeout is `1800` seconds. |
 | `steer <name> TEXT` | Inject mid-turn text into a running turn. Return an error unless the worker is currently running. |
 | `interrupt <name>` | Interrupt the active turn. For `ACTIVE` workers without a live `TurnHandle` yet, including the initial starting/SDK phase and follow/reply SDK phase, set `interrupt_requested`, return ok with a recorded-interrupt note, and let the atomic post-SDK commit abort the turn. |
@@ -190,7 +189,7 @@ By default, `start`, `dispatch`, `follow`, and `reply` prepend runtime contract
 context to the brief. `--no-preamble` disables this.
 
 `start` and `dispatch` build a mode-specific preamble at dispatch time. Mode
-selects the session contract and skill (protocol epoch `posture2`):
+selects the session contract and skill (protocol epoch `ephemeral3`):
 
 - `mate` (legacy aliases `design` / `collab` / `collaborative` / `review`):
   `skills/meight-mate/SKILL.md` — thinking partner for blind or anchored
@@ -265,8 +264,8 @@ release, registry GC, daemon restart, or interruption.
   Example: `{"cmd":"start",...}` -> `{"ok":true}` or
   `{"ok":false,"error":"..."}`.
 - `ping` and `runtime_status` responses advertise only
-  `"capabilities": ["posture2"]`. Start/follow requests carry
-  `"protocol_epoch": "posture2"`.
+  `"capabilities": ["ephemeral3"]`. Start/follow requests carry
+  `"protocol_epoch": "ephemeral3"`.
 - The daemon validates epoch before imports, path resolution or creation,
   registry reservation, SDK startup, turn start, or any other start/follow
   side effect. It then validates start mode before start side effects.
@@ -286,9 +285,9 @@ release, registry GC, daemon restart, or interruption.
   their SDK runtime after the stream ends. This closes the worker-owned
   `codex app-server`, its MCP subprocesses, and stdio file descriptors.
 - Final `QUESTION:` workers release the completed turn's `TurnHandle`, `Thread`,
-  and worker-owned SDK runtime. Their disk row and `thread_id` remain dormant;
-  `reply`/`follow` starts a fresh runtime and calls `thread_resume` before the
-  next turn.
+  and worker-owned SDK runtime. Their disk row and correlation `thread_id`
+  remain dormant; `reply`/`follow` starts a fresh ephemeral thread and injects
+  a bounded artifact handoff before the next turn.
 - Terminal workers are removed from daemon memory after
   `MEIGHT_WORKER_GC_TTL_SEC` (default `3600`; `0` disables). Foreground
   `meight daemon` exits after `MEIGHT_IDLE_TIMEOUT_SEC` seconds with no active
@@ -315,7 +314,8 @@ release, registry GC, daemon restart, or interruption.
   marks orphaned `starting`, `running`, and tool-wait rows `failed` with
   `runtime_lost_detail` and `terminal_at`.
 - `follow` rehydrates terminal and final-question workers from disk after daemon
-  restart or registry GC, then resumes their hidden thread by `thread_id`.
+  restart or registry GC, then starts a fresh ephemeral thread with a bounded
+  handoff from saved brief, result, and recent events.
   Low-level follow-up work after a terminal result may continue only
   inside a still-valid approved campaign and remaining worker/repair cap.
   Otherwise the orchestrator returns to the user instead of dispatching.
@@ -383,7 +383,7 @@ immutable terminal timestamps, orphan reconciliation, retention safety/races,
 launchd payload/routing/ownership transfer, and accept-loop exit classification.
 
 1. Start `daemon` in the background with a temporary `MEIGHT_HOME`, then confirm
-   `ping` returns capability `posture2` and the socket lives under that global home.
+   `ping` returns capability `ephemeral3` and the socket lives under that global home.
 2. Run:
    `start t1 --mode worker --brief "create /tmp/fleet-test/hello.txt with content 'hi', then reply DONE" --cwd /tmp/fleet-test --sandbox ws`
    Then `wait t1` must exit `0`; the file must exist; repo-scoped `status.json`,
@@ -398,8 +398,8 @@ launchd payload/routing/ownership transfer, and accept-loop exit classification.
    same `MEIGHT_HOME`; confirm one daemon pid and separate repo-scoped
    `status.json` files.
 6. Reply test: create a final-`QUESTION` worker, confirm its app-server exits,
-   restart the daemon, answer it, and confirm the same `thread_id`, `turns=2`,
-   and a separator in `result.md`.
+   restart the daemon, answer it, and confirm a new ephemeral `thread_id`,
+   `continued_from_thread_id`, `turns=2`, and a separator in `result.md`.
 7. Runtime release test: complete a non-question worker and confirm its worker
    runtime is no longer attached while disk artifacts remain readable.
 8. Lifecycle test: with small `MEIGHT_IDLE_TIMEOUT_SEC` and
@@ -407,7 +407,7 @@ launchd payload/routing/ownership transfer, and accept-loop exit classification.
    memory while disk result files remain and the daemon exits when idle.
 9. Restart/lost-worker test: restart during a running worker and confirm it
    becomes failed with `runtime_lost_detail`; restart after a final `QUESTION`
-   and confirm it remains dormant and resumable.
+   and confirm it remains dormant and handoff-capable.
 10. Force-shutdown test: create a final-`QUESTION` worker, run
     `shutdown --force`, and confirm the worker state becomes `interrupted`.
 11. Shutdown/post-SDK race test: cover both orderings around the post-SDK
@@ -435,7 +435,7 @@ launchd payload/routing/ownership transfer, and accept-loop exit classification.
 17. Accept-loop unit test: intentional close returns zero; unexpected accept
     failure returns nonzero for crash supervision.
 
-### Safe Mode4 Migration Checklist
+### Safe Ephemeral3 Migration Checklist
 
 This is operator-run after the old daemon finishes serving current sessions;
 implementation must not restart it.
@@ -448,7 +448,7 @@ implementation must not restart it.
 3. Branch on LaunchAgent state. Loaded uses `meight launchd install --load` and
    verifies bounded `bootout --wait` ownership transfer; unloaded uses normal
    daemon startup.
-4. Require `meight ping` to advertise `capabilities=posture2` and verify the
+4. Require `meight ping` to advertise `capabilities=ephemeral3` and verify the
    fresh daemon PID and socket identity.
 5. Run a throwaway worker smoke (brief-directed read-only) and verify status
    mode plus `meight-worker` and common preamble paths.

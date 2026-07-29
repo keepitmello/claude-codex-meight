@@ -5,8 +5,8 @@
 > 문서를 갱신할 것. (역사적 경위는 decisions/를, 운영 프로토콜은 skills/를
 > 신뢰 — 충돌 시 그쪽이 이긴다.)
 >
-> LAST UPDATED: 2026-07-29 (worker 기본 `luna max` + Fast off, 모델 라우팅은
-> 실패 비용 판단으로 통일, 난이도는 mate 단계 추가로 대응)
+> LAST UPDATED: 2026-07-30 (Codex 앱 기록 누적을 막기 위해 모든 워커를
+> ephemeral thread + bounded artifact handoff로 전환)
 > 이전: 2026-07-28 (posture2 — 2자세 통합, 샌드박스 강제 제거)
 
 ## 현재 상태 스냅샷
@@ -39,7 +39,11 @@
   reviewer는 `sol high`; 비리뷰 mate의 `high`는 진짜 어려운 것만(dispatcher
   판단 + 사용자 확인). sol에 xhigh는 쓰지 않는다. 근거:
   `docs/2026-07-29-model-routing-evidence.md`.
-- **fail-closed 기계**: 데몬 경계 epoch `posture2` 검증이 모든 start/follow
+- **세션 저장 정책**: `thread_source=subagent`는 analytics 메타데이터일 뿐
+  앱 숨김 기능이 아니다. 모든 start는 `thread_ephemeral=true`; follow/reply는
+  새 ephemeral thread에 brief·result·recent events의 bounded handoff를
+  주입한다.
+- **fail-closed 기계**: 데몬 경계 epoch `ephemeral3` 검증이 모든 start/follow
   부작용보다 앞선다. start/follow 성공 응답의 normalized mode+epoch를 CLI가
   함께 검증하고 불일치 시 interrupt 클린업한다. 레거시 status 행은 계속
   무충돌 렌더한다.
@@ -107,7 +111,7 @@
 
 - 데몬은 meight.py 수정 후 재시작해야 새 코드 반영. epoch 재시작 절차(전역
   드레인 → non-force shutdown → LaunchAgent 로드 여부 분기 → 새 PID/socket 및
-  capability(`posture2`) 확인 → worker와 mate 2종 라이브 스모크)는 README
+  capability(`ephemeral3`) 확인 → worker와 mate 2종 라이브 스모크)는 README
   "Upgrading" 섹션.
   non-force 가드가 타 세션 워커를 두 번 실제로 보호했다 — `--force` 금지.
 - 스킬/독 파일은 프리앰블이 읽는 공유 자원 — 워커가 수정 중일 때 새 워커

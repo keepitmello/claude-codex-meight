@@ -33,7 +33,7 @@ description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-mei
 
 mate 기본 effort는 `medium`이다 — 정말 어려운 문제만 `--effort high`로 올린다 (`sol`의 상한은 `high`다). 리뷰도 일반 텍스트로 판단을 반환하며, 외부 라우팅이 필요하면 마지막에 `QUESTION:`을 남긴다.
 
-CLI는 `start` 전에 capability handshake를 한다. 살아있는 데몬이 capability `posture2`를 광고하지 않으면 start는 fail closed. 모든 start/follow는 epoch `posture2`를 싣고, 성공 시 정규화 모드와 epoch를 원자적으로 echo해야 한다 — 아니면 CLI가 best-effort interrupt 후 nonzero 종료.
+CLI는 `start` 전에 capability handshake를 한다. 살아있는 데몬이 capability `ephemeral3`를 광고하지 않으면 start는 fail closed. 모든 start/follow는 epoch `ephemeral3`를 싣고, 성공 시 정규화 모드와 epoch를 원자적으로 echo해야 한다 — 아니면 CLI가 best-effort interrupt 후 nonzero 종료.
 
 ## 모델 선택 (GPT-5.6: sol / terra / luna)
 

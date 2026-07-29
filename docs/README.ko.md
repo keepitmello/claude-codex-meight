@@ -293,8 +293,8 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
   `follow`/`reply`에서 `--model`, `--effort`, Fast 플래그를 생략하면 워커의
   현재 값을 상속하고, 명시하면 그 턴에 적용된 뒤 이후 턴이 상속하는 값이
   된다.
-- 워커는 항상 메인 Codex Desktop 쓰레드 목록에 나타나지 않는 persistent
-  subagent 스레드를 사용하지만, 나중에 재개할 수 있다.
+- 워커는 Codex 저장 쓰레드 목록에 추가되지 않는 ephemeral 스레드를 쓴다.
+  `thread_source=subagent`는 source 메타데이터로만 유지한다.
 
 생략된 `start`/`dispatch` 설정은 요청을 보내기 전에 CLI에서 해소된다:
 
@@ -313,10 +313,10 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 출처와 함께 보여준다.
 
 워커 상태는 `<daemon-home>/repos/<repo-key>/workers/<name>/`에 산다:
-`brief.md`, `status.json`, `events.log`, `result.md`. terminal 워커는 디스크 아티팩트를 남기고 SDK
-런타임은 즉시 놓는다. 최종 구조화 `QUESTION:`도 런타임을 놓고 dormant 디스크
-행으로 남는다. `reply`/`follow`는 새 app-server를 열어 저장된 `thread_id`를
-재개하고, 데몬 재시작이나 인메모리 워커 GC 이후에도 같은 스레드를 잇는다.
+`brief.md`, `status.json`, `events.log`, `result.md`. terminal 워커는 디스크
+아티팩트를 남기고 SDK 런타임은 즉시 놓는다. 최종 구조화 `QUESTION:`도
+런타임을 놓고 dormant 디스크 행으로 남는다. `reply`/`follow`는 새 ephemeral
+스레드를 열고 저장된 brief·result·recent events의 bounded handoff를 주입한다.
 
 데몬은 소켓 요청의 경로를 믿는 대신 repo key와 상태 홈을 스스로 도출·검증한다.
 홈, `repos/`, 레포/워커 상태 디렉토리는 owner-only(`0700`)이고, 워커 상태
@@ -329,26 +329,25 @@ terminal 아티팩트는 기본 30일 보존된다. `MEIGHT_SESSION_RETENTION_SE
 최대 시간당 한 번 돌고, 활성·답변 가능·malformed·symlink·현재 등록된 워커는
 절대 지우지 않으며, 불변 `terminal_at`(레거시 행만 `updated_at`)을 쓴다. 데몬
 크래시/재시작 후 고아가 된 활성 행은 `failed`/`runtime_lost_detail`이 된다.
-최종 질문과 terminal 워커는 계속 재개 가능하다. 레거시 ephemeral 워커는
-저장된 brief·result·events로 만든 bounded 핸드오프와 함께 새 persistent
-subagent 스레드에서 이어진다.
+최종 질문과 terminal 워커는 같은 bounded artifact handoff로 계속할 수 있다.
 
 ## 옛 데몬을 새 프로토콜 epoch로 올리기
 
-살아있는 데몬이 현재 capability(`posture2`)를 광고하지 않으면 CLI는 `start`
+살아있는 데몬이 현재 capability(`ephemeral3`)를 광고하지 않으면 CLI는 `start`
 전에 fail closed한다. 모든 start/follow 요청이 epoch를 싣고, 모든 성공 응답이
 정규화된 mode와 epoch를 원자적으로 에코하며, CLI가 둘 다 검증한다 —
 핸드셰이크 중간에 바꿔치기된 same-token 데몬도 옛 계약을 조용히 쓸 수 없다.
 드레인과 재시작은 수동으로 한다:
 
-1. `meight list --all-repos --json`을 확인하고, 어느 레포에도
-   `starting`/`running`/`needs_input` 세션이 없어질 때까지 기다린다.
+1. `meight list --all-repos --json`을 확인하고, 어느 레포에도 live turn
+   (`starting`, `running`, tool-sourced `needs_input`)이 없어질 때까지 기다린다.
+   최종 `QUESTION:` 행은 dormant라 마이그레이션을 막지 않는다.
 2. 비강제 `meight shutdown`을 실행한다. 거부하면 드레인을 마저 한다 — 이
    마이그레이션에 `--force`는 쓰지 않는다.
 3. LaunchAgent 상태로 분기한다. 로드돼 있으면 `meight launchd install
    --load`를 쓰고 bounded `bootout --wait` 이전이 새 데몬을 고르는지
    확인한다. 로드 안 돼 있으면 데몬을 평소대로 기동한다.
-4. `meight ping`이 `capabilities=posture2`를 보이는지 확인하고, 새 데몬 PID와
+4. `meight ping`이 `capabilities=ephemeral3`를 보이는지 확인하고, 새 데몬 PID와
    소켓 정체성을 확인한다.
 5. 버리는 `--mode worker` 스모크 하나(브리프로 read-only 지시)를 돌려 status
    mode와 `meight-worker` + common preamble 경로를 확인한다.
@@ -362,8 +361,9 @@ subagent 스레드에서 이어진다.
   터미널에서 `codex`가 되면 `meight`도 된다.
 - meight는 SDK에 번들된 런타임 대신 현재 시스템의 `codex` 실행 파일을 쓴다.
   명시적 오버라이드가 필요할 때만 `MEIGHT_CODEX_BIN`을 설정한다.
-- 세션은 항상 숨은 persistent Codex subagent 스레드로 시작한다:
-  `thread_source=subagent`, `thread_ephemeral=false`.
+- 세션은 Codex 앱 기록에 남지 않는 ephemeral 스레드로 시작한다:
+  `thread_source=subagent`, `thread_ephemeral=true`. source 값은 메타데이터이고,
+  앱/세션 기록 누적을 막는 것은 `ephemeral=true`다.
 - 포그라운드 `meight daemon`은 활성 워커가 없으면 기본
   `MEIGHT_IDLE_TIMEOUT_SEC`초 후 종료한다. 관리형 `dispatch` 자동 기동과
   LaunchAgent 기동은 idle 종료를 끈다. 실제 idle·보존 값은 `meight ping`으로

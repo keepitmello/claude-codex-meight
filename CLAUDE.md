@@ -89,7 +89,7 @@ would cause it to be revisited.
 ## Daemon Epoch Migration
 
 The CLI fails closed when the live daemon does not advertise the current
-protocol capability (`posture2`). To migrate: drain active rows, non-force
+protocol capability (`ephemeral3`). To migrate: drain live-turn rows, non-force
 `meight shutdown`, restart per LaunchAgent state, confirm `meight ping` shows
 the capability, then smoke one `--mode worker` and one `--mode mate` throwaway
 session. Full checklist:

@@ -33,9 +33,10 @@ PY="$(command -v python3 || true)"
 
 # 2. venv + pinned SDK
 echo "→ creating venv at $REPO_DIR/.venv"
-"$PY" -m venv "$REPO_DIR/.venv"
-"$REPO_DIR/.venv/bin/pip" install --quiet --upgrade pip
-"$REPO_DIR/.venv/bin/pip" install --quiet "$SDK_PIN"
+"$PY" -m venv --clear "$REPO_DIR/.venv"
+VENV_PY="$REPO_DIR/.venv/bin/python"
+"$VENV_PY" -m pip install --quiet --upgrade pip
+"$VENV_PY" -m pip install --quiet "$SDK_PIN"
 echo "→ installed $SDK_PIN"
 
 # 3. CLI shim

@@ -1148,7 +1148,7 @@ class ModeLifecycleTests(unittest.TestCase):
             "--brief", "Review the contract.", "--cwd", cwd,
         ])
 
-    def test_final_question_releases_runtime_but_preserves_resumable_status(self):
+    def test_final_question_releases_runtime_but_preserves_handoff_status(self):
         class ClosableCodex:
             def __init__(self):
                 self.closed = 0
@@ -1191,7 +1191,7 @@ class ModeLifecycleTests(unittest.TestCase):
             self.assertEqual(worker.status["state"], "needs_input")
             self.assertEqual(worker.status["thread_id"], "thread-question")
 
-    def test_follow_rehydrates_dormant_worker_and_resumes_saved_thread(self):
+    def test_follow_rehydrates_dormant_worker_into_ephemeral_handoff(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             context = meight.repo_context(home, "/repo")
@@ -1215,15 +1215,18 @@ class ModeLifecycleTests(unittest.TestCase):
             worker.write_status(force=True)
 
             capture_thread = self._CaptureThread()
-            resumed = []
+            started = []
 
             class FakeCodex:
                 def __init__(self, config):
                     self.config = config
 
-                def thread_resume(self, thread_id, **kwargs):
-                    resumed.append((thread_id, kwargs))
+                def thread_start(self, **kwargs):
+                    started.append(kwargs)
                     return capture_thread
+
+                def thread_resume(self, *_args, **_kwargs):
+                    raise AssertionError("follow must not resume a persisted app thread")
 
                 def close(self):
                     return None
@@ -1238,6 +1241,9 @@ class ModeLifecycleTests(unittest.TestCase):
             )
             fake_types = types.ModuleType("openai_codex.types")
             fake_types.ThreadSource = types.SimpleNamespace(subagent="subagent")
+            (worker.dir / "brief.md").write_text("Original persistent brief.\n")
+            (worker.dir / "result.md").write_text("Prior answer.\n")
+            (worker.dir / "events.log").write_text("[turn/completed] prior\n")
 
             daemon = meight.Daemon(home)
             with (
@@ -1258,23 +1264,29 @@ class ModeLifecycleTests(unittest.TestCase):
                 })
 
             self.assertTrue(response["ok"], response)
-            self.assertEqual(response["thread_id"], "thread-resume")
-            self.assertEqual(resumed, [(
-                "thread-resume",
-                {
-                    "cwd": "/repo",
-                    "sandbox": "workspace_write",
-                    "service_tier": None,
-                },
-            )])
+            self.assertEqual(response["thread_id"], "thread-mode-test")
+            self.assertEqual(started, [{
+                "cwd": "/repo",
+                "ephemeral": True,
+                "sandbox": "workspace_write",
+                "service_tier": None,
+                "thread_source": "subagent",
+            }])
+            self.assertIn("Original persistent brief.", capture_thread.inputs[0])
+            self.assertIn("Prior answer.", capture_thread.inputs[0])
+            self.assertIn("Continue from the saved question.", capture_thread.inputs[0])
             restored = daemon.workers[
                 meight.registry_key(context["repo_key"], worker.name)
             ]
             self.assertEqual(restored.status["turns"], 2)
             self.assertEqual(restored.status["state"], "starting")
+            self.assertTrue(restored.status["thread_ephemeral"])
+            self.assertEqual(
+                restored.status["continued_from_thread_id"], "thread-resume"
+            )
             self.assertEqual(capture_thread.turn_kwargs[0]["model"], "gpt-5.6-sol")
 
-    def test_follow_recovers_legacy_ephemeral_worker_into_persistent_subagent(self):
+    def test_follow_continues_ephemeral_worker_with_bounded_handoff(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
             context = meight.repo_context(home, "/repo")
@@ -1311,7 +1323,7 @@ class ModeLifecycleTests(unittest.TestCase):
                     return capture_thread
 
                 def thread_resume(self, *_args, **_kwargs):
-                    raise AssertionError("legacy ephemeral worker must not call thread_resume")
+                    raise AssertionError("ephemeral worker must not call thread_resume")
 
                 def close(self):
                     return None
@@ -1346,7 +1358,7 @@ class ModeLifecycleTests(unittest.TestCase):
                 })
 
             self.assertTrue(response["ok"])
-            self.assertEqual(started[0]["ephemeral"], False)
+            self.assertEqual(started[0]["ephemeral"], True)
             self.assertEqual(started[0]["thread_source"], "subagent")
             self.assertIn("Original legacy brief.", capture_thread.inputs[0])
             self.assertIn("Work stopped after schema changes.", capture_thread.inputs[0])
@@ -1355,8 +1367,10 @@ class ModeLifecycleTests(unittest.TestCase):
                 meight.registry_key(context["repo_key"], worker.name)
             ]
             self.assertEqual(restored.status["thread_id"], "thread-mode-test")
-            self.assertEqual(restored.status["recovered_from_thread_id"], "thread-legacy")
-            self.assertFalse(restored.status["thread_ephemeral"])
+            self.assertEqual(
+                restored.status["continued_from_thread_id"], "thread-legacy"
+            )
+            self.assertTrue(restored.status["thread_ephemeral"])
 
     def test_wait_returns_dormant_question_without_live_runtime(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2078,7 +2092,7 @@ class ModeLifecycleTests(unittest.TestCase):
             self.assertNotIn("report", status)
             self.assertEqual(status["mode"], "mate")
             self.assertEqual(status["thread_source"], "subagent")
-            self.assertFalse(status["thread_ephemeral"])
+            self.assertTrue(status["thread_ephemeral"])
             self.assertNotIn("output_schema", capture_thread.turn_kwargs[0])
             self.assertIn("skills/meight-mate/SKILL.md", capture_thread.inputs[0])
 
