@@ -301,7 +301,8 @@ Common options:
 - `--sandbox ws|ro|full` uses the mode default below.
 - `--model luna|sol|terra` accepts the short aliases; full model strings pass
   through unchanged.
-- `--effort low|medium|high|xhigh|ultra|max` uses the mode default below.
+- `--effort low|medium|high|xhigh|ultra|max` uses the selected model's default
+  for `sol`/`luna` (`medium`/`max`); otherwise it uses the mode default below.
 - `--fast` selects priority service tier and `--no-fast` disables it.
   On `follow`/`reply`, omitting `--model`, `--effort`, and Fast flags inherits
   the worker's current values; an explicit override applies to that new turn
@@ -316,6 +317,9 @@ sent:
 |---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `full` |
 | `worker` | `luna` | `max` | off | `full` |
+
+An explicit `--model sol|luna` without `--effort` reselects that model's effort
+default. An explicit `--effort` always wins.
 
 Neither posture enforces a sandbox: read-only is brief-driven policy (the mate
 contract defaults to not modifying repository files), and `--sandbox` remains

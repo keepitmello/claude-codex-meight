@@ -288,7 +288,8 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 - `--sandbox ws|ro|full`은 아래 모드 기본값을 쓴다.
 - `--model luna|sol|terra`는 짧은 별칭을 받고, 전체 모델 문자열은 그대로
   통과한다.
-- `--effort low|medium|high|xhigh|ultra|max`는 아래 모드 기본값을 쓴다.
+- `--effort low|medium|high|xhigh|ultra|max`는 `sol`/`luna`에서 선택 모델의
+  기본값(`medium`/`max`)을 쓰고, 그 밖에는 아래 모드 기본값을 쓴다.
 - `--fast`는 priority 서비스 티어를 고르고 `--no-fast`는 끈다.
   `follow`/`reply`에서 `--model`, `--effort`, Fast 플래그를 생략하면 워커의
   현재 값을 상속하고, 명시하면 그 턴에 적용된 뒤 이후 턴이 상속하는 값이
@@ -302,6 +303,9 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 |---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `full` |
 | `worker` | `luna` | `max` | off | `full` |
+
+`--effort` 없이 `--model sol|luna`를 명시하면 해당 모델의 effort 기본값을
+다시 고른다. `--effort`를 명시하면 언제나 그 값이 우선한다.
 
 어느 자세도 샌드박스를 강제하지 않는다: read-only는 브리프가 정하는
 정책이고(mate 계약은 브리프가 시키지 않는 한 레포 파일을 고치지 않는 게

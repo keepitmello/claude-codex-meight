@@ -29,7 +29,12 @@ description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-mei
 | `mate` | `sol` | `medium` | off | `full` |
 | `worker` | `luna` | `max` | off | `full` |
 
-표준은 조용하다 — 편차만 플래그로 주고, 명시한 플래그는 항상 기본값을 이긴다. 이 표는 의도적으로 `meight.py` 안의 코드 전용 운영 정책이다. config 파일이나 환경변수 오버라이드 레이어는 없다. start echo가 해소된 값 전부를 `(default)` / `(set)` 출처와 함께 보여준다.
+`--effort` 없이 `--model sol|luna`만 명시하면 선택 모델의 effort 기본값
+(`medium`/`max`)을 다시 고른다. 명시한 `--effort`는 언제나 그 기본값을
+이긴다. 표준은 조용하다 — 편차만 플래그로 준다. 이 표와 모델별 effort
+기본값은 의도적으로 `meight.py` 안의 코드 전용 운영 정책이다. config 파일이나
+환경변수 오버라이드 레이어는 없다. start echo가 해소된 값 전부를
+`(default)` / `(set)` 출처와 함께 보여준다.
 
 mate 기본 effort는 `medium`이다 — 정말 어려운 문제만 `--effort high`로 올린다 (`sol`의 상한은 `high`다). 리뷰도 일반 텍스트로 판단을 반환하며, 외부 라우팅이 필요하면 마지막에 `QUESTION:`을 남긴다.
 

@@ -88,8 +88,9 @@ MODEL_ALIASES = {
 EFFORT_CHOICES = ["low", "medium", "high", "xhigh", "ultra", "max"]
 
 # Start/dispatch defaults are deliberately code-only operator policy. Omitted
-# flags select the mode row; explicit flags always win. Neither posture enforces
-# a sandbox: read-only is brief-driven policy, not a harness gate.
+# flags select the mode row, then a known explicitly selected model reselects
+# its effort default. Explicit effort always wins. Neither posture enforces a
+# sandbox: read-only is brief-driven policy, not a harness gate.
 MODE_START_DEFAULTS = {
     "mate": {
         "model": "sol", "effort": "medium", "fast": False,
@@ -99,6 +100,11 @@ MODE_START_DEFAULTS = {
         "model": "luna", "effort": "max", "fast": False,
         "sandbox": "full",
     },
+}
+
+MODEL_DEFAULT_EFFORTS = {
+    "gpt-5.6-sol": "medium",
+    "gpt-5.6-luna": "max",
 }
 
 # start/dispatch must distinguish omission from explicit false-y values so
@@ -2346,6 +2352,10 @@ def resolve_start_options(args) -> tuple[dict, dict]:
         else:
             values[key] = raw
             provenance[key] = "set"
+    if provenance["effort"] == "default":
+        values["effort"] = MODEL_DEFAULT_EFFORTS.get(
+            normalize_model(values["model"]), values["effort"],
+        )
     return values, provenance
 
 
@@ -3015,7 +3025,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="model or alias; omitted uses the mode default")
         sp.add_argument("--effort", choices=EFFORT_CHOICES,
                         default=OMITTED_START_SETTING,
-                        help="reasoning effort; omitted uses the mode default")
+                        help="reasoning effort; omitted uses the selected model default")
         sp.add_argument("--fast", action=argparse.BooleanOptionalAction,
                         default=OMITTED_START_SETTING,
                         help="select or disable Fast; omitted uses the mode default")

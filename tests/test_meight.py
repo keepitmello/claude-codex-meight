@@ -90,6 +90,20 @@ class StartDefaultsTests(unittest.TestCase):
         request = self._start_request(self._args("start", "worker", "--fast"))
         self.assertEqual(request["service_tier"], "priority")
 
+    def test_explicit_known_model_reselects_its_effort_default(self):
+        cases = (
+            ("worker", "sol", "medium"),
+            ("worker", "gpt-5.6-sol", "medium"),
+            ("mate", "luna", "max"),
+            ("mate", "gpt-5.6-luna", "max"),
+        )
+        for mode, model, effort in cases:
+            with self.subTest(mode=mode, model=model):
+                request = self._start_request(
+                    self._args("start", mode, "--model", model),
+                )
+                self.assertEqual(request["effort"], effort)
+
     def test_dispatch_uses_the_same_resolution_and_start_path(self):
         start_args = self._args("start", "worker", "--model", "sol", "--fast")
         dispatch_args = self._args("dispatch", "worker", "--model", "sol", "--fast")
@@ -110,7 +124,7 @@ class StartDefaultsTests(unittest.TestCase):
         start.assert_called_once_with(dispatch_args, Path("/tmp/meight-defaults"))
         self.assertIn(
             "mode=worker model=sol(set) "
-            "effort=max(default) fast=on(set) sandbox=full(default)",
+            "effort=medium(default) fast=on(set) sandbox=full(default)",
             output.getvalue(),
         )
 
