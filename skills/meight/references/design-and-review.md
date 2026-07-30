@@ -9,7 +9,7 @@
 먼저 스스로 분석하고, 그 분석은 brief에 넣지 않는다. 문제, 제약, 관련 파일, 중립적인 옵션 라벨만 보낸다. 동의가 아니라 가장 근거 있는 설계와 그것에 대한 가장 강한 반론을 요구한다.
 
 ```bash
-meight start design-auth --mode mate --cwd <repo root> --brief-file - <<'EOF'
+meight dispatch design-auth --mode mate --cwd <repo root> --brief-file - <<'EOF'
 We need to choose an auth-token refresh design.
 
 Constraints:
@@ -29,7 +29,7 @@ EOF
 ### 앵커드 설계 (방향이 정해진 경우)
 
 ```bash
-meight start design-refine --mode mate --cwd <repo root> \
+meight dispatch design-refine --mode mate --cwd <repo root> \
   --brief "Direction is Option B. Pressure-test it: what am I missing, and what edge cases should the implementation cover?"
 ```
 
@@ -56,7 +56,7 @@ verdict가 아직 방향을 바꾸거나 실패 비용을 실질적으로 줄일
 실패 비용이 값을 할 때 디스패처가 별도 `--mode mate --effort high` 리뷰 세션을 띄운다. worker는 계약상 자기 리뷰(필요시 내부 fresh-context 리뷰어 스폰 포함)를 하지만, 그건 외부 리뷰의 대체가 아니라 별개 증거원이다. 리뷰는 고정된 구현 단계가 아니라 독립적인 증거원이다.
 
 ```bash
-meight start review-X --mode mate --effort high --cwd <repo root> --brief-file - <<'EOF'
+meight dispatch review-X --mode mate --effort high --cwd <repo root> --brief-file - <<'EOF'
 Adversarial review. Target: <files>. Contract: <versioned PLAN.md>.
 Hunt for real defects: correctness, regressions, missing verification,
 security/data risk, edge cases, races. For each finding: severity P1/P2/P3,

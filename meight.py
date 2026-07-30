@@ -46,7 +46,13 @@ MANAGED_DAEMON_IDLE_TIMEOUT_SEC = "0"
 LAUNCHD_TRANSFER_TIMEOUT_SEC = 15.0
 WORKER_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}\Z")
 PRUNE_TOMBSTONE_PREFIX = ".meight-prune-"
-CAPACITY_RETRY_DELAYS_SEC = (5, 10, 20, 40, 60)
+# Capacity is provider-side pressure, so keep the selected model, effort, tier,
+# and thread fixed while waiting it out. The retry policy is intentionally
+# code-only: a generous wall-clock budget with capped exponential backoff is
+# easier for a dispatcher to reason about than a retry-count promise.
+CAPACITY_RETRY_INITIAL_DELAY_SEC = 5.0
+CAPACITY_RETRY_MAX_DELAY_SEC = 60.0
+CAPACITY_RETRY_BUDGET_SEC = 15 * 60.0
 CAPACITY_RETRY_PROMPT = (
     "The previous turn ended because the selected model was at capacity. "
     "Resume the same approved task from the current repository state. "
@@ -587,6 +593,37 @@ def is_capacity_failure(detail: dict) -> bool:
     return "selected model is at capacity" in str(detail.get("message", "")).lower()
 
 
+def capacity_retry_delay(retry_number: int) -> float:
+    """Return the capped exponential delay before a 1-based retry."""
+    delay = CAPACITY_RETRY_INITIAL_DELAY_SEC
+    for _ in range(max(0, retry_number - 1)):
+        if delay >= CAPACITY_RETRY_MAX_DELAY_SEC:
+            break
+        delay = min(CAPACITY_RETRY_MAX_DELAY_SEC, delay * 2)
+    return delay
+
+
+def capacity_retry_budget_for_timeout(timeout: float | None) -> float:
+    """Keep a dispatch retry budget below its wait checkpoint when bounded."""
+    if timeout is None:
+        return CAPACITY_RETRY_BUDGET_SEC
+    try:
+        timeout = float(timeout)
+    except (TypeError, ValueError):
+        return CAPACITY_RETRY_BUDGET_SEC
+    if timeout <= 0:
+        # Existing wait semantics use 0 as an unbounded checkpoint.
+        return CAPACITY_RETRY_BUDGET_SEC
+    return min(CAPACITY_RETRY_BUDGET_SEC, timeout)
+
+
+def normalize_capacity_retry_budget(value: object) -> float:
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return CAPACITY_RETRY_BUDGET_SEC
+
+
 # ── Worker (Inside Daemon) ─────────────────────────────────────────────────
 
 def describe_item(item: dict) -> str:
@@ -629,7 +666,7 @@ class Worker:
     def __init__(self, name: str, repo_home: Path, repo_root: str, repo_key: str, cwd: str, sandbox: str,
                  model: str | None, effort: str, service_tier: str | None = None,
                  thread_source: str = "subagent", thread_ephemeral: bool = True,
-                 mode: str = "worker"):
+                 mode: str = "worker", capacity_retry_budget_sec: float | None = None):
         self.name = name
         self.repo_home = repo_home
         self.repo_root = repo_root
@@ -645,6 +682,7 @@ class Worker:
         # Canonical posture; follow/reply turns inherit it. Normalizing here keeps
         # sessions recorded under legacy four-mode names handoff-consistent.
         self.mode = normalize_mode(mode) or "worker"
+        self.capacity_retry_budget_sec = normalize_capacity_retry_budget(capacity_retry_budget_sec)
         self.thread = None       # openai_codex.Thread (live only while starting/running a turn)
         self.handle = None       # TurnHandle
         self.codex = None        # openai_codex.Codex runtime owned by this worker
@@ -659,6 +697,8 @@ class Worker:
         self._last_agent_msg = ""      # last finalized agentMessage
         self._result_written = False    # one result block per turn, including terminal SDK errors
         self._capacity_retry_pending = False
+        self._capacity_retry_started_monotonic: float | None = None
+        self._capacity_retry_deadline: float | None = None
         self._current_item_label: str | None = None
         self._current_item_since: float | None = None
         # The public status.json field needs_input_source is the SSOT for needs_input:
@@ -704,9 +744,30 @@ class Worker:
             "runtime_lost_detail": None,
             "error_detail": None,
             "capacity_retries": 0,
+            "capacity_retry_budget_sec": self.capacity_retry_budget_sec,
+            "capacity_retry": None,
+            "capacity_retry_summary": None,
             "turns": turns,
         }
         self.write_status(force=True)
+
+    def _refresh_capacity_retry_status_locked(self, now: float | None = None) -> None:
+        info = self.status.get("capacity_retry")
+        if not isinstance(info, dict) or info.get("state") != "waiting":
+            return
+        now = time.monotonic() if now is None else now
+        started = self._capacity_retry_started_monotonic
+        elapsed = max(0.0, now - started) if started is not None else 0.0
+        remaining = max(0.0, self.capacity_retry_budget_sec - elapsed)
+        next_in = (
+            max(0.0, self._capacity_retry_deadline - now)
+            if self._capacity_retry_deadline is not None else 0.0
+        )
+        info.update({
+            "elapsed_sec": round(elapsed, 1),
+            "remaining_sec": round(remaining, 1),
+            "next_retry_in_sec": round(next_in, 1),
+        })
 
     def write_status(self, force: bool = False) -> None:
         now = time.monotonic()
@@ -715,7 +776,13 @@ class Worker:
         self._last_status_write = now
         timestamp = now_iso()
         self.status["updated_at"] = timestamp
-        if self._current_item_label and self._current_item_since is not None:
+        self._refresh_capacity_retry_status_locked(now)
+        retry_info = self.status.get("capacity_retry")
+        if isinstance(retry_info, dict) and retry_info.get("state") == "waiting":
+            attempt = retry_info.get("attempt", self.status.get("capacity_retries", 0))
+            next_in = int(max(0.0, float(retry_info.get("next_retry_in_sec", 0))))
+            self.status["current_item"] = f"capacity retry #{attempt} in {next_in}s"
+        elif self._current_item_label and self._current_item_since is not None:
             elapsed = int(time.monotonic() - self._current_item_since)
             self.status["current_item"] = f"{self._current_item_label} ({elapsed}s)"
         else:
@@ -782,49 +849,77 @@ class Worker:
 
     def _retry_capacity_turn(self, daemon: "Daemon", gen: int):
         with self.lock:
-            retry_count = int(self.status.get("capacity_retries", 0))
             if gen != self.generation or not self._capacity_retry_pending:
                 return None
-            if retry_count >= len(CAPACITY_RETRY_DELAYS_SEC):
-                self._capacity_retry_pending = False
-                self.status["state"] = "failed"
-                self.log_event(
-                    "capacity/exhausted",
-                    f"failed after {retry_count} retries",
-                )
-                self.write_result()
-                self.write_status(force=True)
+            now = time.monotonic()
+            if self._capacity_retry_started_monotonic is None:
+                self._capacity_retry_started_monotonic = now
+                self.status["capacity_retry_summary"] = None
+            retry_count = int(self.status.get("capacity_retries", 0))
+            retry_attempt = retry_count + 1
+            elapsed = max(0.0, now - self._capacity_retry_started_monotonic)
+            if elapsed >= self.capacity_retry_budget_sec:
+                self._finish_capacity_retry_locked(elapsed)
                 return None
-            retry_count += 1
-            delay = CAPACITY_RETRY_DELAYS_SEC[retry_count - 1]
-            self.status["capacity_retries"] = retry_count
+            delay = min(
+                capacity_retry_delay(retry_attempt),
+                max(0.0, self.capacity_retry_budget_sec - elapsed),
+            )
+            self.status["capacity_retry"] = {
+                "state": "waiting",
+                "attempt": retry_attempt,
+                "elapsed_sec": round(elapsed, 1),
+                "remaining_sec": round(max(0.0, self.capacity_retry_budget_sec - elapsed), 1),
+                "next_retry_in_sec": round(delay, 1),
+                "budget_sec": self.capacity_retry_budget_sec,
+            }
+            self._capacity_retry_deadline = now + delay
             self.log_event(
                 "capacity/retry",
-                f"attempt={retry_count}/{len(CAPACITY_RETRY_DELAYS_SEC)} delay={delay}s",
+                f"attempt={retry_attempt} delay={delay:g}s "
+                f"elapsed={elapsed:.1f}s budget={self.capacity_retry_budget_sec:g}s",
             )
             self.write_status(force=True)
 
-        deadline = time.monotonic() + delay
-        while time.monotonic() < deadline:
+        deadline = self._capacity_retry_deadline
+        while deadline is not None and time.monotonic() < deadline:
             if self.interrupt_requested or daemon.shutting_down.is_set():
                 with self.lock:
                     self._capacity_retry_pending = False
-                    self.status["state"] = "interrupted"
-                    self.write_result()
-                    self.write_status(force=True)
-                return None
-            time.sleep(min(0.5, deadline - time.monotonic()))
-
-        with self.ctl_lock:
-            if self.interrupt_requested or daemon.shutting_down.is_set() or self.thread is None:
-                with self.lock:
-                    self._capacity_retry_pending = False
+                    self._capacity_retry_deadline = None
+                    if isinstance(self.status.get("capacity_retry"), dict):
+                        self.status["capacity_retry"]["state"] = "interrupted"
                     self.status["state"] = "interrupted"
                     self.write_result()
                     self.write_status(force=True)
                 return None
             with self.lock:
+                self.write_status()
+            time.sleep(min(0.5, max(0.01, deadline - time.monotonic())))
+
+        with self.ctl_lock:
+            if self.interrupt_requested or daemon.shutting_down.is_set() or self.thread is None:
+                with self.lock:
+                    self._capacity_retry_pending = False
+                    self._capacity_retry_deadline = None
+                    if isinstance(self.status.get("capacity_retry"), dict):
+                        self.status["capacity_retry"]["state"] = "interrupted"
+                    self.status["state"] = "interrupted"
+                    self.write_result()
+                    self.write_status(force=True)
+                return None
+            with self.lock:
+                started = self._capacity_retry_started_monotonic
+                elapsed = max(
+                    0.0,
+                    time.monotonic() - started if started is not None else 0.0,
+                )
+                if elapsed >= self.capacity_retry_budget_sec:
+                    self._finish_capacity_retry_locked(elapsed)
+                    return None
                 self._capacity_retry_pending = False
+                self._capacity_retry_deadline = None
+                self.status["capacity_retries"] = retry_attempt
                 self._agent_msg_buf = ""
                 self._last_agent_msg = ""
                 self.status["turn_id"] = None
@@ -832,6 +927,9 @@ class Worker:
                 self.status["terminal_at"] = None
                 self.status["last_message_tail"] = ""
                 self.status["error_detail"] = None
+                if isinstance(self.status.get("capacity_retry"), dict):
+                    self.status["capacity_retry"]["state"] = "resumed"
+                    self.status["capacity_retry"]["next_retry_in_sec"] = None
                 self.write_status(force=True)
             relax_sdk_effort_field()
             next_handle = self.thread.turn(
@@ -843,9 +941,30 @@ class Worker:
             self.handle = next_handle
         daemon.log(
             f"capacity retry worker={self.name} repo={self.repo_key} "
-            f"attempt={retry_count}/{len(CAPACITY_RETRY_DELAYS_SEC)}"
+            f"attempt={retry_attempt} budget={self.capacity_retry_budget_sec:g}s"
         )
         return next_handle
+
+    def _finish_capacity_retry_locked(self, elapsed: float) -> None:
+        retry_count = int(self.status.get("capacity_retries", 0))
+        elapsed = max(0.0, elapsed)
+        summary = (
+            f"capacity retries stopped after {retry_count} retries over "
+            f"{elapsed:.1f}s (budget {self.capacity_retry_budget_sec:g}s)"
+        )
+        self._capacity_retry_pending = False
+        self._capacity_retry_deadline = None
+        self.status["capacity_retry"] = {
+            "state": "exhausted",
+            "retries": retry_count,
+            "elapsed_sec": round(elapsed, 1),
+            "budget_sec": self.capacity_retry_budget_sec,
+        }
+        self.status["capacity_retry_summary"] = summary
+        self.status["state"] = "failed"
+        self.log_event("capacity/exhausted", summary)
+        self.write_result()
+        self.write_status(force=True)
 
     def on_event(self, note, daemon: "Daemon", gen: int) -> None:
         method = note.method
@@ -1039,6 +1158,14 @@ class Worker:
         # Clear stale tool wait details for every non-question terminal state (failed/interrupted/completed).
         if self.status["state"] != "needs_input":
             self._clear_needs_input_locked()
+        retry_info = self.status.get("capacity_retry")
+        if isinstance(retry_info, dict) and retry_info.get("state") == "resumed":
+            started = self._capacity_retry_started_monotonic
+            elapsed = max(
+                0.0,
+                time.monotonic() - started if started is not None else 0.0,
+            )
+            retry_info.update({"state": "completed", "elapsed_sec": round(elapsed, 1)})
         self._current_item_label = None
         self._current_item_since = None
         self.write_result()
@@ -1077,6 +1204,9 @@ class Worker:
             msg = f"{msg}\n\n## Error\n\n{error_text}" if msg else f"## Error\n\n{error_text}"
         elif not msg:
             msg = "(no agent message)"
+        retry_summary = self.status.get("capacity_retry_summary")
+        if retry_summary:
+            msg = f"{msg}\n\n## Capacity retry\n\n{retry_summary}"
         header = ""
         if self.status.get("turns", 1) > 1:
             header = f"\n\n---\n## Turn {self.status['turns']} ({now_iso()})\n\n"
@@ -1094,6 +1224,8 @@ class Worker:
             self._last_agent_msg = ""
             self._result_written = False
             self._capacity_retry_pending = False
+            self._capacity_retry_started_monotonic = None
+            self._capacity_retry_deadline = None
             self._current_item_label = None
             self._current_item_since = None
             self.terminal_since = None
@@ -1125,6 +1257,8 @@ class Worker:
                 "runtime_lost_detail": None,
                 "error_detail": None,
                 "capacity_retries": 0,
+                "capacity_retry": None,
+                "capacity_retry_summary": None,
                 "turns": turns,
             })
             self.write_status(force=True)
@@ -1720,6 +1854,7 @@ class Daemon:
             str(status.get("thread_source") or "subagent"),
             bool(status.get("thread_ephemeral", True)),
             mode=str(status.get("mode") or "worker"),
+            capacity_retry_budget_sec=status.get("capacity_retry_budget_sec"),
         )
         worker.status = dict(status)
         # Drop fields from pre-text-only sessions so status/result stay on the
@@ -1795,6 +1930,9 @@ class Daemon:
         model = normalize_model(req.get("model"))
         effort = req.get("effort") or "medium"
         service_tier = req.get("service_tier")
+        capacity_retry_budget_sec = normalize_capacity_retry_budget(
+            req.get("capacity_retry_budget_sec")
+        )
         # ThreadSource is analytics metadata, not a UI-hiding mechanism. Ephemeral
         # threads are not materialized in Codex's stored thread listings. Legacy
         # clients may still send main_thread, but it is intentionally ignored.
@@ -1827,6 +1965,7 @@ class Daemon:
                 thread_source_label,
                 thread_ephemeral,
                 mode=mode,
+                capacity_retry_budget_sec=capacity_retry_budget_sec,
             )
             ensure_worker_state_dir(self.home, repo_home, name)
             # Restarting the same name creates a new worker, so reset prior outputs.
@@ -2389,6 +2528,9 @@ def start_request(args, home: Path) -> dict:
         "sandbox": resolved["sandbox"], "model": normalize_model(resolved["model"]),
         "effort": resolved["effort"],
         "service_tier": service_tier,
+        "capacity_retry_budget_sec": capacity_retry_budget_for_timeout(
+            getattr(args, "timeout", None)
+        ),
         "no_preamble": args.no_preamble,
         "mode": normalize_mode(args.mode),
         "protocol_epoch": PROTOCOL_EPOCH,
@@ -2403,15 +2545,6 @@ def start_request(args, home: Path) -> dict:
             f"epoch={PROTOCOL_EPOCH}"
         )}
     return resp
-
-
-def cmd_start(args, home: Path) -> int:
-    resp = expect_ok(start_request(args, home))
-    print(
-        f"started worker '{args.name}' thread={resp.get('thread_id')} "
-        f"{start_resolution_echo(args, resp.get('mode'))}"
-    )
-    return 0
 
 
 def follow_request(args, home: Path) -> dict:
@@ -2494,7 +2627,8 @@ def cmd_status(args, home: Path) -> int:
                         "thread_ephemeral", "daemon_pid", "started_at", "updated_at",
                         "terminal_at", "turns", "mode", "needs_input_source",
                         "needs_input_target", "needs_input_kind", "needs_input_detail",
-                        "runtime_lost_detail", "error_detail"):
+                        "runtime_lost_detail", "error_detail", "capacity_retries",
+                        "capacity_retry_budget_sec", "capacity_retry", "capacity_retry_summary"):
                 print(f"  {key}: {st.get(key)}")
             if st.get("plan"):
                 print("  plan:")
@@ -2615,11 +2749,6 @@ def wait_for_worker(home: Path, repo_home: Path, name: str, timeout: float | Non
         time.sleep(1)
 
 
-def cmd_wait(args, home: Path) -> int:
-    return wait_for_worker(home, repo_home_for_cli(home), args.name, args.timeout, args.progress,
-                           narrate=getattr(args, "narrate", False))
-
-
 def ensure_daemon(home: Path) -> bool:
     """Auto-start through launchd when loaded; detach only with no installed job."""
     if probe_daemon_socket(home / "meight.sock"):
@@ -2660,22 +2789,51 @@ def ensure_daemon(home: Path) -> bool:
     return False
 
 
+def dispatch_active_status(home: Path, repo_home: Path, name: str) -> dict | None:
+    """Return an existing live dispatch target without treating terminal rows as live."""
+    status_path = repo_home / "workers" / name / "status.json"
+    if status_path.is_symlink() or not status_path.is_file():
+        return None
+    try:
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(status, dict) or status.get("state") not in ACTIVE_STATES:
+        return None
+    # Keep the same disk-plus-daemon ownership check as wait_for_worker. If the
+    # daemon no longer knows this row, still attach and let the normal wait path
+    # mark runtime loss; starting over here would overwrite the evidence. A
+    # dormant QUESTION is also attached so dispatch never overwrites it; wait
+    # returns 3 and the dispatcher can use reply/follow.
+    query_runtime_status(home, repo_home, name, status)
+    if status.get("state") == "needs_input" and classify_wait_state(status) == 3:
+        return status
+    return status
+
+
 def cmd_dispatch(args, home: Path) -> int:
-    """One-shot: auto-start daemon -> start -> wait -> print full result.md. Exit matches wait."""
+    """One-shot: auto-start/reattach -> wait -> print full result.md."""
     require_mode(args)  # before ensure_daemon: a rejected call must not auto-start a daemon
     if not ensure_daemon(home):
         print("error: daemon auto-start failed — check daemon.log", file=sys.stderr)
         return 4
-    resp = start_request(args, home)
-    if not resp.get("ok"):
-        print(f"error: {resp.get('error', 'unknown')}", file=sys.stderr)
-        return 1
-    print(
-        f"started worker '{args.name}' thread={resp.get('thread_id')} "
-        f"{start_resolution_echo(args, resp.get('mode'))}",
-        flush=True,
-    )
     repo_home = repo_home_for_cli(home)
+    existing = dispatch_active_status(home, repo_home, args.name)
+    if existing is not None:
+        print(
+            f"reattached to worker '{args.name}' (state={existing.get('state')})",
+            flush=True,
+        )
+    else:
+        resp = start_request(args, home)
+        if not resp.get("ok"):
+            print(f"error: {resp.get('error', 'unknown')}", file=sys.stderr)
+            return 1
+        print(
+            f"started worker '{args.name}' thread={resp.get('thread_id')} "
+            f"{start_resolution_echo(args, resp.get('mode'))}",
+            flush=True,
+        )
     code = wait_for_worker(home, repo_home, args.name, args.timeout, args.progress,
                            narrate=getattr(args, "narrate", False))
     worker_dir = repo_home / "workers" / args.name
@@ -3031,12 +3189,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="select or disable Fast; omitted uses the mode default")
         sp.add_argument("--no-preamble", action="store_true", help="disable injecting runtime contract context")
 
-    sp = sub.add_parser("start", help="start a new worker")
-    sp.add_argument("name", type=worker_name_arg)
-    add_start_options(sp)
-    sp.set_defaults(fn=cmd_start)
-
-    sp = sub.add_parser("dispatch", help="one-shot: auto-start daemon + start + wait + print result")
+    sp = sub.add_parser("dispatch", help="one-shot: auto-launch or reattach + poll + print result")
     sp.add_argument("name", type=worker_name_arg)
     add_start_options(sp)
     sp.add_argument("--timeout", type=float, default=1800)
@@ -3062,7 +3215,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-preamble", action="store_true")
     sp.set_defaults(fn=cmd_follow)
 
-    sp = sub.add_parser("reply", help="one-shot reply: follow + wait + print latest turn result (for QUESTION)")
+    sp = sub.add_parser("reply", help="one-shot reply: follow + poll + print latest turn result (for QUESTION)")
     sp.add_argument("name", type=worker_name_arg)
     sp.add_argument("--brief-file", help="read from stdin when '-'")
     sp.add_argument("--brief")
@@ -3106,15 +3259,6 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("result", help="print result.md")
     sp.add_argument("name", type=worker_name_arg)
     sp.set_defaults(fn=cmd_result)
-
-    sp = sub.add_parser("wait", help="poll until terminal state")
-    sp.add_argument("name", type=worker_name_arg)
-    sp.add_argument("--timeout", type=float, default=None)
-    sp.add_argument("--progress", type=float, default=300.0,
-                    help="seconds between status heartbeats while waiting; 0=off")
-    sp.add_argument("--narrate", action="store_true",
-                    help="print worker plan-step transitions live (for a human watching a terminal)")
-    sp.set_defaults(fn=cmd_wait)
 
     sp = sub.add_parser("shutdown", help="shut down daemon")
     sp.add_argument("--force", action="store_true")

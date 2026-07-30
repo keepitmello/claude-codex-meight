@@ -41,7 +41,7 @@ worker's word alone.
    dispatcher agent   <->   Codex mate(s) / worker(s)
    (what and why)           (challenge / implement)
         |                       ^
-        |-- start + brief ------|
+        |-- dispatch + brief ---|
         |
         |<- QUESTION / result
         |-- reply / steer / design / review
@@ -121,24 +121,22 @@ daemon by default (`$MEIGHT_HOME`, `$XDG_STATE_HOME/meight`, or `~/.meight`)
 while isolating worker state per repo under `repos/<repo-key>/`.
 
 ```bash
-meight start impl-1 --mode worker \
+meight dispatch impl-1 --mode worker --timeout 300 \
   --brief-file - --cwd ~/my-repo <<'EOF'
 Implement X in src/foo.py. Existing pattern: see src/bar.py:42.
 Verify with: pytest tests/test_foo.py.
 Report changed files, verification, remaining P1s, risks, and evidence artifact.
 EOF
-
-meight wait impl-1 --timeout 300
 # exit 0=completed · 2=failed/interrupted/runtime-lost · 3=replyable question · 4=daemon dead · 1=checkpoint timeout
 ```
 
-On exit `1`, the worker is still running. Inspect once, then wait again or
-steer:
+On exit `1`, the worker is still running. Inspect once, steer if needed, then
+run the same `dispatch` again to reattach; no separate polling command is needed:
 
 ```bash
 meight status impl-1
 meight steer impl-1 "Stop refactoring the helper; only fix the bug."
-meight wait impl-1 --timeout 300
+meight dispatch impl-1 --mode worker --timeout 300
 ```
 
 On terminal exits, read the text result:
@@ -157,7 +155,7 @@ meight reply impl-1 --brief "Use config-a.json and keep the legacy field."
 Blind design goes to a mate instead — advisory and collaborative:
 
 ```bash
-meight start design-auth --mode mate \
+meight dispatch design-auth --mode mate \
   --cwd ~/my-repo --brief-file - <<'EOF'
 We need to choose an auth-token refresh design.
 
@@ -232,15 +230,17 @@ survives context compaction, fresh sessions, and even model swaps.
 
 ## Using It From Claude Code Or Codex
 
-For real work, run `wait --timeout` as the background shell call. The agent
+For real work, run `dispatch --timeout` as the background shell call. The agent
 wakes at completion, question, failure, daemon death, or checkpoint timeout.
+If the checkpoint expires, the worker keeps running and the same `dispatch`
+command reattaches to it.
 
 ```text
-Bash(command: "meight start review-1 --mode mate --brief-file - <<'EOF' ... EOF")
-Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
+Bash(command: "meight dispatch review-1 --mode mate --timeout 300 --brief-file - <<'EOF' ... EOF",
+     run_in_background: true)
 -> checkpoint exit 1
 -> meight status review-1
--> healthy: wait again · drifting: meight steer review-1 "..."
+-> healthy: same dispatch again · drifting: meight steer review-1 "..."
 ```
 
 A drop-in Claude orchestrator prompt ships as [`CLAUDE.md`](./CLAUDE.md). A
@@ -263,8 +263,8 @@ protocol, two dispatcher runtimes.
 - **Names, not session IDs.** Sessions are addressed as `review-1`, including
   follow-ups. Names are 1-128 ASCII letters/digits/`._-`, starting with a
   letter or digit; the CLI and daemon both reject path syntax.
-- **Sparse checkpoints, not busy polling.** `wait --timeout` is a wake-up dial;
-  it does not kill the worker.
+- **Sparse checkpoints, not busy polling.** `dispatch --timeout` is a wake-up
+  dial; it does not kill the worker, and re-running it reattaches.
 - **Status is pre-digested.** `status` returns mode, current item, changed
   files, needs-input target/kind, and last-message tail.
 - **Policy cannot be forgotten.** Mode, mode-skill loading, and the shared
@@ -278,9 +278,7 @@ protocol, two dispatcher runtimes.
 
 | Command | What it does |
 |---|---|
-| `meight start <name> --mode mate\|worker [opts]` | Start a session and return immediately with the thread id plus resolved mode/model/effort/Fast/sandbox values and their default/set provenance. Supervised workflow entry point. |
-| `meight wait <name> --timeout SEC` | Checkpoint wait: return on terminal state, replyable QUESTION, daemon death, or timeout. Timeout leaves the worker running. |
-| `meight dispatch <name> --mode mate\|worker [opts]` | One-shot: auto-start daemon -> capability check -> start -> wait -> print preferred result. |
+| `meight dispatch <name> --mode mate\|worker [opts]` | One-shot: auto-start or reattach to an active session -> capability check/start when new -> poll -> print the preferred result. A timeout leaves the worker running; repeat `dispatch` to reattach. |
 | `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | One-shot answer to a replyable question; inherits mode and omitted turn settings, applies explicit turn overrides, and prints the latest result. |
 | `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | Low-level: new turn on the same live thread; inherits mode and omitted turn settings, while explicit overrides become the defaults for later turns. |
 | `meight result <name>` | Print `result.md`. |
@@ -291,7 +289,7 @@ protocol, two dispatcher runtimes.
 
 Common options:
 
-- `--mode mate|worker` is required on `start` and `dispatch`. Legacy names
+- `--mode mate|worker` is required on `dispatch` when opening a new session. Legacy names
   `design`, `collab`, `collaborative`, `review` (→ mate) and `delegate`,
   `delegated` (→ worker) are accepted aliases. Mate is the thinking-partner
   contract; worker is team implementation with self-review and a
@@ -310,7 +308,7 @@ Common options:
 - Workers use ephemeral threads so they are not added to Codex's stored thread
   listings. `thread_source=subagent` is retained only as source metadata.
 
-Omitted `start`/`dispatch` settings resolve in the CLI before the request is
+Omitted `dispatch` settings resolve in the CLI before the request is
 sent:
 
 | Mode | Model | Effort | Fast | Sandbox |
@@ -327,7 +325,7 @@ for manual selection.
 
 Standard is silent: specify only deviations. The table lives in `meight.py` as
 deliberately simple code-only operator policy; there is no config-file or
-environment override layer. Start output echoes every resolved value with
+environment override layer. New-session dispatch output echoes every resolved value with
 `(default)` or `(set)` provenance.
 
 Worker state lives in
@@ -355,8 +353,8 @@ continuable through the same bounded artifact handoff.
 
 ## Upgrading An Old Daemon To A New Protocol Epoch
 
-The CLI fails closed before `start` when `meight ping` does not advertise the
-current capability (`ephemeral3`). Every start/follow request carries the epoch,
+The CLI fails closed before `dispatch` when `meight ping` does not advertise the
+current capability (`ephemeral3`). Every wire start/follow request carries the epoch,
 and every successful response atomically echoes normalized mode plus epoch. The
 CLI validates both, so even a same-token daemon swapped mid-handshake cannot
 silently use an old contract. Drain and restart manually:

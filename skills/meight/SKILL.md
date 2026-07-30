@@ -1,6 +1,6 @@
 ---
 name: meight
-description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-meight). Two postures: mate for design/diagnosis/verdict-first review, worker for team implementation with self-review; `--mode` is required and each task is dispatched supervised or one-shot. Use whenever a dispatcher routes work to Codex. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임"
+description: "Hand a whole workstream to a Codex session that owns it: takes a self-contained brief, runs many investigation/execution/verification cycles unsupervised, returns one result, and escalates via `QUESTION:`. Reach for it when work can leave this conversation — implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, diagnosis, and design or adversarial review — especially when it parallelizes with what you keep doing, since a Codex session draws a separate subscription. Two postures: worker implements with self-review, mate is a thinking partner for design/diagnosis/verdict-first review; `--mode` is required. Not for a single lookup or a judgment still bound to unspoken conversation context. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임 -위임 -delegate"
 ---
 
 # meight (claude-codex-meight)
@@ -13,7 +13,7 @@ description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-mei
 
 ## 두 자세, --mode는 필수
 
-`start`와 `dispatch`는 `--mode mate|worker`를 요구한다. 기본값은 없고, 플래그를 빼면 안내 메시지와 함께 에러다. 구 이름들(`design`/`collab`/`collaborative`/`review` → mate, `delegate`/`delegated` → worker)은 별칭으로 살아 있다.
+`dispatch`는 새 세션을 열 때 `--mode mate|worker`를 요구한다. 기본값은 없고, 플래그를 빼면 안내 메시지와 함께 에러다. 구 이름들(`design`/`collab`/`collaborative`/`review` → mate, `delegate`/`delegated` → worker)은 별칭으로 살아 있다.
 
 - `--mode mate` — 생각·판단 상대. 블라인드/앵커드 설계, 진단, 방향, 그리고 verdict-first 플랜/디프/적대 리뷰까지. 어느 프로토콜을 적용할지는 브리프가 정한다 — 리뷰 브리프면 mate 스킬의 리뷰 섹션이 걸린다.
 - `--mode worker` — 실행 팀원. how·구현·검증·자기 리뷰를 소유하고, 브리프 밖 관찰과 이견을 텍스트와 `QUESTION:`으로 올린다. 별도 외부 리뷰 세션을 띄울지는 디스패처가 판단한다.
@@ -22,7 +22,7 @@ description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-mei
 
 `follow`와 `reply`는 모드 플래그를 받지 않는다. 세션에 기록된 mode를 물려받고, 전체 preamble 대신 한 줄짜리 리마인더만 받는다. `--model`, `--effort`, `--fast`/`--no-fast`를 생략하면 model·effort·Fast tier도 상속하고, 명시하면 그 턴에 적용되며 이후 턴이 상속하는 값이 된다.
 
-생략된 start/dispatch 설정은 wire request를 만들기 전에 CLI에서 자세로부터 해소된다:
+생략된 dispatch 설정은 wire request를 만들기 전에 CLI에서 자세로부터 해소된다:
 
 | Mode | Model | Effort | Fast | Sandbox |
 |---|---|---|---|---|
@@ -33,12 +33,12 @@ description: "Codex dispatch harness (global CLI: meight, repo: claude-codex-mei
 (`medium`/`max`)을 다시 고른다. 명시한 `--effort`는 언제나 그 기본값을
 이긴다. 표준은 조용하다 — 편차만 플래그로 준다. 이 표와 모델별 effort
 기본값은 의도적으로 `meight.py` 안의 코드 전용 운영 정책이다. config 파일이나
-환경변수 오버라이드 레이어는 없다. start echo가 해소된 값 전부를
+환경변수 오버라이드 레이어는 없다. 새 세션의 dispatch echo가 해소된 값 전부를
 `(default)` / `(set)` 출처와 함께 보여준다.
 
 mate 기본 effort는 `medium`이다 — 정말 어려운 문제만 `--effort high`로 올린다 (`sol`의 상한은 `high`다). 리뷰도 일반 텍스트로 판단을 반환하며, 외부 라우팅이 필요하면 마지막에 `QUESTION:`을 남긴다.
 
-CLI는 `start` 전에 capability handshake를 한다. 살아있는 데몬이 capability `ephemeral3`를 광고하지 않으면 start는 fail closed. 모든 start/follow는 epoch `ephemeral3`를 싣고, 성공 시 정규화 모드와 epoch를 원자적으로 echo해야 한다 — 아니면 CLI가 best-effort interrupt 후 nonzero 종료.
+CLI는 `dispatch` 전에 capability handshake를 한다. 살아있는 데몬이 capability `ephemeral3`를 광고하지 않으면 dispatch는 fail closed한다. 내부 wire `start`/`follow` 요청은 epoch `ephemeral3`를 싣고, 성공 시 정규화 모드와 epoch를 원자적으로 echo해야 한다 — 아니면 CLI가 best-effort interrupt 후 nonzero 종료.
 
 ## 모델 선택 (GPT-5.6: sol / terra / luna)
 
@@ -78,7 +78,7 @@ worker 자세를 `sol`로 올리는 건 그 다음이다 — 설계를 앞에 �
 
 ## 디스패치 패턴 — 백그라운드 + 통지
 
-디스패처는 포그라운드에서 기다리지 않는다. `dispatch`(또는 `reply`)를 Bash의 `run_in_background`로 던지고 즉시 다른 일을 한다. 프로세스가 끝나면 — 완료든 실패든 exit 3(needs_input)이든 — 하네스가 태스크 통지로 디스패처를 깨운다. 통지 시점에 결과는 이미 디스크에 있다.
+디스패처는 `dispatch`(또는 `reply`)를 Bash의 `run_in_background`로 던지고 즉시 다른 일을 한다. `dispatch` 하나가 새 세션이면 내부 wire `start`를 보내고, 기존 활성 세션이면 재부착한 뒤, `status.json`을 폴링하고 결과를 출력한다. 프로세스가 끝나면 — 완료든 실패든 exit 3(needs_input)이든 — 하네스가 태스크 통지로 디스패처를 깨운다. 통지 시점에 결과는 이미 디스크에 있다.
 
 ```text
 Bash(command: "meight dispatch fix-auth --mode worker --cwd ~/repo --brief-file /tmp/brief.md",
@@ -88,22 +88,37 @@ Bash(command: "meight dispatch fix-auth --mode worker --cwd ~/repo --brief-file 
 → exit 3이면 → Bash(command: "meight reply fix-auth --brief '...'", run_in_background: true)
 ```
 
-- **띄우면 한마디 한다**: 세션을 시작할 때 이름·자세와 함께 어떤 모델·effort로 띄웠는지 사용자에게 한 줄로 말한다 (`fix-auth 워커 띄웠어 — luna max`). 기본에서 벗어났으면 왜 올렸는지도 같은 줄에 붙인다. 백그라운드 세션은 사용자 눈에 안 보이니 이 한 줄이 어떤 브레인이 얼마짜리로 돌고 있는지 아는 유일한 창이다.
-- `--timeout`(기본 1800)은 안전망 체크포인트다: 타임아웃으로 깨어나도 워커는 계속 돈다 — `status <name>` 보고 백그라운드 `wait`를 다시 건다.
+디스패처가 기억할 세션 관찰 표면은 `dispatch`, `status`, `result`다. `dispatch`가
+백그라운드에서 끝나기 전에는 별도의 폴링 셸을 추가하지 않는다. 체크포인트
+타임아웃으로 셸이 끝나면 같은 `dispatch <name>`을 다시 실행한다. 디스크의
+`status.json`이 활성이고 daemon이 그 이름을 알고 있으면 새 세션을 열지 않고
+그 자리에서 계속 기다린다. terminal 행은 재부착 대상으로 취급하지 않는다.
+
+`status`는 디스크만 읽으니 언제 찍어도 안전하다. 다만 `running`은 정상이지
+신호가 아니다 — 통지는 이미 오는 중이므로, `running`을 봤을 때 할 일은 다른
+작업으로 돌아가는 것이다.
+
+- **새로 띄우면 한마디 한다**: 새 세션을 열 때 이름·자세와 함께 어떤 모델·effort로 띄웠는지 한 줄로 말한다 (`fix-auth 워커 띄웠어 — luna max`). 재부착이면 새 세션 echo 대신 `reattached to worker '<name>'` 한 줄을 낸다.
+- `--timeout`(기본 1800)은 안전망 체크포인트다: 타임아웃으로 셸이 끝나도 워커는 계속 돈다 — `status <name>`으로 확인한 뒤 같은 `dispatch <name> --mode ...`를 다시 실행해 통지를 다시 받는다.
 - `--progress`(기본 300) heartbeat는 백그라운드에선 태스크 출력 파일에만 쌓인다 (한 줄/5분). 아주 긴 세션이면 `--progress 0`.
-- 중간 개입 가능성이 있는 작업은 `start`로 열고 백그라운드 `wait <name> --timeout`을 별도로 건다 — 그 사이 `meight steer <name> "correction"`으로 도는 턴에 텍스트를 주입할 수 있다.
-- **tool-wait 표면화**: 워커가 tool/approval 입력을 기다리며 15초 넘게 멈추면 wait가 exit 3으로 끝나 통지가 온다 (전에는 타임아웃까지 invisible). `status <name>`의 `needs_input_source`가 `tool`이면 답할 방법이 없는 대기다 — interrupt 후 브리프를 고쳐 재시작한다.
+- `steer`는 세션을 어떻게 열었는지 보지 않는다 — `dispatch`로 열린 세션에도 그대로 꽂힌다. 도는 턴이 없는 틈에 부르면 `no active turn to steer`로 떨어진다. terminal 뒤에 같은 내용을 넣으려면 `follow`를 쓴다.
+- 세션을 끝내는 도구는 `meight interrupt <name>`이다. `pkill`은 프로세스 이름 매칭이라 `<name>`만으로 잡으면 살려두려던 셸까지 함께 죽는다.
+- **tool-wait 표면화**: 워커가 tool/approval 입력을 기다리며 15초 넘게 멈추면 `dispatch`가 exit 3으로 끝나 통지가 온다 (전에는 타임아웃까지 invisible). `status <name>`의 `needs_input_source`가 `tool`이면 답할 방법이 없는 대기다 — interrupt 후 브리프를 고쳐 재시작한다.
 - **capacity 재시도**: provider가 `Selected model is at capacity`로 턴을 끝내면
-  같은 model·effort·service tier와 같은 thread에서 5/10/20/40/60초 간격으로
-  최대 5회 이어간다. Fast로 승격하거나 다른 모델로 바꾸지 않으며, 다섯 번 모두
-  실패하면 원래 capacity 오류로 종료한다.
+  같은 model·effort·service tier와 같은 thread에서 5초 시작, 60초 상한의
+  지수 백오프로 재시도한다. 전체 retry 예산은 기본 15분이고 `dispatch --timeout`이
+  더 짧으면 그 시간으로 줄어든다. 횟수 상한 대신 시간 상한을 쓰며, Fast로
+  승격하거나 다른 모델로 바꾸지 않는다. 재시도 중에는 `status`의
+  `capacity_retry`와 heartbeat의 `capacity retry #... in ...s`에 상태가 보이고,
+  최종 포기 결과에는 재시도 횟수와 경과 시간이 남는다. capacity는 provider
+  사정이니 브리프나 모델을 바꾸지 않는다.
 
 ### 사람용 터미널 사용법
 
-포그라운드 `wait`/`dispatch`는 사람이 터미널에서 직접 지켜볼 때의 사용법이다. `--narrate`를 주면 워커의 plan 스텝 전환이 실시간으로 출력된다 (`[HH:MM:SS] name ▶ <step>`) — 디스패처 세션에서는 노이즈라 기본 off다.
+포그라운드 `dispatch`는 사람이 터미널에서 직접 지켜볼 때의 사용법이다. `--narrate`를 주면 워커의 plan 스텝 전환이 실시간으로 출력된다 (`[HH:MM:SS] name ▶ <step>`) — 디스패처 세션에서는 노이즈라 기본 off다.
 
 ```bash
-meight start <name> --mode worker --brief-file - --cwd <dir> <<'EOF'
+meight dispatch <name> --mode worker --narrate --brief-file - --cwd <dir> <<'EOF'
 ## Goal       <what this enables + success criteria>
 ## Decision   <the user decision this phase must close>
 ## Approval   <approved phase/method/cost envelope; campaign + round number>
@@ -133,7 +148,7 @@ meight follow <name> --effort xhigh --fast --brief "Continue with more reasoning
 
 멈춘 백그라운드 셸은 워커 실패가 아니라 셸 라이프사이클 이벤트로 취급한다 — `status`가 진실이다.
 
-`dispatch`는 데몬 자동 기동 → start → wait → `result.md` 출력까지 한 번에 하는 블로킹 원샷이다 — 위 패턴대로 백그라운드로 던진다. terminal 결과 후 다른 워커가 없을 때 데몬이 종료하길 원하면 `--shutdown-when-idle`.
+`dispatch`는 데몬 자동 기동 → (새 이름이면 내부 wire start) → status 폴링 → `result.md` 출력까지 한 번에 하는 블로킹 원샷이다. 활성 이름으로 다시 부르면 재부착한다 — 위 패턴대로 백그라운드로 던진다. terminal 결과 후 다른 워커가 없을 때 데몬이 종료하길 원하면 `--shutdown-when-idle`.
 
 ## 결과
 

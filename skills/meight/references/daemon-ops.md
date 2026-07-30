@@ -48,7 +48,7 @@ LaunchAgent 감독은 crash-only다 (`RunAtLoad=true`, `KeepAlive={SuccessfulExi
 ## 상태 경로와 수명주기
 
 - 워커 아티팩트: `<daemon-home>/repos/<repo-key>/workers/<name>/{brief.md,status.json,events.log,result.md}`
-- 저수준 커맨드: daemon / start / result / list / shutdown `[--force]` / launchd.
+- 저수준 커맨드: daemon / result / list / shutdown `[--force]` / launchd. 세션을 여는 공개 표면은 `dispatch`다.
 - 포그라운드 `MEIGHT_IDLE_TIMEOUT_SEC` 기본값은 1800s이고 `daemon --idle-timeout-sec 0`이 끈다. 관리형 `dispatch`/LaunchAgent 기동은 idle disable을 env와 daemon args 양쪽으로 넘긴다. LaunchAgent job은 옛 로드 job에 env가 없으면 `XPC_SERVICE_NAME=com.keepitmello.meight`로 관리형 모드를 추론한다. 실제 값은 `meight ping`/기동 로그를 믿는다.
 - Terminal 워커는 스트림 종료 직후 SDK 런타임을 놓는다. `MEIGHT_WORKER_GC_TTL_SEC`(기본 3600s)는 데몬 메모리에서 terminal 워커 상태만 제거한다. 디스크 아티팩트는 `MEIGHT_SESSION_RETENTION_SEC`(기본 30일, `0`이면 비활성)를 쓴다.
 - 오프루프 시간별 cleanup은 immutable `terminal_at`(레거시 폴백 `updated_at`)로 유효한 만료 terminal 행만 정리하고, registry lock 아래서 원자적으로 tombstone한 뒤 lock 밖에서 삭제한다. 복구는 tombstone 접두사만 믿지 않고 terminal 상태·만료·registry 소유권을 다시 확인한다. active/replyable, malformed, symlink, registered 세션은 건너뛴다.

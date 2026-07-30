@@ -39,7 +39,7 @@ mate와 worker는 세션 계약의 이름이지 모델의 이름이 아니다. �
    dispatcher agent   <->   Codex mate(s) / worker(s)
    (what and why)           (challenge / implement)
         |                       ^
-        |-- start + brief ------|
+        |-- dispatch + brief ---|
         |
         |<- QUESTION / result
         |-- reply / steer / design / review
@@ -114,24 +114,22 @@ cd claude-codex-meight
 `~/.meight`), 워커 상태는 레포별로 `repos/<repo-key>/` 아래 격리한다.
 
 ```bash
-meight start impl-1 --mode worker \
+meight dispatch impl-1 --mode worker --timeout 300 \
   --brief-file - --cwd ~/my-repo <<'EOF'
 Implement X in src/foo.py. Existing pattern: see src/bar.py:42.
 Verify with: pytest tests/test_foo.py.
 Report changed files, verification, remaining P1s, risks, and evidence artifact.
 EOF
-
-meight wait impl-1 --timeout 300
 # exit 0=완료 · 2=실패/인터럽트/런타임 유실 · 3=답할 수 있는 질문 · 4=데몬 사망 · 1=체크포인트 타임아웃
 ```
 
-exit `1`이면 워커는 아직 돌고 있다. 한 번 들여다보고, 다시 기다리거나
-조향한다:
+exit `1`이면 워커는 아직 돌고 있다. 한 번 들여다보고 조향한 뒤, 별도 대기
+없이 같은 `dispatch`를 다시 실행해 재부착한다:
 
 ```bash
 meight status impl-1
 meight steer impl-1 "Stop refactoring the helper; only fix the bug."
-meight wait impl-1 --timeout 300
+meight dispatch impl-1 --mode worker --timeout 300
 ```
 
 terminal exit이면 텍스트 결과를 읽는다:
@@ -150,7 +148,7 @@ meight reply impl-1 --brief "Use config-a.json and keep the legacy field."
 블라인드 설계는 mate에게 간다 — 조언과 협업:
 
 ```bash
-meight start design-auth --mode mate \
+meight dispatch design-auth --mode mate \
   --cwd ~/my-repo --brief-file - <<'EOF'
 We need to choose an auth-token refresh design.
 
@@ -221,15 +219,16 @@ KIND: scope | ux | priority | risk | irreversible | acceptance | missing-info | 
 
 ## Claude Code나 Codex에서 쓰기
 
-실제 작업에서는 `wait --timeout`을 백그라운드 셸 호출로 건다. 에이전트는
-완료, 질문, 실패, 데몬 사망, 체크포인트 타임아웃에 깨어난다.
+실제 작업에서는 `dispatch --timeout`을 백그라운드 셸 호출로 건다. 에이전트는
+완료, 질문, 실패, 데몬 사망, 체크포인트 타임아웃에 깨어난다. 체크포인트가
+끝나도 워커는 계속 돌며 같은 `dispatch`를 다시 실행하면 재부착한다.
 
 ```text
-Bash(command: "meight start review-1 --mode mate --brief-file - <<'EOF' ... EOF")
-Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
+Bash(command: "meight dispatch review-1 --mode mate --timeout 300 --brief-file - <<'EOF' ... EOF",
+     run_in_background: true)
 -> 체크포인트 exit 1
 -> meight status review-1
--> 건강함: 다시 wait · 방향 이탈: meight steer review-1 "..."
+-> 건강함: 같은 dispatch 다시 실행 · 방향 이탈: meight steer review-1 "..."
 ```
 
 드롭인 Claude 오케스트레이터 프롬프트는 [`CLAUDE.md`](../CLAUDE.md), Codex를
@@ -251,8 +250,8 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 - **세션 ID가 아니라 이름.** 세션은 `review-1`처럼 이름으로 부르고, 후속
   턴도 마찬가지다. 이름은 문자나 숫자로 시작하는 1-128자 ASCII
   문자/숫자/`._-`이고, CLI와 데몬 둘 다 경로 문법을 거부한다.
-- **바쁜 폴링이 아니라 드문 체크포인트.** `wait --timeout`은 알람 다이얼이지
-  워커를 죽이지 않는다.
+- **바쁜 폴링이 아니라 드문 체크포인트.** `dispatch --timeout`은 알람
+  다이얼이지 워커를 죽이지 않으며, 같은 명령을 다시 실행하면 재부착한다.
 - **status는 미리 소화돼 있다.** 모드, 리포트 타입, 현재 아이템, 변경 파일,
   needs-input target/kind, 마지막 메시지 꼬리를 돌려준다.
 - **정책은 까먹을 수 없다.** 모드, 모드 스킬 로딩, 공유 계약, 리포트 형태는
@@ -266,9 +265,7 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 
 | 커맨드 | 하는 일 |
 |---|---|
-| `meight start <name> --mode mate\|worker [opts]` | 세션을 시작하고 thread id와 해소된 mode/model/effort/Fast/sandbox 값 + default/set 출처를 찍고 즉시 리턴. 감독 워크플로우 진입점. |
-| `meight wait <name> --timeout SEC` | 체크포인트 대기: terminal 상태, 답할 수 있는 QUESTION, 데몬 사망, 타임아웃에 리턴. 타임아웃은 워커를 계속 돌게 둔다. |
-| `meight dispatch <name> --mode mate\|worker [opts]` | 원샷: 데몬 자동 기동 → capability 체크 → start → wait → 선호 결과 출력. |
+| `meight dispatch <name> --mode mate\|worker [opts]` | 원샷: 활성 세션이면 재부착하고, 새 세션이면 데몬 자동 기동 → capability 체크 → wire start → 대기 → 선호 결과 출력. 타임아웃 뒤 같은 dispatch를 반복하면 재부착한다. |
 | `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | 답할 수 있는 질문에 원샷으로 답한다. mode와 생략한 턴 설정은 상속, 명시한 오버라이드는 적용, 최신 결과 출력. |
 | `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | 저수준: 같은 라이브 스레드에 새 턴. mode와 생략 설정은 상속, 명시 오버라이드는 이후 턴의 기본값이 된다. |
 | `meight result <name>` | `result.md`를 출력한다. |
@@ -279,7 +276,7 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 
 공통 옵션:
 
-- `--mode mate|worker`는 `start`와 `dispatch`에 필수다. 구 이름 `design`,
+- `--mode mate|worker`는 새 세션을 여는 `dispatch`에 필수다. 구 이름 `design`,
   `collab`, `collaborative`, `review`(→ mate)와 `delegate`, `delegated`
   (→ worker)는 별칭으로 받는다. mate는 생각 상대 계약, worker는 자기 리뷰를
   포함한 팀 구현 계약이고 외부 리뷰 선택은 디스패처 몫이다.
@@ -297,7 +294,7 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 - 워커는 Codex 저장 쓰레드 목록에 추가되지 않는 ephemeral 스레드를 쓴다.
   `thread_source=subagent`는 source 메타데이터로만 유지한다.
 
-생략된 `start`/`dispatch` 설정은 요청을 보내기 전에 CLI에서 해소된다:
+생략된 `dispatch` 설정은 요청을 보내기 전에 CLI에서 해소된다:
 
 | Mode | Model | Effort | Fast | Sandbox |
 |---|---|---|---|---|
@@ -313,7 +310,7 @@ Bash(command: "meight wait review-1 --timeout 300", run_in_background: true)
 
 표준은 조용하다: 편차만 명시한다. 이 표는 의도적으로 단순한 코드 전용
 오퍼레이터 정책으로 `meight.py` 안에 살고, config 파일이나 환경변수
-오버라이드 레이어는 없다. start 출력이 해소된 값 전부를 `(default)`/`(set)`
+오버라이드 레이어는 없다. 새 세션의 dispatch 출력이 해소된 값 전부를 `(default)`/`(set)`
 출처와 함께 보여준다.
 
 워커 상태는 `<daemon-home>/repos/<repo-key>/workers/<name>/`에 산다:
@@ -337,8 +334,8 @@ terminal 아티팩트는 기본 30일 보존된다. `MEIGHT_SESSION_RETENTION_SE
 
 ## 옛 데몬을 새 프로토콜 epoch로 올리기
 
-살아있는 데몬이 현재 capability(`ephemeral3`)를 광고하지 않으면 CLI는 `start`
-전에 fail closed한다. 모든 start/follow 요청이 epoch를 싣고, 모든 성공 응답이
+살아있는 데몬이 현재 capability(`ephemeral3`)를 광고하지 않으면 CLI는 `dispatch`
+전에 fail closed한다. 모든 wire start/follow 요청이 epoch를 싣고, 모든 성공 응답이
 정규화된 mode와 epoch를 원자적으로 에코하며, CLI가 둘 다 검증한다 —
 핸드셰이크 중간에 바꿔치기된 same-token 데몬도 옛 계약을 조용히 쓸 수 없다.
 드레인과 재시작은 수동으로 한다:

@@ -53,7 +53,7 @@ class StartDefaultsTests(unittest.TestCase):
     def test_each_mode_resolves_omitted_start_flags_on_the_cli_wire(self):
         for mode, expected in self.EXPECTED.items():
             with self.subTest(mode=mode):
-                request = self._start_request(self._args("start", mode))
+                request = self._start_request(self._args("dispatch", mode))
                 model, effort, tier, sandbox = expected
                 self.assertEqual(
                     (request["model"], request["effort"], request["service_tier"],
@@ -65,7 +65,7 @@ class StartDefaultsTests(unittest.TestCase):
     def test_legacy_alias_modes_resolve_to_posture_defaults_on_the_wire(self):
         for alias, canonical in (("design", "mate"), ("review", "mate"), ("delegate", "worker")):
             with self.subTest(alias=alias):
-                request = self._start_request(self._args("start", alias))
+                request = self._start_request(self._args("dispatch", alias))
                 model, effort, tier, sandbox = self.EXPECTED[canonical]
                 self.assertEqual(
                     (request["model"], request["effort"], request["service_tier"],
@@ -76,7 +76,7 @@ class StartDefaultsTests(unittest.TestCase):
 
     def test_explicit_flags_override_every_mode_default(self):
         args = self._args(
-            "start", "mate", "--model", "terra", "--effort", "max",
+            "dispatch", "mate", "--model", "terra", "--effort", "max",
             "--fast", "--sandbox", "ro",
         )
         request = self._start_request(args)
@@ -87,7 +87,7 @@ class StartDefaultsTests(unittest.TestCase):
         )
 
     def test_fast_overrides_worker_fast_default(self):
-        request = self._start_request(self._args("start", "worker", "--fast"))
+        request = self._start_request(self._args("dispatch", "worker", "--fast"))
         self.assertEqual(request["service_tier"], "priority")
 
     def test_explicit_known_model_reselects_its_effort_default(self):
@@ -100,12 +100,12 @@ class StartDefaultsTests(unittest.TestCase):
         for mode, model, effort in cases:
             with self.subTest(mode=mode, model=model):
                 request = self._start_request(
-                    self._args("start", mode, "--model", model),
+                    self._args("dispatch", mode, "--model", model),
                 )
                 self.assertEqual(request["effort"], effort)
 
     def test_dispatch_uses_the_same_resolution_and_start_path(self):
-        start_args = self._args("start", "worker", "--model", "sol", "--fast")
+        start_args = self._args("dispatch", "worker", "--model", "sol", "--fast")
         dispatch_args = self._args("dispatch", "worker", "--model", "sol", "--fast")
         self.assertEqual(meight.resolve_start_options(start_args),
                          meight.resolve_start_options(dispatch_args))
@@ -127,6 +127,98 @@ class StartDefaultsTests(unittest.TestCase):
             "effort=medium(default) fast=on(set) sandbox=full(default)",
             output.getvalue(),
         )
+
+    def test_dispatch_timeout_caps_capacity_retry_budget_on_wire(self):
+        args = meight.build_parser().parse_args([
+            "dispatch", "budget-test", "--mode", "worker", "--brief", "brief",
+            "--timeout", "120",
+        ])
+        request = self._start_request(args)
+        self.assertEqual(request["capacity_retry_budget_sec"], 120.0)
+
+
+class DispatchSurfaceTests(unittest.TestCase):
+    def _args(self, name="dispatch-test"):
+        return meight.build_parser().parse_args([
+            "dispatch", name, "--mode", "worker", "--brief", "new brief", "--timeout", "12",
+        ])
+
+    def test_cli_surface_has_no_start_or_wait_subcommands(self):
+        parser = meight.build_parser()
+        subparsers = next(
+            action for action in parser._actions if action.dest == "command"
+        )
+        self.assertNotIn("start", subparsers.choices)
+        self.assertNotIn("wait", subparsers.choices)
+        for removed in ("start", "wait"):
+            with self.subTest(removed=removed), self.assertRaises(SystemExit) as error:
+                parser.parse_args([removed, "worker-1"])
+            self.assertEqual(error.exception.code, 2)
+
+    def test_dispatch_reattaches_to_active_disk_row_without_starting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            repo_home = Path(tmp) / "repo"
+            worker_dir = repo_home / "workers" / "reattach-test"
+            worker_dir.mkdir(parents=True)
+            status = {
+                "name": "reattach-test",
+                "state": "running",
+                "repo_key": "repo-key",
+                "repo_root": "/repo",
+                "started_at": meight.now_iso(),
+                "updated_at": meight.now_iso(),
+            }
+            (worker_dir / "status.json").write_text(json.dumps(status), encoding="utf-8")
+            output = io.StringIO()
+            with (
+                patch.object(meight, "ensure_daemon", return_value=True),
+                patch.object(meight, "repo_home_for_cli", return_value=repo_home),
+                patch.object(meight, "query_runtime_status", return_value={
+                    "ok": True, "known": True, "has_live_turn": True,
+                }) as runtime,
+                patch.object(meight, "start_request") as start,
+                patch.object(meight, "wait_for_worker", return_value=1) as wait,
+                contextlib.redirect_stdout(output),
+            ):
+                code = meight.cmd_dispatch(self._args("reattach-test"), home)
+
+            self.assertEqual(code, 1)
+            start.assert_not_called()
+            runtime.assert_called_once()
+            wait.assert_called_once_with(home, repo_home, "reattach-test", 12.0, 300.0,
+                                         narrate=False)
+            self.assertIn("reattached to worker 'reattach-test' (state=running)", output.getvalue())
+
+    def test_dispatch_keeps_terminal_row_on_new_start_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp) / "home"
+            repo_home = Path(tmp) / "repo"
+            worker_dir = repo_home / "workers" / "terminal-test"
+            worker_dir.mkdir(parents=True)
+            (worker_dir / "status.json").write_text(json.dumps({
+                "name": "terminal-test",
+                "state": "completed",
+                "started_at": meight.now_iso(),
+                "updated_at": meight.now_iso(),
+            }), encoding="utf-8")
+            response = {
+                "ok": True, "thread_id": "new-thread", "mode": "worker",
+                "protocol_epoch": meight.PROTOCOL_EPOCH,
+            }
+            output = io.StringIO()
+            with (
+                patch.object(meight, "ensure_daemon", return_value=True),
+                patch.object(meight, "repo_home_for_cli", return_value=repo_home),
+                patch.object(meight, "start_request", return_value=response) as start,
+                patch.object(meight, "wait_for_worker", return_value=1),
+                contextlib.redirect_stdout(output),
+            ):
+                code = meight.cmd_dispatch(self._args("terminal-test"), home)
+
+            self.assertEqual(code, 1)
+            start.assert_called_once()
+            self.assertIn("started worker 'terminal-test'", output.getvalue())
 
 
 class WaitClassificationTests(unittest.TestCase):
@@ -176,7 +268,7 @@ class EffortTests(unittest.TestCase):
         parser = meight.build_parser()
         for effort in ("ultra", "max"):
             args = parser.parse_args([
-                "start", f"effort-{effort}", "--mode", "worker",
+                "dispatch", f"effort-{effort}", "--mode", "worker",
                 "--brief", "Say OK", "--effort", effort,
             ])
             responses = ({"ok": True, "capabilities": [meight.PROTOCOL_EPOCH]},
@@ -390,7 +482,7 @@ class TerminalErrorTests(unittest.TestCase):
             thread = RetryThread([self._completed_handle()])
             worker.thread = thread
 
-            with patch.object(meight, "CAPACITY_RETRY_DELAYS_SEC", (0, 0, 0, 0, 0)):
+            with patch.object(meight, "capacity_retry_delay", return_value=0):
                 worker.consume_stream(
                     meight.Daemon(home), worker.generation, self._capacity_handle()
                 )
@@ -401,9 +493,12 @@ class TerminalErrorTests(unittest.TestCase):
             self.assertEqual(result.strip(), "OK")
             self.assertEqual(len(thread.calls), 1)
             self.assertEqual(thread.calls[0][0], meight.CAPACITY_RETRY_PROMPT)
+            self.assertEqual(thread.calls[0][1]["model"], "gpt-5.6-sol")
+            self.assertEqual(thread.calls[0][1]["effort"], "medium")
             self.assertEqual(thread.calls[0][1]["service_tier"], "default")
+            self.assertEqual(worker.status["capacity_retry"]["state"], "completed")
 
-    def test_capacity_failure_stops_after_five_retries(self):
+    def test_capacity_failure_stops_when_time_budget_is_exhausted(self):
         class RetryThread:
             def __init__(self, handles):
                 self.handles = list(handles)
@@ -418,14 +513,15 @@ class TerminalErrorTests(unittest.TestCase):
             worker = meight.Worker(
                 "capacity-exhausted", home, "/repo", "repo-key", "/repo",
                 "workspace_write", "gpt-5.6-sol", "high", "default",
+                capacity_retry_budget_sec=0,
             )
             worker.dir.mkdir(parents=True)
             worker.init_status(thread_id="thread-1")
             worker.generation = 1
-            thread = RetryThread([self._capacity_handle() for _ in range(5)])
+            thread = RetryThread([])
             worker.thread = thread
 
-            with patch.object(meight, "CAPACITY_RETRY_DELAYS_SEC", (0, 0, 0, 0, 0)):
+            with patch.object(meight, "capacity_retry_delay", return_value=0):
                 worker.consume_stream(
                     meight.Daemon(home), worker.generation, self._capacity_handle()
                 )
@@ -433,10 +529,49 @@ class TerminalErrorTests(unittest.TestCase):
             result = (worker.dir / "result.md").read_text(encoding="utf-8")
             events = (worker.dir / "events.log").read_text(encoding="utf-8")
             self.assertEqual(worker.status["state"], "failed")
-            self.assertEqual(worker.status["capacity_retries"], 5)
-            self.assertEqual(thread.calls, 5)
+            self.assertEqual(worker.status["capacity_retries"], 0)
+            self.assertEqual(thread.calls, 0)
             self.assertIn("Selected model is at capacity", result)
-            self.assertIn("[capacity/exhausted] failed after 5 retries", events)
+            self.assertIn("[capacity/exhausted] capacity retries stopped after 0 retries", events)
+            self.assertIn("## Capacity retry", result)
+
+    def test_capacity_retry_uses_capped_exponential_schedule_and_timeout_budget(self):
+        self.assertEqual(meight.capacity_retry_delay(1), 5)
+        self.assertEqual(meight.capacity_retry_delay(2), 10)
+        self.assertEqual(meight.capacity_retry_delay(5), 60)
+        self.assertEqual(meight.capacity_retry_delay(50), 60)
+        self.assertEqual(
+            meight.capacity_retry_budget_for_timeout(120),
+            120,
+        )
+        self.assertEqual(
+            meight.capacity_retry_budget_for_timeout(1800),
+            meight.CAPACITY_RETRY_BUDGET_SEC,
+        )
+
+    def test_capacity_retry_status_surfaces_countdown_for_heartbeat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            worker = meight.Worker(
+                "capacity-status", home, "/repo", "repo-key", "/repo",
+                "workspace_write", "gpt-5.6-sol", "medium", "default",
+                capacity_retry_budget_sec=120,
+            )
+            worker.dir.mkdir(parents=True)
+            worker.init_status(thread_id="thread-1")
+            worker._capacity_retry_started_monotonic = 10
+            worker._capacity_retry_deadline = 20
+            worker.status["capacity_retries"] = 2
+            worker.status["capacity_retry"] = {
+                "state": "waiting", "attempt": 3, "budget_sec": 120,
+            }
+            with patch.object(meight.time, "monotonic", return_value=15):
+                worker.write_status(force=True)
+            status = json.loads((worker.dir / "status.json").read_text(encoding="utf-8"))
+            self.assertEqual(status["capacity_retry"]["attempt"], 3)
+            self.assertEqual(status["capacity_retry"]["elapsed_sec"], 5.0)
+            self.assertEqual(status["capacity_retry"]["next_retry_in_sec"], 5.0)
+            self.assertIn("capacity retry #3 in 5s", status["current_item"])
 
 
 class QuestionRoutingTests(unittest.TestCase):
@@ -1158,7 +1293,7 @@ class ModeLifecycleTests(unittest.TestCase):
 
     def _start_args(self, cwd: str, mode: str = "review"):
         return meight.build_parser().parse_args([
-            "start", "mode-test", "--mode", mode,
+            "dispatch", "mode-test", "--mode", mode,
             "--brief", "Review the contract.", "--cwd", cwd,
         ])
 
@@ -1517,7 +1652,7 @@ class ModeLifecycleTests(unittest.TestCase):
         for mode_args in ([], ["--mode", "reviewer"]):
             with self.subTest(mode_args=mode_args):
                 args = parser.parse_args([
-                    "start", "mode-teaching", "--brief", "No side effects.", *mode_args,
+                    "dispatch", "mode-teaching", "--brief", "No side effects.", *mode_args,
                 ])
                 stderr = io.StringIO()
                 with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
@@ -1527,14 +1662,14 @@ class ModeLifecycleTests(unittest.TestCase):
 
     def test_single_axis_mode_validation_precedes_side_effects(self):
         parser = meight.build_parser()
-        for command in ("start", "dispatch"):
+        for command in ("dispatch",):
             for mode_args in ([], ["--mode", "invalid"]):
                 with self.subTest(command=command, mode_args=mode_args):
                     args = parser.parse_args([
                         command, "mode-precedence", "--brief", "No side effects.", *mode_args,
                     ])
                     stderr = io.StringIO()
-                    call = meight.start_request if command == "start" else meight.cmd_dispatch
+                    call = meight.cmd_dispatch
                     with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
                         call(args, Path("/tmp/meight-mode-precedence"))
                     self.assertEqual(error.exception.code, 2)
@@ -1836,7 +1971,7 @@ class ModeLifecycleTests(unittest.TestCase):
                     self.assertEqual(saved["mode"], mode)
                     self.assertIn(mode, meight.summary_line(saved))
 
-    def test_start_output_echoes_resolved_defaults_and_provenance(self):
+    def test_dispatch_output_echoes_resolved_defaults_and_provenance(self):
         cases = (
             ("worker",
              "model=luna(default) effort=max(default) fast=off(default) "
@@ -1856,15 +1991,17 @@ class ModeLifecycleTests(unittest.TestCase):
                     "protocol_epoch": meight.PROTOCOL_EPOCH,
                 }
                 with (
+                    patch.object(meight, "ensure_daemon", return_value=True),
                     patch.object(meight, "start_request", return_value=response),
+                    patch.object(meight, "wait_for_worker", return_value=1),
                     contextlib.redirect_stdout(output),
                 ):
-                    self.assertEqual(meight.cmd_start(args, Path("/tmp/meight-output")), 0)
+                    self.assertEqual(meight.cmd_dispatch(args, Path("/tmp/meight-output")), 1)
                 self.assertIn(f"mode={mode} {settings}", output.getvalue())
 
-    def test_start_output_marks_explicit_flags_as_set(self):
+    def test_dispatch_output_marks_explicit_flags_as_set(self):
         args = meight.build_parser().parse_args([
-            "start", "mode-test", "--mode", "worker", "--brief", "Implement.",
+            "dispatch", "mode-test", "--mode", "worker", "--brief", "Implement.",
             "--model", "sol", "--effort", "high", "--fast",
             "--sandbox", "ro",
         ])
@@ -1874,10 +2011,12 @@ class ModeLifecycleTests(unittest.TestCase):
         }
         output = io.StringIO()
         with (
+            patch.object(meight, "ensure_daemon", return_value=True),
             patch.object(meight, "start_request", return_value=response),
+            patch.object(meight, "wait_for_worker", return_value=1),
             contextlib.redirect_stdout(output),
         ):
-            self.assertEqual(meight.cmd_start(args, Path("/tmp/meight-output")), 0)
+            self.assertEqual(meight.cmd_dispatch(args, Path("/tmp/meight-output")), 1)
         self.assertIn(
             "model=sol(set) effort=high(set) fast=on(set) "
             "sandbox=ro(set)",
@@ -1949,20 +2088,14 @@ class ModeLifecycleTests(unittest.TestCase):
                         return response
                     return {"ok": True}
 
-                stderr = io.StringIO()
-                with (
-                    patch.object(meight, "send_request", side_effect=swapped_daemon),
-                    contextlib.redirect_stderr(stderr),
-                    self.assertRaises(SystemExit) as error,
-                ):
-                    meight.cmd_start(args, home)
+                with patch.object(meight, "send_request", side_effect=swapped_daemon):
+                    response = meight.start_request(args, home)
 
-                self.assertEqual(error.exception.code, 1)
-                self.assertEqual(
-                    stderr.getvalue().strip(),
-                    "error: start protocol mismatch: "
-                    f"expected mode=mate epoch={meight.PROTOCOL_EPOCH}",
-                )
+                self.assertEqual(response, {
+                    "ok": False,
+                    "error": "start protocol mismatch: "
+                             f"expected mode=mate epoch={meight.PROTOCOL_EPOCH}",
+                })
                 self.assertEqual([req["cmd"] for req in requests], ["ping", "start", "interrupt"])
                 self.assertEqual(requests[2]["name"], args.name)
                 for key in ("repo_root", "repo_key", "repo_home"):
