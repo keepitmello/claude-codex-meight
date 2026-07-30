@@ -88,15 +88,15 @@ Bash(command: "meight dispatch fix-auth --mode worker --cwd ~/repo --brief-file 
 → exit 3이면 → Bash(command: "meight reply fix-auth --brief '...'", run_in_background: true)
 ```
 
-디스패처가 기억할 세션 관찰 표면은 `dispatch`, `status`, `result`다. `dispatch`가
-백그라운드에서 끝나기 전에는 별도의 폴링 셸을 추가하지 않는다. 체크포인트
-타임아웃으로 셸이 끝나면 같은 `dispatch <name>`을 다시 실행한다. 디스크의
-`status.json`이 활성이고 daemon이 그 이름을 알고 있으면 새 세션을 열지 않고
-그 자리에서 계속 기다린다. terminal 행은 재부착 대상으로 취급하지 않는다.
+세션 관찰 표면은 `dispatch`, `status`, `result` 셋이다. 통지를 만드는 것은
+백그라운드 셸의 종료이고 `dispatch`가 이미 그 셸이므로, 그 위에 얹는 폴링은
+같은 대기를 한 번 더 도는 것 외에 아무것도 알려주지 않는다. 체크포인트
+타임아웃으로 셸이 끝났으면 같은 `dispatch <name>`을 다시 실행한다 — 디스크의
+`status.json`이 활성이고 daemon이 그 이름을 알면 새 세션을 열지 않고 재부착해
+통지를 다시 만든다. terminal 행은 재부착 대상이 아니다.
 
-`status`는 디스크만 읽으니 언제 찍어도 안전하다. 다만 `running`은 정상이지
-신호가 아니다 — 통지는 이미 오는 중이므로, `running`을 봤을 때 할 일은 다른
-작업으로 돌아가는 것이다.
+`status`는 디스크만 읽으니 언제 찍어도 안전하고, `running`은 통지가 아직 오는
+중이라는 뜻이다.
 
 - **새로 띄우면 한마디 한다**: 새 세션을 열 때 이름·자세와 함께 어떤 모델·effort로 띄웠는지 한 줄로 말한다 (`fix-auth 워커 띄웠어 — luna max`). 재부착이면 새 세션 echo 대신 `reattached to worker '<name>'` 한 줄을 낸다.
 - `--timeout`(기본 1800)은 안전망 체크포인트다: 타임아웃으로 셸이 끝나도 워커는 계속 돈다 — `status <name>`으로 확인한 뒤 같은 `dispatch <name> --mode ...`를 다시 실행해 통지를 다시 받는다.
