@@ -51,7 +51,7 @@ requirements.
 
 | Work | Route |
 |---|---|
-| Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` (defaults: `luna max`; Fast is opt-in via `--fast`) |
+| Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` (defaults: `luna max` with Fast; use `--no-fast` to disable) |
 | Blind/anchored design and diagnosis | `--mode mate` (defaults: `sol medium`; `high` only for genuinely hard problems, and `sol` stops at `high`) |
 | Plan and adversarial review | `--mode mate --effort high` (`sol high`; standing reviewer route) |
 | Hard work of any kind | `--mode mate` for the plan first, then `--mode worker` (`luna`) on the frozen plan |

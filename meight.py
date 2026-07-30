@@ -103,7 +103,7 @@ MODE_START_DEFAULTS = {
         "sandbox": "full",
     },
     "worker": {
-        "model": "luna", "effort": "max", "fast": False,
+        "model": "luna", "effort": "max", "fast": True,
         "sandbox": "full",
     },
 }
@@ -676,7 +676,7 @@ class Worker:
         self.sandbox = sandbox  # normalized key such as "workspace_write"
         self.model = model
         self.effort = effort
-        self.service_tier = service_tier  # "default" unless --fast maps the worker to "priority"
+        self.service_tier = service_tier  # "priority" by default; --no-fast selects "default"
         self.thread_source = thread_source
         self.thread_ephemeral = thread_ephemeral
         # Canonical posture; follow/reply turns inherit it. Normalizing here keeps

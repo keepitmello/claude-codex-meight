@@ -23,7 +23,7 @@ description: "Hand a whole workstream to a Codex session that owns it: takes a s
 | Mode | Model | Effort | Fast | Sandbox |
 |---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `full` |
-| `worker` | `luna` | `max` | off | `full` |
+| `worker` | `luna` | `max` | on | `full` |
 
 이 표와 effort 기본값은 의도적으로 `meight.py` 안의 코드 전용 정책이다 — config 파일도 환경변수 오버라이드도 없다. 샌드박스는 어느 자세도 강제하지 않으니 read-only가 필요하면 브리프에 지시한다 (mate 스킬은 "브리프가 시키지 않으면 레포 파일을 고치지 않는다"를 이미 갖고 있다). `--sandbox`는 수동 선택용으로 남아 있다.
 

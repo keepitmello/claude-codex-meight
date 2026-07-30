@@ -314,7 +314,7 @@ sent:
 | Mode | Model | Effort | Fast | Sandbox |
 |---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `full` |
-| `worker` | `luna` | `max` | off | `full` |
+| `worker` | `luna` | `max` | on | `full` |
 
 An explicit `--model sol|luna` without `--effort` reselects that model's effort
 default. An explicit `--effort` always wins.
