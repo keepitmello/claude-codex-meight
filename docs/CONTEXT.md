@@ -5,8 +5,7 @@
 > 문서를 갱신할 것. (역사적 경위는 decisions/를, 운영 프로토콜은 skills/를
 > 신뢰 — 충돌 시 그쪽이 이긴다.)
 >
-> LAST UPDATED: 2026-07-30 (Codex 앱 기록 누적을 막기 위해 모든 워커를
-> ephemeral thread + bounded artifact handoff로 전환)
+> LAST UPDATED: 2026-08-02 (worker 기본 라우팅을 브리프 완결성 축으로 정렬)
 > 이전: 2026-07-28 (posture2 — 2자세 통합, 샌드박스 강제 제거)
 
 ## 현재 상태 스냅샷
@@ -19,26 +18,28 @@
   `skills/meight-common/CONTRACT.md`다. 샌드박스는 강제하지 않는다 —
   read-only는 브리프 지시.
 - **파이프라인**: blind design(방향 fork, mate) → plan-review 루프(mate
-  일반 텍스트, 최대 3라운드, PLAN.md 동결) → worker 구현(luna
-  max 기본, Fast는 옵트인, sol worker는 예외 경로) → 적대 리뷰(mate, 2라운드
-  캡) → dispatcher 사인오프. 게이트는 작업 크기에 비례해 생략 가능하되 절대
-  조용히는 불가.
+  일반 텍스트, 최대 3라운드, PLAN.md 동결) → worker 구현(sol medium 기본,
+  계약·범위·증거가 완결된 브리프는 `--model luna`로 max+Fast 선택) → 적대
+  리뷰(mate, 2라운드 캡) → dispatcher 사인오프. 게이트는 작업 크기에 비례해
+  생략 가능하되 절대 조용히는 불가.
 - **난이도 대응 = 모델 승급이 아니라 단계 추가**: 어려우면 `sol` mate 플랜 →
-  동결 → `luna` 워커 구현이 기본이자 가장 싼 조합. worker `sol`은 설계를 앞에
-  못 붙이거나 플랜을 쥐고도 구현이 어려울 때의 예외 경로이고 항상 `medium` —
-  `high`와의 차이는 작고 코드 작업에 태우면 값을 못 한다. reviewer는 `sol
-  high`가 기본이고, 비리뷰 설계에서의 `sol high`만 정말 어려울 때 사용자 확인
-  1회. 세션을 띄우면 어떤 모델·effort로 띄웠는지 사용자에게 한 줄 보고.
-- **모델 라우팅**: 실패 비용 판단 하나 — 실패가 돈·데이터를 손상시키거나
-  비가역이거나 프로덕션에 크게 번지면 브레인을 올리고 나머지는 `luna`. 작업
-  이름이 아니라 실패 결과를 보고, 올렸으면 이유를 한 줄로 말한다. 돈 경로
-  sign-off와 worker 스킬의 "혼자 결정 금지" 에스컬레이션 목록은 다른 축으로
-  유지 (경위: `decisions/2026-07-29-difficulty-answered-with-a-stage.md`).
-- **effort 정책**: luna=max — `xhigh` 대비 비용 +25%에 Coding Agent Index
-  +4점이라 기본이 여기다 (Fast는 `--fast` 옵트인). sol=medium 기본이고
-  reviewer는 `sol high`; 비리뷰 mate의 `high`는 진짜 어려운 것만(dispatcher
-  판단 + 사용자 확인). sol에 xhigh는 쓰지 않는다. 근거:
-  `docs/2026-07-29-model-routing-evidence.md`.
+  동결 → 계약·범위·증거가 완결된 브리프 → `luna max`+Fast 워커 구현이
+  실행에 강한 조합. worker `sol`은 항상 `medium`이고 브리프에 남은 판단을
+  드러낸다. reviewer는 `sol high`가 기본이고, 비리뷰 설계에서의 `sol high`만
+  정말 어려울 때 사용자 확인 1회. 세션을 띄우면 어떤 모델·effort로 띄웠는지
+  사용자에게 한 줄 보고.
+- **모델 라우팅**: 첫 축은 브리프 완결성이다 — 수용 기준·파일/디렉토리
+  범위·검증 방법이 완결되면 디스패처가 `--model luna`를 선택하고, 그 밖의
+  worker는 `sol medium`에서 레포 이해와 숨은 blocker 판단을 맡는다. 실패 비용은
+  독립 축으로 유지해 돈·데이터 손상, 비가역, 프로덕션 확산이면 필요한 승급과
+  게이트를 적용한다. 돈 경로 sign-off와 worker 스킬의 작업 전 에스컬레이션
+  목록도 별도 축이다 (경위: `decisions/2026-07-29-difficulty-answered-with-a-stage.md`).
+- **effort 정책**: worker `sol`은 `medium`, 완결 브리프에서 명시한 `luna`는
+  `max`+Fast다. `luna max`는 `xhigh` 대비 비용 +25%에 Coding Agent Index
+  +4점이고, `sol medium`은 SWE-Atlas-QnA 40 대 33으로 레포 이해·탐색에서
+  앞선다. reviewer는 `sol high`; 비리뷰 mate의 `high`는 진짜 어려운 것만
+  (dispatcher 판단 + 사용자 확인). sol에 xhigh는 쓰지 않는다. 근거:
+  `skills/meight/references/model-routing.md`.
 - **세션 저장 정책**: `thread_source=subagent`는 analytics 메타데이터일 뿐
   앱 숨김 기능이 아니다. 모든 start는 `thread_ephemeral=true`; follow/reply는
   새 ephemeral thread에 brief·result·recent events의 bounded handoff를
@@ -66,7 +67,7 @@
 | 세션 계약 (mate / worker / 공유) | `skills/meight-mate/SKILL.md`, `skills/meight-worker/SKILL.md`, `skills/meight-common/CONTRACT.md` |
 | 왜 이 파이프라인인가 — 설계 경위·리서치·검증 기록 | `docs/2026-07-14-v3-pipeline-retrospective.md` (v3 채택 시점 기준; 이후 델타는 decisions/) |
 | 외부 리서치 요약 (TRIP-workflow/jinn/codex-plugin-cc/aimee/clideck 채택·기각) | 회고 문서 §4 |
-| 개별 결정의 양쪽 입장과 근거 | `decisions/` — mode-flag-required(07-03), consensus-pipeline-luna-promotion(+사용자 AMENDMENT 2건), mate-worker-role-split, mode-axis-collapse |
+| 개별 결정의 양쪽 입장과 근거 | `decisions/` — mode-flag-required(07-03), consensus-pipeline-luna-promotion(+사용자 AMENDMENT 2건), mate-worker-role-split, mode-axis-collapse, brief-completeness-model-default(08-02) |
 | 하네스 내부 설계·상태머신·하드닝 이력 | `ARCHITECTURE.md`, `SPEC.md` |
 | 드롭인 오케스트레이터 프롬프트 | `CLAUDE.md`(Claude용), `AGENTS.md`(Codex용) |
 | 운영 원장 (레포 **밖**, 글로벌) | `~/.meight/notes/lessons.md`(사이클 지표·교훈), `~/.meight/notes/preferences.md`(사용자 결정 적립 — 에스컬레이션 전 필독) |
@@ -75,16 +76,18 @@
 
 1. 소비자는 LLM 에이전트 — 정책은 기억이 아니라 하네스가 강제한다 (필수
    플래그 + 티칭 에러 + 데몬 경계 재검증).
-2. failure cost가 모델을 고른다. 리뷰는 확률 필터지 보장이 아니다 — 누락형
-   결함(동시성·보안·비가역)은 사후 리뷰로 못 잡으니 사전 라우팅으로 막는다.
+2. 브리프 완결성이 worker의 기본 모델을 고른다. 실패 비용은 독립 축으로
+   유지하며, 누락형 결함(동시성·보안·비가역)은 사후 리뷰보다 사전 라우팅과
+   명시한 증거 계약으로 막는다.
 3. 방향 fork는 blind로 (앵커링 방지), 방향 확정 후에만 anchored 루프.
 4. verdict는 자신이 리뷰한 대상을 명시한다 — stale verdict는 폐기.
 5. 게이트는 비례하되 생략은 절대 조용히 하지 않는다. 머니패스와 worker
    에스컬레이션 목록은 생략 불가.
 6. 자동 학습보다 scorecard 먼저 — 지표 없이 규칙을 조이거나 풀지 않는다.
 7. mate/worker는 세션 계약(자세)명이지 모델 정체성이 아니다. 실무 정렬:
-   mate≈sol, worker≈luna, sol이 worker로 내려오는 건 예외 경로. 완전 위임은
-   별도 모드가 아니라 worker 계약의 자기 리뷰 + 브리프 스코프로 표현한다.
+   mate≈sol, worker 기본≈sol medium, 완결 브리프의 worker는 `luna max`+Fast를
+   명시 선택할 수 있다. 완전 위임은 별도 모드가 아니라 worker 계약의 자기 리뷰
+   + 브리프 스코프로 표현한다.
 
 ## 미결 사항 (다음 의사결정 대기)
 
@@ -96,9 +99,9 @@
 - **`QUESTION:` 품질 baseline**: 어느 모델도 공개 실측이 없다 (HiL-Bench에
   luna row 없음, sol 수치도 ASK-F1이 아님). 하드게이트 목록을 걷어낸 지금
   워커 에스컬레이션에 더 의존하는데 그 품질을 모른다 — 로컬 관측 필요.
-- **luna 게이트 튜닝**: 실패 비용 판단만으로 라우팅이 충분한지는 미검증
-  가정 (2026-07-29). luna 결함률·승격률·false-approve·게이트 생략 후
-  결함 지표가 기준선.
+- **브리프 완결성 라우팅 튜닝**: 완결 브리프의 `luna` 선택과 불완전 브리프의
+  `sol medium` 판단이 비용·품질 면에서 맞는지는 계속 측정한다. sol의 hidden-
+  blocker 발견률, luna의 결함률·승격률·false-approve 지표가 기준선이다.
 - **NEEDS_REWORK 3단 verdict**: plan-review 조기 탈출 신호 후보 — 도입 시
   plan 재승인 필요 (백로그).
 - **verdict 인코딩의 스키마 1급 필드화**: 현재는 문서 규약(APPROVE⇒done/GO,

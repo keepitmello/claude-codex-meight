@@ -67,19 +67,21 @@ still only a claim. For reviewed work, sign-off combines the review verdict
 with verification evidence; unreviewed work still requires verification
 evidence. Reading the entire diff is never a sign-off gate.
 
-The included operator-policy template routes bounded work to `luna` and gates on
-failure cost: raise the brain when failure can damage money or data, cannot be
-undone, or spreads across production. When
-work is hard, the template adds a stage instead of a bigger worker — a `sol`
-mate plan handed to a `luna` worker — and reserves `sol` in worker mode for
-implementation that stays hard with a plan in hand. Those model and money-path gates
+The included operator-policy template starts workers on `sol medium` so the
+worker can understand the repository and surface hidden blockers. When a brief
+fully states its acceptance contract, file/directory scope, and verification
+evidence, the dispatcher explicitly selects `--model luna`, which resolves to
+`luna max` with Fast for execution and convergence. Failure cost remains an
+independent gate for raising the brain or adding review. When work is hard, the
+template adds a stage instead of a larger worker — a `sol` mate plan is frozen,
+then handed to a worker with a complete brief. These model and money-path gates
 are explicitly adjustable operator policy, not meight interface requirements.
 
-Effort follows the same economics: `luna` runs `max`, which buys a measured
-four Index points over `xhigh` for a quarter more cost. `sol` defaults to
-`medium` and stays there in worker mode. Reviewers use `sol high`; non-review
-mate work uses `high` only when genuinely hard and after one user confirmation.
-`sol` never runs `xhigh`.
+Effort follows the same economics: a selected `luna` runs `max`, which buys a
+measured four Index points over `xhigh` for a quarter more cost. Worker `sol`
+stays at `medium`, preserving the repository-understanding path; reviewers use
+`sol high`, and non-review mate work uses `high` only when genuinely hard and
+after one user confirmation. `sol` never runs `xhigh`.
 
 ## Why This Exists
 
@@ -301,7 +303,9 @@ Common options:
   through unchanged.
 - `--effort low|medium|high|xhigh|ultra|max` uses the selected model's default
   for `sol`/`luna` (`medium`/`max`); otherwise it uses the mode default below.
-- `--fast` selects priority service tier and `--no-fast` disables it.
+- `--fast` selects priority service tier and `--no-fast` disables it. An omitted
+  Fast flag follows the selected model's default, so explicit `--model luna`
+  resolves to Fast on while explicit Fast flags always win.
   On `follow`/`reply`, omitting `--model`, `--effort`, and Fast flags inherits
   the worker's current values; an explicit override applies to that new turn
   and becomes the value inherited by later turns.
@@ -314,10 +318,13 @@ sent:
 | Mode | Model | Effort | Fast | Sandbox |
 |---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `full` |
-| `worker` | `luna` | `max` | on | `full` |
+| `worker` | `sol` | `medium` | off | `full` |
 
 An explicit `--model sol|luna` without `--effort` reselects that model's effort
-default. An explicit `--effort` always wins.
+default; when Fast is omitted, the selected model's Fast default is reselected as
+well. Thus `--model luna` yields `luna max` with Fast, while explicit
+`--fast`/`--no-fast` always wins. A dispatcher chooses that combination when the
+brief contains the complete contract, scope, and verification evidence.
 
 Neither posture enforces a sandbox: read-only is brief-driven policy (the mate
 contract defaults to not modifying repository files), and `--sandbox` remains

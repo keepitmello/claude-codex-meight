@@ -18,12 +18,12 @@ description: "Hand a whole workstream to a Codex session that owns it: takes a s
 - `--mode mate` — 생각·판단 상대. 블라인드/앵커드 설계, 진단, 방향, 그리고 verdict-first 플랜/디프/적대 리뷰까지. 어느 프로토콜을 적용할지는 브리프가 정한다 — 리뷰 브리프면 mate 스킬의 리뷰 섹션이 걸린다.
 - `--mode worker` — 실행 팀원. how·구현·검증·자기 리뷰를 소유하고, 브리프 밖 관찰과 이견을 텍스트와 `QUESTION:`으로 올린다. 별도 외부 리뷰 세션을 띄울지는 디스패처가 판단한다.
 
-생략된 설정은 자세에서 해소된다. `--effort` 없이 `--model`만 주면 그 모델의 effort 기본값을 다시 고르고, 명시한 `--effort`는 언제나 이긴다 — 표준은 조용하니 편차만 플래그로 준다. dispatch echo가 해소된 값 전부를 `(default)`/`(set)` 출처와 함께 보여준다.
+생략된 설정은 자세와 선택한 모델에서 해소된다. `--effort` 없이 `--model`만 주면 그 모델의 effort 기본값을 다시 고르고, `--model luna`를 명시하면 Fast도 함께 켜져 `luna max` 조합이 된다. 명시한 `--effort`와 `--fast`/`--no-fast`는 언제나 이긴다 — 표준은 조용하니 편차만 플래그로 준다. dispatch echo가 해소된 값 전부를 `(default)`/`(set)` 출처와 함께 보여준다.
 
 | Mode | Model | Effort | Fast | Sandbox |
 |---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `full` |
-| `worker` | `luna` | `max` | on | `full` |
+| `worker` | `sol` | `medium` | off | `full` |
 
 이 표와 effort 기본값은 의도적으로 `meight.py` 안의 코드 전용 정책이다 — config 파일도 환경변수 오버라이드도 없다. 샌드박스는 어느 자세도 강제하지 않으니 read-only가 필요하면 브리프에 지시한다 (mate 스킬은 "브리프가 시키지 않으면 레포 파일을 고치지 않는다"를 이미 갖고 있다). `--sandbox`는 수동 선택용으로 남아 있다.
 
@@ -33,9 +33,9 @@ CLI는 `dispatch` 전에 capability handshake를 하고, 살아있는 데몬이 
 
 ## 모델 (GPT-5.6: sol / terra / luna)
 
-`sol`, `terra`, `luna`는 계정 슬러그 `gpt-5.6-*`로 해소되는 실제 별칭이고, 전체/커스텀 문자열도 그대로 통과한다. `--model`을 생략하면 자세 기본값 — 편차일 때만 명시한다.
+`sol`, `terra`, `luna`는 계정 슬러그 `gpt-5.6-*`로 해소되는 실제 별칭이고, 전체/커스텀 문자열도 그대로 통과한다. worker의 기본은 `sol medium`이다. 작업 전체의 계약(수용 기준), 범위(파일/디렉토리 경계), 증거(검증 방법)를 브리프가 완결적으로 담고 있으면 디스패처가 `--model luna`를 명시 선택하고, CLI가 `luna max`와 Fast를 함께 해소한다. 그 밖의 worker는 `sol medium`에서 숨은 blocker를 판단하며, 명시 `--effort`와 `--fast`/`--no-fast`는 언제나 우선한다.
 
-기본값에서 벗어날 축은 **실패 비용**이다: 돈·데이터 손상, 비가역, 프로덕션 확산이면 올리고 나머지는 `luna`. 난이도가 올라갈 때 첫 대응은 워커 승급이 아니라 단계 추가다 — `sol` mate에게 플랜을 받아 동결하고 `luna` 워커가 구현하는 게 가장 싼 조합이다. worker의 `sol`은 `medium`이고, `sol high`는 mate 자리다 (`sol`에 `xhigh`는 없다). 올렸으면 무엇을 보고 올렸는지 한 줄로 말한다.
+모델 선택에는 실패 비용이라는 독립 축도 있다: 돈·데이터 손상, 비가역, 프로덕션 확산이면 필요한 게이트와 브레인 승급을 적용하고, 무엇을 보고 올렸는지 한 줄로 말한다. 난이도가 올라갈 때 첫 대응은 워커 effort 승급이 아니라 단계 추가다 — `sol` mate에게 플랜을 받아 동결하고 완결된 브리프로 `luna` 워커를 구현하는 조합이 실행에 강하다. worker의 `sol`은 `medium`이고, `sol high`는 mate 자리다 (`sol`에 `xhigh`는 없다).
 
 사다리 근거·비용 수치·승급 경로 상세: [`references/model-routing.md`](references/model-routing.md)
 
@@ -53,7 +53,7 @@ Bash(command: "meight dispatch fix-auth --mode worker --cwd ~/repo --brief-file 
 → exit 3이면 → Bash(command: "meight reply fix-auth --brief '...'", run_in_background: true)
 ```
 
-새 세션을 열 때는 이름·자세와 모델·effort를 한 줄로 말한다 (`fix-auth 워커 띄웠어 — luna max`) — 백그라운드 세션은 사용자 눈에 안 보이니 그 한 줄이 유일한 창이다. 재부착이면 CLI가 `reattached to worker '<name>'`을 낸다.
+새 세션을 열 때는 이름·자세와 모델·effort를 한 줄로 말한다 (`fix-auth 워커 띄웠어 — sol medium`) — 백그라운드 세션은 사용자 눈에 안 보이니 그 한 줄이 유일한 창이다. 완결 브리프에서 `--model luna`를 선택한 경우에는 `luna max`와 Fast를 함께 보고한다. 재부착이면 CLI가 `reattached to worker '<name>'`을 낸다.
 
 - `--timeout`(기본 1800)은 안전망 체크포인트다. 타임아웃으로 셸이 끝나도 워커는 계속 도니, 같은 `dispatch <name> --mode ...`를 다시 실행하면 재부착해 통지를 다시 만든다. terminal 행은 재부착 대상이 아니다. 멈춘 백그라운드 셸은 워커 실패가 아니라 셸 라이프사이클 이벤트고, `status`가 진실이다.
 - `--progress`(기본 300) heartbeat는 백그라운드에선 태스크 출력 파일에만 쌓인다 (한 줄/5분). 아주 긴 세션이면 `--progress 0`.

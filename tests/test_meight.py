@@ -29,7 +29,7 @@ class ModelAliasTests(unittest.TestCase):
 class StartDefaultsTests(unittest.TestCase):
     EXPECTED = {
         "mate": ("gpt-5.6-sol", "medium", "default", "full"),
-        "worker": ("gpt-5.6-luna", "max", "priority", "full"),
+        "worker": ("gpt-5.6-sol", "medium", "default", "full"),
     }
 
     def _args(self, command: str, mode: str, *options: str):
@@ -99,6 +99,31 @@ class StartDefaultsTests(unittest.TestCase):
                     self._args("dispatch", mode, "--model", model),
                 )
                 self.assertEqual(request["effort"], effort)
+
+    def test_explicit_luna_reselects_max_effort_and_fast_defaults(self):
+        for mode in ("worker", "mate"):
+            with self.subTest(mode=mode):
+                request = self._start_request(
+                    self._args("dispatch", mode, "--model", "luna"),
+                )
+                self.assertEqual(
+                    (request["model"], request["effort"], request["service_tier"]),
+                    ("gpt-5.6-luna", "max", "priority"),
+                )
+
+    def test_model_fast_defaults_reselect_only_when_fast_is_omitted(self):
+        cases = (
+            ("worker", ("--model", "luna"), True, "default"),
+            ("mate", ("--model", "luna"), True, "default"),
+            ("worker", ("--model", "luna", "--no-fast"), False, "set"),
+            ("mate", ("--model", "sol", "--fast"), True, "set"),
+        )
+        for mode, options, expected_fast, expected_provenance in cases:
+            with self.subTest(mode=mode, options=options):
+                args = self._args("dispatch", mode, *options)
+                values, provenance = meight.resolve_start_options(args)
+                self.assertEqual(values["fast"], expected_fast)
+                self.assertEqual(provenance["fast"], expected_provenance)
 
     def test_dispatch_uses_the_same_resolution_and_start_path(self):
         start_args = self._args("dispatch", "worker", "--model", "sol", "--fast")
@@ -1970,7 +1995,7 @@ class ModeLifecycleTests(unittest.TestCase):
     def test_dispatch_output_echoes_resolved_defaults_and_provenance(self):
         cases = (
             ("worker",
-             "model=luna(default) effort=max(default) fast=on(default) "
+             "model=sol(default) effort=medium(default) fast=off(default) "
              "sandbox=full(default)"),
             ("mate",
              "model=sol(default) effort=medium(default) fast=off(default) "

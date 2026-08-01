@@ -62,18 +62,21 @@ meight가 주는 건 두 개의 세션 자세지, 의무적인 개발 파이프�
 주장일 뿐이다. 리뷰된 작업의 사인오프는 리뷰 verdict + 검증 증거고, 리뷰 없는
 작업도 검증 증거는 필요하다. 디프 전체를 읽는 건 사인오프 게이트가 아니다.
 
-동봉된 오퍼레이터 정책 템플릿은 bounded 작업을 `luna`로 보내고 실패 비용으로
-게이트를 건다 — 실패가 돈·데이터를 손상시키거나 되돌릴 수 없거나 프로덕션에
-크게 번지면 브레인을 올린다. 작업이 어려우면 워커를 키우는
-대신 단계를 붙인다: `sol` mate가 뽑은 플랜을 `luna` 워커가 구현한다. worker
-자세의 `sol`은 플랜을 쥐고도 구현이 어려울 때를 위한 예외 경로다. 이 모델·돈 경로 게이트는 명시적으로
-조정 가능한 오퍼레이터 정책이지 meight 인터페이스 요구사항이 아니다.
+동봉된 오퍼레이터 정책 템플릿은 worker를 `sol medium`으로 시작해 레포를
+이해하고 숨은 blocker를 드러내게 한다. 작업 전체의 계약(수용 기준)·범위
+(파일/디렉토리 경계)·증거(검증 방법)를 브리프가 완결적으로 담으면
+디스패처가 `--model luna`를 명시 선택하고, 실행·수렴을 위한 `luna max`와
+Fast가 함께 해소된다. 실패 비용은 별도 축으로 남아 브레인을 올리거나
+리뷰를 붙이는 판단에 쓰인다. 어려운 작업은 워커를 키우는 대신 단계를
+붙인다: `sol` mate의 플랜을 동결한 뒤 완결 브리프로 worker에 넘긴다. 이
+모델·돈 경로 게이트는 명시적으로 조정 가능한 오퍼레이터 정책이지 meight
+인터페이스 요구사항이 아니다.
 
-effort도 같은 경제학을 따른다: `luna`는 `max`로 돌린다 — `xhigh` 대비 25%
-비용으로 종합 4점을 사기 때문이다. `sol`은 mate 작업 기본이 `medium`이다.
-reviewer는 `high`를 쓴다. `sol`은 worker 자세에선 `medium`에 머물고, 리뷰가
-아닌 mate 작업의 `high`만 정말 어려울 때 디스패처가 판단하고 띄우기 전에 사용자
-확인을 한 번 받는다. `sol`에 `xhigh`는 쓰지 않는다.
+effort도 같은 경제학을 따른다: 선택된 `luna`는 `max`로 돌린다 — `xhigh` 대비
+25% 비용으로 종합 4점을 사기 때문이다. worker의 `sol`은 `medium`에 머물러
+레포 이해 경로를 담당하고, reviewer는 `sol high`를 쓴다. 리뷰가 아닌 mate
+작업의 `high`는 정말 어려울 때 디스패처가 판단하고 띄우기 전에 사용자 확인을
+한 번 받는다. `sol`에 `xhigh`는 쓰지 않는다.
 
 ## 왜 이게 존재하나
 
@@ -287,7 +290,9 @@ Bash(command: "meight dispatch review-1 --mode mate --timeout 300 --brief-file -
   통과한다.
 - `--effort low|medium|high|xhigh|ultra|max`는 `sol`/`luna`에서 선택 모델의
   기본값(`medium`/`max`)을 쓰고, 그 밖에는 아래 모드 기본값을 쓴다.
-- `--fast`는 priority 서비스 티어를 고르고 `--no-fast`는 끈다.
+- `--fast`는 priority 서비스 티어를 고르고 `--no-fast`는 끈다. Fast를
+  생략하면 선택한 모델의 Fast 기본을 다시 고르므로 `--model luna`는 Fast
+  on이 되고, 명시한 Fast 플래그가 언제나 우선한다.
   `follow`/`reply`에서 `--model`, `--effort`, Fast 플래그를 생략하면 워커의
   현재 값을 상속하고, 명시하면 그 턴에 적용된 뒤 이후 턴이 상속하는 값이
   된다.
@@ -299,10 +304,13 @@ Bash(command: "meight dispatch review-1 --mode mate --timeout 300 --brief-file -
 | Mode | Model | Effort | Fast | Sandbox |
 |---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `full` |
-| `worker` | `luna` | `max` | off | `full` |
+| `worker` | `sol` | `medium` | off | `full` |
 
 `--effort` 없이 `--model sol|luna`를 명시하면 해당 모델의 effort 기본값을
-다시 고른다. `--effort`를 명시하면 언제나 그 값이 우선한다.
+다시 고른다. Fast를 생략해도 선택한 모델의 Fast 기본을 다시 고른다. 따라서
+`--model luna`는 `luna max`와 Fast를 함께 얻고, 명시한 `--effort`와
+`--fast`/`--no-fast`가 언제나 우선한다. 디스패처는 계약·범위·증거가 완결된
+브리프에서 이 조합을 선택한다.
 
 어느 자세도 샌드박스를 강제하지 않는다: read-only는 브리프가 정하는
 정책이고(mate 계약은 브리프가 시키지 않는 한 레포 파일을 고치지 않는 게

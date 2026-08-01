@@ -51,34 +51,34 @@ requirements.
 
 | Work | Route |
 |---|---|
-| Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` (defaults: `luna max` with Fast; use `--no-fast` to disable) |
+| Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` (defaults: `sol medium`; choose `--model luna` for a brief with complete contract, scope, and evidence to get `luna max` with Fast) |
 | Blind/anchored design and diagnosis | `--mode mate` (defaults: `sol medium`; `high` only for genuinely hard problems, and `sol` stops at `high`) |
 | Plan and adversarial review | `--mode mate --effort high` (`sol high`; standing reviewer route) |
-| Hard work of any kind | `--mode mate` for the plan first, then `--mode worker` (`luna`) on the frozen plan |
-| Implementation still hard with a plan in hand | `--mode worker --model sol --effort medium` (worker `sol` stays at `medium`) |
+| Hard work of any kind | `--mode mate` for the plan first, then `--mode worker --model luna` on a frozen brief with complete contract, scope, and evidence |
+| Implementation still hard with a complete brief | `--mode worker --model luna` (`max` with Fast for execution) |
 | `sol high` | reviewer default; for non-review mate work, only genuinely hard design and confirm with the user before launching |
 | Capability-specific fallback | either posture with `terra` only when measured evidence supports it |
 
-Failure cost is the gate: raise the brain when failure can damage money or data,
-cannot be undone, or spreads across production; otherwise stay on `luna`. Judge
-by what failure would actually do, since the name of the work is a weak signal -
-concurrency, migrations, and contract design all run fine on `luna` or `sol
-medium` when the boundary is clear and the result is verifiable. Say in one line
+Brief completeness is the worker's first routing axis: when the brief fully
+states the acceptance contract, file/directory scope, and verification evidence,
+the dispatcher may select `--model luna`, which resolves to `luna max` with Fast;
+otherwise the worker default is `sol medium`, preserving judgment for hidden
+blockers. Failure cost is an independent escalation axis: raise the brain or add
+the appropriate gate when failure can damage money or data, cannot be undone, or
+spreads across production. Concurrency, migrations, and contract design can run
+on either model when the contract and evidence fit the work. Say in one line
 what you saw whenever you raise it. Money paths retain dispatcher sign-off, and
 the worker contract escalates its own do-not-decide-alone list before acting.
-`luna` can escalate ambiguity; `luna` to `terra` remains an evidence-backed
-capability fallback.
+`terra` remains an evidence-backed capability fallback.
 
-When work gets hard, add a stage before upgrading the worker: take a plan from a
-`sol` mate, freeze it, and let a `luna` worker implement it. Most difficulty
-lives in the judgment rather than the typing, and this is the cheapest strong
-combination. Move the worker itself to `sol medium` only when design cannot come
-first or the implementation stays hard with a plan in hand, and keep worker `sol`
-at `medium`: the gap to `high` is small and code work does not repay it. `sol
-high` belongs to the mate posture: it is the standing reviewer route, while
-non-review design uses it only when genuinely hard and after one user
-confirmation. Whenever a session starts, tell the user in one line which model
-and effort it runs on.
+When work gets hard, add a stage before changing the worker choice: take a plan
+from a `sol` mate, freeze it, and give the worker a complete brief; the dispatcher
+can then select `--model luna` for `luna max` with Fast. Most difficulty lives in
+the judgment rather than the typing, and this stage makes the execution contract
+explicit. Worker `sol` stays at `medium`; `sol high` belongs to the mate posture
+as the standing reviewer route, while non-review design uses it only when
+genuinely hard and after one user confirmation. Whenever a session starts, tell
+the user in one line which model and effort it runs on.
 
 ## Durable Judgment
 

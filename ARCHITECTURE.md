@@ -16,9 +16,10 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
    external-review choice. The preamble injects the mode-selected skill plus
    `meight-common/CONTRACT.md`. `follow`/`reply` inherit mode; they
    also inherit model/effort/service tier unless the caller overrides them at
-   the new-turn boundary. Model stays independent: in practice mate work runs
-   on `sol` and worker work on `luna`, and `sol` drops to the worker contract
-   only for the exceptional implementation a frozen plan cannot make routine.
+   the new-turn boundary. Model stays independent: mate defaults to `sol`, while
+   a worker defaults to `sol medium` for repository understanding. A complete
+   brief may explicitly select `luna max` with Fast for execution; the selected
+   model remains a dispatcher choice.
 5. **Two-way by protocol, not plumbing.** A preamble frames either contract as a
    teammate: sessions may commit/push completed verified work while the
    orchestrator owns integration and final sign-off; and rather than guessing or
@@ -137,22 +138,23 @@ main orchestrator.
 | Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` |
 | Blind/anchored design and diagnosis | `--mode mate` (`high` only for genuinely hard problems; `sol` stops at `high`) |
 | Plan and adversarial review | `--mode mate --effort high` (`sol high`; standing reviewer route) |
-| Hard work of any kind | `--mode mate` for the plan first, then `--mode worker` (`luna`) on the frozen plan |
-| Implementation still hard with a plan in hand | `--mode worker --model sol --effort medium` (worker `sol` stays at `medium`) |
+| Hard work of any kind | `--mode mate` for the plan first, then `--mode worker --model luna` on a frozen brief with complete contract, scope, and evidence |
+| Implementation still hard with a complete brief | `--mode worker --model luna` (`max` with Fast for execution) |
 | `sol high` | reviewer default; for non-review mate work, only genuinely hard design and confirm with the user before launching |
 | Capability-specific fallback | either posture with `terra`; no default ownership, re-promotable on measured evidence |
 
-- **Failure cost is the gate**: raise the brain when failure can damage money or
-  data, cannot be undone, or spreads across production; otherwise stay on
-  `luna`. The judgment reads what failure would do rather than what the work is
-  called, since well-bounded concurrency, migration, and contract work runs fine
-  on `luna` or `sol medium`. Money paths retain dispatcher sign-off, and the
-  worker contract escalates its own do-not-decide-alone list before acting.
+- **Brief completeness is the worker's first routing axis**: a brief that fully
+  states the acceptance contract, file/directory scope, and verification evidence
+  may select `luna max` with Fast; a brief with remaining judgment starts at
+  `sol medium` so hidden blockers can surface. Failure cost is an independent
+  escalation axis: money, data loss, irreversibility, and production spread can
+  justify a higher brain or an added gate. Money paths retain dispatcher
+  sign-off, and the worker contract escalates its own do-not-decide-alone list
+  before acting.
 - **Difficulty is answered with a stage, not a bigger worker**: a `sol` mate
-  plan feeding a `luna` worker is the cheapest strong combination. `sol` in
-  worker mode is the exception and stays at `medium`; `sol high` is the
-  reviewer default. Non-review design takes one user confirmation before using
-  it.
+  plan is frozen, then handed to a worker with a complete brief for `luna max`
+  with Fast. Worker `sol` stays at `medium`; `sol high` is the reviewer default.
+  Non-review design takes one user confirmation before using it.
 - **Avoiding overengineering comes first**: design and review modes are tools,
   not a default chain. The dispatcher selects gates by failure cost and records
   the choice in one line.
@@ -176,12 +178,14 @@ main orchestrator.
   | Mode | Model | Effort | Fast | Sandbox |
   |---|---|---|---|---|
   | `mate` | `sol` | `medium` | off | `full` |
-  | `worker` | `luna` | `max` | on | `full` |
+  | `worker` | `sol` | `medium` | off | `full` |
 
   Standard is silent and deviation is explicit. The table is deliberately
   code-only operator policy in `meight.py`; there is no config-file or
-  environment override layer. Start output echoes each resolved value with
-  `(default)` or `(set)` provenance.
+  environment override layer. An explicit `--model luna` reselects `max` and,
+  when Fast is omitted, the model's Fast default; explicit `--fast`/`--no-fast`
+  wins. Start output echoes each resolved value with `(default)` or `(set)`
+  provenance.
 
 ## Hardening history
 

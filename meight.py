@@ -94,8 +94,8 @@ MODEL_ALIASES = {
 EFFORT_CHOICES = ["low", "medium", "high", "xhigh", "ultra", "max"]
 
 # Start/dispatch defaults are deliberately code-only operator policy. Omitted
-# flags select the mode row, then a known explicitly selected model reselects
-# its effort default. Explicit effort always wins. Neither posture enforces a
+# flags select the mode row, then a known selected model reselects its effort
+# and Fast defaults. Explicit overrides always win. Neither posture enforces a
 # sandbox: read-only is brief-driven policy, not a harness gate.
 MODE_START_DEFAULTS = {
     "mate": {
@@ -103,7 +103,7 @@ MODE_START_DEFAULTS = {
         "sandbox": "full",
     },
     "worker": {
-        "model": "luna", "effort": "max", "fast": True,
+        "model": "sol", "effort": "medium", "fast": False,
         "sandbox": "full",
     },
 }
@@ -111,6 +111,10 @@ MODE_START_DEFAULTS = {
 MODEL_DEFAULT_EFFORTS = {
     "gpt-5.6-sol": "medium",
     "gpt-5.6-luna": "max",
+}
+
+MODEL_DEFAULT_FASTS = {
+    "gpt-5.6-luna": True,
 }
 
 # start/dispatch must distinguish omission from explicit false-y values so
@@ -2494,6 +2498,10 @@ def resolve_start_options(args) -> tuple[dict, dict]:
     if provenance["effort"] == "default":
         values["effort"] = MODEL_DEFAULT_EFFORTS.get(
             normalize_model(values["model"]), values["effort"],
+        )
+    if provenance["fast"] == "default":
+        values["fast"] = MODEL_DEFAULT_FASTS.get(
+            normalize_model(values["model"]), values["fast"],
         )
     return values, provenance
 
