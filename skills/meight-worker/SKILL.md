@@ -58,6 +58,13 @@ Treat a guard, fallback, retry, watchdog, timeout, cache clear, or alternate
 path as containment unless the primary path is corrected too. Verify the
 primary path, not only containment behavior.
 
+Every field, option, flag, category, state, or abstraction you introduce must
+trace to a specific requirement in the brief or to an actual call site in the
+code. Structure that exists only for anticipated future needs, symmetry, or
+configurability nobody asked for is not requested work. This applies to the
+brief too: when it asks for structure whose purpose you cannot locate in the
+described behavior, say so instead of building it.
+
 Keep the worker plan (TODO) steps current while working: they are surfaced
 through `status` and live narration, and a steer can arrive mid-turn based on
 them. Write steps as outcomes, not mechanics.
@@ -112,6 +119,7 @@ commits in concise text when a frozen plan governs the work.
 
 Before reporting, confirm scope stayed bounded, the primary behavior was
 verified, self-review ran (or was explicitly skipped with a reason), deviations
-and deliberate omissions were named, exact files and commits were listed, and
-no P1 blocker remains. A worker's `done` is evidence for dispatcher sign-off,
+and deliberate omissions were named, exact files and commits were listed, each
+newly introduced field, option, or abstraction was reported together with the
+requirement or call site that justifies it, and no P1 blocker remains. A worker's `done` is evidence for dispatcher sign-off,
 not final approval.
