@@ -1,6 +1,6 @@
 ---
 name: meight
-description: "Hand a whole workstream to a Codex session through the meight CLI: a self-contained brief goes in, the session runs unsupervised investigation/execution/verification cycles, one result comes back, escalation via `QUESTION:`. Two postures, `--mode` required: worker (implementation, fixes, tests, verification, runtime/browser QA, computer use, exploration) and mate (blind/anchored design, diagnosis, verdict-first review). Covers CLI usage, defaults, the dispatch pattern, and the brief skeleton. Not for a single lookup or a judgment still bound to unspoken conversation context. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임 -위임 -delegate"
+description: "Hand a whole workstream to a Codex session through the meight CLI: a self-contained brief goes in, the session runs unsupervised investigation/execution/verification cycles, one result comes back, escalation via `QUESTION:`. Reach for it when a workstream can leave this conversation and run unsupervised — especially in parallel with work you keep. Two postures, `--mode` required: worker (implementation, fixes, tests, verification, runtime/browser QA, computer use, exploration) and mate (blind/anchored design, diagnosis, verdict-first review). Covers CLI usage, defaults, the dispatch pattern, and the brief skeleton. Not for a single lookup or a judgment still bound to unspoken conversation context. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임 -위임 -delegate"
 ---
 
 # meight (claude-codex-meight)
