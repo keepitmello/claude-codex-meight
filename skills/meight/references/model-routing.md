@@ -36,7 +36,7 @@ worker는 `sol medium`의 이해력을 보유하고, 완결 브리프에서는 �
 worker의 `sol`은 **항상 `medium`**이다. 브리프에 여전히 판단이 남아 있으면
 `sol medium`이 그 경계를 드러내고 `QUESTION:` 또는 관찰로 올린다. `sol high`는
 mate 자리다: plan·적대 리뷰의 reviewer 기본값이고, 리뷰가 아닌 설계에서는
-정말 어려울 때만 사용자 확인 후 쓴다. `sol`에는 `xhigh`를 쓰지 않는다.
+정말 어려울 때만 사용자 확인 후 쓴다. `sol`의 effort 상한은 `high`다.
 
 ## 승급 판단 축
 
