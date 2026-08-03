@@ -34,9 +34,9 @@ worker는 `sol medium`의 이해력을 보유하고, 완결 브리프에서는 �
 완결 브리프를 쥔 `luna max`가 구현을 수렴시킨다.
 
 worker의 `sol`은 **항상 `medium`**이다. 브리프에 여전히 판단이 남아 있으면
-`sol medium`이 그 경계를 드러내고 `QUESTION:` 또는 관찰로 올린다. `sol high`는
-mate 자리다: plan·적대 리뷰의 reviewer 기본값이고, 리뷰가 아닌 설계에서는
-정말 어려울 때만 사용자 확인 후 쓴다. `sol`의 effort 상한은 `high`다.
+`sol medium`이 그 경계를 드러내고 `QUESTION:` 또는 관찰로 올린다. 형식적이거나
+실패 비용이 큰 리뷰는 `sol high`를 쓸 수 있다. 설계의 `high`는 정말 어려울
+때만 사용자 확인 후 쓴다. `sol`의 effort 상한은 `high`다.
 
 ## 승급 판단 축
 
@@ -49,9 +49,9 @@ mate 자리다: plan·적대 리뷰의 reviewer 기본값이고, 리뷰가 아�
 
 ## 측정에서 나온 주의점
 
-`medium`은 적대적 리뷰에서 severity를 과대 승격하는 경향을 보였다. verdict가 걸린
-리뷰는 `high`가 낫고, `medium`은 설계 사고·스코핑과 브리프에 남은 판단을 다루는
-worker 경로에 맞는다.
+`medium`은 적대적 리뷰에서 severity를 과대 승격하는 경향을 보였다. 형식적
+verdict가 중요한 리뷰는 `high`를 고려하고, 그 밖의 mate와 판단이 남은 worker는
+기본 `medium`에서 시작한다.
 
 ## terra
 

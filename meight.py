@@ -185,7 +185,7 @@ def normalize_mode(mode: str | None) -> str | None:
 
 # Single source of the teaching error shown wherever --mode is missing (validated before any side effect).
 MODE_TEACHING_ERROR = """error: --mode is required. Pick one:
-  --mode mate    thinking partner: design, diagnosis, verdict-first review, direction
+  --mode mate    thinking partner: design, diagnosis, independent review, direction
   --mode worker  team implementer: owns how, implementation, verification, self-review
 (legacy aliases: design|collab|collaborative|review → mate; delegate|delegated → worker)"""
 

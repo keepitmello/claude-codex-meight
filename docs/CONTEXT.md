@@ -5,28 +5,29 @@
 > 문서를 갱신할 것. (역사적 경위는 decisions/를, 운영 프로토콜은 skills/를
 > 신뢰 — 충돌 시 그쪽이 이긴다.)
 >
-> LAST UPDATED: 2026-08-02 (worker 기본 라우팅을 브리프 완결성 축으로 정렬)
+> LAST UPDATED: 2026-08-04 (mate 리뷰를 독립 판단 중심으로 정리)
 > 이전: 2026-07-28 (posture2 — 2자세 통합, 샌드박스 강제 제거)
 
 ## 현재 상태 스냅샷
 
 - **운영 모델 최종형**: 단일 필수 축 `--mode mate|worker`. mate = 생각·판단
-  상대(설계·진단·verdict 리뷰, 프로토콜은 브리프가 선택), worker = 자기
-  리뷰까지 소유하는 실행 팀원. 구 4모드 이름은 별칭으로 흡수
+  상대(설계·진단·독립 아티팩트 리뷰), worker = 자기 리뷰까지 소유하는 실행
+  팀원. 구 4모드 이름은 별칭으로 흡수
   (design/collab/collaborative/review → mate, delegate/delegated → worker).
   계약은 `skills/meight-mate`, `skills/meight-worker`, 공유 계약은
   `skills/meight-common/CONTRACT.md`다. 샌드박스는 강제하지 않는다 —
   read-only는 브리프 지시.
-- **파이프라인**: blind design(방향 fork, mate) → plan-review 루프(mate
-  일반 텍스트, 최대 3라운드, PLAN.md 동결) → worker 구현(sol medium 기본,
-  계약·범위·증거가 완결된 브리프는 `--model luna`로 max+Fast 선택) → 적대
-  리뷰(mate, 2라운드 캡) → dispatcher 사인오프. 게이트는 작업 크기에 비례해
-  생략 가능하되 절대 조용히는 불가.
+- **선택형 흐름**: 필요할 때 blind design 또는 plan review → worker 구현
+  (`sol medium` 기본, 완결 브리프는 `--model luna`로 max+Fast 선택) → 필요한
+  독립 리뷰 → dispatcher 사인오프. 리뷰어는 결함과 더 나은 방향을 자유롭게
+  올리고, 다른 fresh read가 실제 결정을 바꿀 수 있을 때만 mate 하나를 더 병렬
+  실행한다. 게이트는 실패 비용과 닫을 결정에 맞춰 고른다.
 - **난이도 대응 = 모델 승급이 아니라 단계 추가**: 어려우면 `sol` mate 플랜 →
   동결 → 계약·범위·증거가 완결된 브리프 → `luna max`+Fast 워커 구현이
   실행에 강한 조합. worker `sol`은 항상 `medium`이고 브리프에 남은 판단을
-  드러낸다. reviewer는 `sol high`가 기본이고, 비리뷰 설계에서의 `sol high`만
-  정말 어려울 때 사용자 확인 1회. 세션을 띄우면 어떤 모델·effort로 띄웠는지
+  드러낸다. 형식적이거나 실패 비용이 큰 리뷰는 `sol high`를 쓸 수 있고,
+  설계에서의 `sol high`는 정말 어려울 때 사용자 확인 1회.
+  세션을 띄우면 어떤 모델·effort로 띄웠는지
   사용자에게 한 줄 보고.
 - **모델 라우팅**: 첫 축은 브리프 완결성이다 — 수용 기준·파일/디렉토리
   범위·검증 방법이 완결되면 디스패처가 `--model luna`를 선택하고, 그 밖의
@@ -37,8 +38,9 @@
 - **effort 정책**: worker `sol`은 `medium`, 완결 브리프에서 명시한 `luna`는
   `max`+Fast다. `luna max`는 `xhigh` 대비 비용 +25%에 Coding Agent Index
   +4점이고, `sol medium`은 SWE-Atlas-QnA 40 대 33으로 레포 이해·탐색에서
-  앞선다. reviewer는 `sol high`; 비리뷰 mate의 `high`는 진짜 어려운 것만
-  (dispatcher 판단 + 사용자 확인). sol에 xhigh는 쓰지 않는다. 근거:
+  앞선다. 형식적이거나 실패 비용이 큰 리뷰는 `sol high`; 설계의 `high`는 진짜
+  어려운 것만 (dispatcher 판단 + 사용자 확인).
+  sol에 xhigh는 쓰지 않는다. 근거:
   `skills/meight/references/model-routing.md`.
 - **세션 저장 정책**: `thread_source=subagent`는 analytics 메타데이터일 뿐
   앱 숨김 기능이 아니다. 모든 start는 `thread_ephemeral=true`; follow/reply는
@@ -65,6 +67,7 @@
 |---|---|
 | 운영 프로토콜 (dispatcher가 따를 규칙 SSOT) | `skills/meight/SKILL.md` |
 | 세션 계약 (mate / worker / 공유) | `skills/meight-mate/SKILL.md`, `skills/meight-worker/SKILL.md`, `skills/meight-common/CONTRACT.md` |
+| 런타임 설치 원본 | `bindings/claude/tech-lead.md`, `bindings/codex/` (네이티브 meight·reviewer·discusser·reviewer agent) |
 | 왜 이 파이프라인인가 — 설계 경위·리서치·검증 기록 | `docs/2026-07-14-v3-pipeline-retrospective.md` (v3 채택 시점 기준; 이후 델타는 decisions/) |
 | 외부 리서치 요약 (TRIP-workflow/jinn/codex-plugin-cc/aimee/clideck 채택·기각) | 회고 문서 §4 |
 | 개별 결정의 양쪽 입장과 근거 | `decisions/` — mode-flag-required(07-03), consensus-pipeline-luna-promotion(+사용자 AMENDMENT 2건), mate-worker-role-split, mode-axis-collapse, brief-completeness-model-default(08-02) |

@@ -1,6 +1,6 @@
 ---
 name: meight
-description: "Hand a whole workstream to a Codex session through the meight CLI: a self-contained brief goes in, the session runs unsupervised investigation/execution/verification cycles, one result comes back, escalation via `QUESTION:`. Reach for it when a workstream can leave this conversation and run unsupervised — especially in parallel with work you keep. Two postures, `--mode` required: worker (implementation, fixes, tests, verification, runtime/browser QA, computer use, exploration) and mate (blind/anchored design, diagnosis, adversarial or generative review). Covers CLI usage, defaults, the dispatch pattern, and the brief skeleton. Not for a single lookup or a judgment still bound to unspoken conversation context. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임 -위임 -delegate"
+description: "Hand a whole workstream to a Codex session through the meight CLI: a self-contained brief goes in, the session runs unsupervised investigation/execution/verification cycles, one result comes back, escalation via `QUESTION:`. Reach for it when a workstream can leave this conversation and run unsupervised — especially in parallel with work you keep. Two postures, `--mode` required: worker (implementation, fixes, tests, verification, runtime/browser QA, computer use, exploration) and mate (blind/anchored design, diagnosis, independent review). Covers CLI usage, defaults, the dispatch pattern, and the brief skeleton. Not for a single lookup or a judgment still bound to unspoken conversation context. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임 -위임 -delegate"
 ---
 
 # meight (claude-codex-meight)
@@ -11,13 +11,19 @@ description: "Hand a whole workstream to a Codex session through the meight CLI:
 
 ## 두 자세 — `--mode mate|worker` (필수)
 
-- `--mode mate` — 생각·판단 상대. 블라인드/앵커드 설계, 진단, 방향, 그리고 리뷰 — verdict-first 결함 사냥(adversarial)과 "뭘 하면 더 좋아지나"를 묻는 generative 리뷰 둘 다. 어느 프로토콜을 적용할지는 브리프가 정한다.
+- `--mode mate` — 생각·판단 상대. 블라인드/앵커드 설계, 진단, 방향, 그리고 독립 리뷰. 브리프는 닫을 결정과 리뷰 표면을 주고, mate는 무엇이 중요한지 근거에 따라 판단한다.
 - `--mode worker` — 실행 팀원. how·구현·검증·자기 리뷰를 소유하고, 브리프 밖 관찰과 이견을 텍스트와 `QUESTION:`으로 올린다.
 
 | Mode | Model | Effort | Fast | Sandbox |
 |---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `full` |
 | `worker` | `sol` | `medium` | off | `full` |
+
+### 리뷰 디스패치
+
+정확한 리뷰 표면, 의도한 결과, 제약, 이번 리뷰가 도울 결정을 준다. 무엇을 관찰하고 어떤 비중으로 보고할지는 mate의 독립 판단에 맡긴다. mate는 요청받지 않은 내용이라도 결과를 materially 바꾸는 관찰이나 더 나은 방향을 근거와 함께 올릴 수 있다.
+
+독립 판단 하나면 충분한 리뷰는 mate 하나로 끝낸다. 다른 fresh read가 실제 결정을 바꿀 수 있을 때만 같은 중립 브리프로 mate 하나를 더 병렬 실행하고, 서로의 결론은 공유하지 않는다. 형식적 verdict가 필요하면 브리프에 그 결정만 명시한다.
 
 생략한 설정은 자세와 모델에서 해소되고, dispatch echo가 해소값 전부를 `(default)`/`(set)` 출처와 함께 보여준다. `--model luna`를 명시하면 `luna max`와 Fast로 함께 해소된다. 명시한 `--effort`와 `--fast`/`--no-fast`는 언제나 이긴다. 샌드박스는 어느 자세도 강제하지 않으니 read-only가 필요하면 브리프에 지시한다 (mate 스킬은 "브리프가 시키지 않으면 레포 파일을 고치지 않는다"를 이미 갖고 있다).
 
@@ -85,6 +91,6 @@ brief에서 모달리티를 명시적으로 요구하고, 실제로 썼다는 �
 ## 참조
 
 - 소유권 경계, phase 승인과 campaign identity, `QUESTION:` 라우팅, 학습 루프 원장(decisions/, preferences.md, lessons.md): [`references/ownership-and-escalation.md`](references/ownership-and-escalation.md)
-- 블라인드/앵커드 설계 브리프 예시, 플랜 리뷰 APPROVE/REVISE 인코딩, mate 리뷰, fresh-eyes UI 리뷰, 이견 처리: [`references/design-and-review.md`](references/design-and-review.md)
+- 설계나 리뷰를 디스패치할 때 읽기 — 블라인드/앵커드 설계, 플랜 리뷰 APPROVE/REVISE, 독립 리뷰와 추가 fresh read, fresh-eyes UI 리뷰, 이견 처리: [`references/design-and-review.md`](references/design-and-review.md)
 - 데몬 재시작·epoch 마이그레이션 체크리스트, launchd, 상태 경로, 환경변수, 수명주기 caveat: [`references/daemon-ops.md`](references/daemon-ops.md)
 - 모델 사다리 비용 근거, 승급 경로, terra 조건: [`references/model-routing.md`](references/model-routing.md)

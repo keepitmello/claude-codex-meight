@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Discusser"
+  short_description: "Explore tradeoffs and converge on a decision"
+  default_prompt: "Use $codex-discusser to compare meaningful options, challenge assumptions with evidence, and recommend a practical path."

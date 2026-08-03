@@ -22,9 +22,9 @@ left on the table. So meight exposes two postures — two Codex session
 contracts:
 
 - A **mate** (`--mode mate`) is an independent thinking partner. It joins
-  blind/anchored design, diagnoses, reviews plans with a real verdict, and
-  hunts defects adversarially — its contract says *challenge the dispatcher,
-  agreement is not the goal*. The brief selects which protocol applies.
+  blind/anchored design, diagnoses, and reviews named artifacts with independent
+  judgment — its contract says *challenge the dispatcher, agreement is not the
+  goal*. A reviewer may surface both material problems and better directions.
 - A **worker** (`--mode worker`) is a team implementer. It owns code, tests,
   verification, and self-review, surfaces observations and better directions
   instead of executing silently, and escalates dispatcher-sign-off gates
@@ -58,14 +58,13 @@ Avoiding overengineering comes first: the dispatcher chooses only the design,
 review, implementation, and verification gates justified by the task's failure
 cost, then records that choice in one line.
 
-Blind or anchored design can clarify a real direction fork. Plan review and
-adversarial code review are available verdict tools, not default stages. The
-worker self-reviews by contract. When an independent internal read is warranted,
-it uses a fresh-context `sol high` reviewer; the dispatcher separately decides
-whether failure cost justifies an external review session. A worker's `done` is
-still only a claim. For reviewed work, sign-off combines the review verdict
-with verification evidence; unreviewed work still requires verification
-evidence. Reading the entire diff is never a sign-off gate.
+Blind or anchored design can clarify a real direction fork. Artifact review is
+an independent judgment over the intended outcome and constraints; it may
+surface material observations and better directions even when they were not
+explicitly requested. One mate is the
+default, and a second unanchored read is useful only when it can change the
+decision. A worker's `done` is still only a claim. Sign-off combines any
+requested verdict with verification evidence.
 
 The included operator-policy template starts workers on `sol medium` so the
 worker can understand the repository and surface hidden blockers. When a brief
@@ -79,9 +78,9 @@ are explicitly adjustable operator policy, not meight interface requirements.
 
 Effort follows the same economics: a selected `luna` runs `max`, which buys a
 measured four Index points over `xhigh` for a quarter more cost. Worker `sol`
-stays at `medium`, preserving the repository-understanding path; reviewers use
-`sol high`, and non-review mate work uses `high` only when genuinely hard and
-after one user confirmation. `sol` never runs `xhigh`.
+stays at `medium`, preserving the repository-understanding path. Formal or
+high-cost review may use `sol high`; design uses `high` only when genuinely hard
+and after one user confirmation. `sol` never runs `xhigh`.
 
 ## Why This Exists
 
@@ -202,7 +201,8 @@ KIND: scope | ux | priority | risk | irreversible | acceptance | missing-info | 
 dispatcher-owned questions with `meight reply` and escalates user-owned ones
 (scope, UX, risk appetite, irreversible actions) verbatim.
 Routing is impact-based: an answer that starts a new worker, phase,
-plan/addendum, review identity beyond a preauthorized re-review, expensive
+plan/addendum, review identity beyond the initial round's optional fresh read
+or a preauthorized re-review, expensive
 rerun, materially different method, or additional repair after the campaign
 cap is user-owned even when labeled `technical`. Worker names and fresh review
 identities do not reset the cap.
@@ -253,10 +253,24 @@ and [`skills/meight-worker/`](./skills/meight-worker/SKILL.md), with their
 shared protocol in
 [`skills/meight-common/`](./skills/meight-common/CONTRACT.md).
 
-The default dispatcher is a Claude Code session. A Codex app/CLI session can
-dispatch through the same protocol via a thin `~/.codex/skills/meight` binding
-that points at [`skills/meight/SKILL.md`](./skills/meight/SKILL.md) — one
-protocol, two dispatcher runtimes.
+Runtime-specific prompt sources live under [`bindings/`](./bindings/). Claude
+uses [`bindings/claude/tech-lead.md`](./bindings/claude/tech-lead.md) to route
+review through meight. Codex uses the native
+[`meight`](./bindings/codex/skills/meight/SKILL.md),
+[`codex-reviewer`](./bindings/codex/skills/codex-reviewer/SKILL.md), and
+[`codex-discusser`](./bindings/codex/skills/codex-discusser/SKILL.md) skills,
+plus the read-only
+[`reviewer`](./bindings/codex/agents/reviewer.toml) agent definition. Link the
+three Codex skill directories into `~/.codex/skills/`, link or copy the agent
+definition to `~/.codex/agents/reviewer.toml`, and merge only the reviewer
+stanza from
+[`config-fragment.toml`](./bindings/codex/config-fragment.toml) into the local
+Codex config. Keep authentication and MCP configuration local.
+
+The default dispatcher is a Claude Code session. A Codex app session uses its
+native binding and collaboration tools while preserving the same meight
+contracts — one protocol, two dispatcher runtimes. The reviewer and discusser
+are Codex-native skills, not shared session contracts.
 
 ## What "Easy For An Agent" Means
 

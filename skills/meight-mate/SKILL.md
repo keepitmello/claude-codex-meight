@@ -1,6 +1,6 @@
 ---
 name: meight-mate
-description: Thinking-partner operating contract selected by meight mate mode. Use for blind or anchored design, direction and plan review, adversarial or generative code and diff review, diagnosis, and other work where an independent Codex teammate challenges assumptions and returns judgment rather than implementation.
+description: Thinking-partner operating contract selected by meight mate mode. Use for blind or anchored design, direction and plan review, independent code or diff review, diagnosis, and other work where a Codex teammate challenges assumptions and returns judgment rather than implementation.
 ---
 
 # Meight Mate
@@ -31,10 +31,10 @@ discipline.
   material gap.
 
 Pick the protocol section that matches the brief: design briefs use Design
-Contracts; "review this plan" briefs use Plan Review; "review this diff/commit"
-briefs use Adversarial Review; briefs asking what would make the work better
-use Generative Review. When a brief mixes them, say which section you are
-applying to which part.
+Contracts, "review this plan" briefs use Plan Review, and reviews of a named
+diff, commit, code surface, or doctrine artifact use Artifact Review. The brief
+states the decision it must support; use independent judgment rather than a
+fixed quota of findings or recommendations.
 
 ## Design Contracts
 
@@ -74,6 +74,10 @@ Do not flag naming or style preferences in the plan, impossible theoretical
 edges, out-of-scope hypotheticals, or findings the plan or a prior round has
 already resolved.
 
+Surface any material observation that can change the decision, including a
+better direction the dispatcher did not ask for. Keep non-blocking direction
+separate from the defects or evidence gaps that determine the verdict.
+
 Permit at most two rounds across the same campaign: the initial review and one
 preauthorized re-review, including renamed threads and new plan identities. In
 round two, disposition every prior finding as `addressed`, `partially
@@ -88,42 +92,28 @@ Approval freezes the versioned `PLAN.md` as the implementation and final-review
 contract. A scope change reopens approval. Also record which failure-cost hard
 gate fired, or `none—luna eligible`.
 
-## Adversarial Review
+## Artifact Review
 
-Review the exact named commit, diff, or artifact against the frozen `PLAN.md`.
-Lead with actionable P1/P2/P3 findings, then return `GO` or `NO-GO`. Prioritize
-correctness, regressions, missing verification, security and data/state risk,
-edge cases, and races over style.
+Review the exact named commit, diff, code surface, or doctrine artifact against
+its intended outcome, constraints, and any frozen contract. Exercise
+independent judgment and surface material observations supported by evidence,
+including useful observations the brief did not explicitly request. Let the
+artifact determine the emphasis.
 
-- `NO-GO` means a real blocker exists. Cite file and line evidence, impact,
-  and a bounded fix direction.
-- `GO` requires no open P1 blocker and sufficient evidence for dispatcher
-  sign-off. If no finding exists, state residual evidence gaps.
-- Report findings; do not fix them. The dispatcher arbitrates and routes valid
-  findings to an implementer. The code-review loop is capped at two rounds
-  across worker names, fresh sessions, and changed review identities. A second
-  NO-GO or a new blocker after re-review ends automatic work and returns the
-  campaign to the user or a newly approved design phase.
-- For doctrine or contract changes, cross-check the claimed behavior against
-  the runtime source and tests. Documentation agreement with itself is not
-  proof that the harness implements the rule.
+- For a finding, cite the evidence, impact, severity when useful, and a bounded
+  fix direction.
+- For a better direction, give enough evidence and tradeoff for the dispatcher
+  to judge it. Keep it distinct from a blocker.
+- Give `GO` or `NO-GO` only when the brief needs an acceptance verdict. Base it
+  on findings and material evidence gaps, not on optional improvements.
+- Report; do not implement. The dispatcher owns arbitration and repair routing.
+  A verdict-bearing review loop is capped at two rounds; a second `NO-GO` or a
+  new blocker after re-review returns the campaign to the user or a newly
+  approved design phase.
+- For doctrine or contract changes, cross-check claimed behavior against the
+  runtime source and tests. Documentation agreement with itself is not proof.
 - Discard a verdict when its named input no longer matches the current review
   surface.
-
-## Generative Review
-
-Use generative review when the brief asks what would make the named artifact
-better rather than whether it is acceptable. Read the exact named plan, diff,
-or code as a strong colleague hunting for leverage: simplifications, missing
-opportunities, stronger structures, small changes with outsized payoff.
-
-- Return recommendations ranked by value per unit of change, each with its
-  payoff, cost, and supporting evidence. Style and naming suggestions are
-  admissible when the payoff earns the rank.
-- No verdict gate applies: the report is input to dispatcher judgment, not a
-  `GO`/`NO-GO` or `APPROVE`/`REVISE`. Recommend; do not implement.
-- Defect hunting stays out of scope, but report a real blocker you stumble on
-  in one line so the dispatcher can route it to Adversarial Review.
 
 ## Report
 

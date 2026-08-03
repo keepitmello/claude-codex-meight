@@ -53,34 +53,25 @@ verdict가 아직 방향을 바꾸거나 실패 비용을 실질적으로 줄일
 
 ## mate 리뷰
 
-리뷰 브리프가 축을 고른다. 결함 사냥(adversarial, GO/NO-GO)은 수용 게이트가 필요할 때 쓰고, generative 리뷰("뭘 하면 더 좋아지나")는 방향은 섰고 leverage를 찾고 싶을 때 쓴다. 둘을 섞으면 브리프에서 어느 부분이 어느 축인지 명시한다.
+브리프에는 정확한 리뷰 표면, 의도한 결과, 관련 제약, 이번 리뷰가 도울 결정을 담는다. 무엇을 관찰하고 어떤 비중으로 보고할지는 mate의 독립 판단에 맡긴다. 요청에 없더라도 결과나 결정을 materially 바꾸는 내용은 근거와 함께 올린다.
 
-실패 비용이 값을 할 때 디스패처가 별도 `--mode mate --effort high` 리뷰 세션을 띄운다. worker는 계약상 자기 리뷰(필요시 내부 fresh-context 리뷰어 스폰 포함)를 하지만, 그건 외부 리뷰의 대체가 아니라 별개 증거원이다. 리뷰는 고정된 구현 단계가 아니라 독립적인 증거원이다.
+기본은 독립 mate 하나다. 다른 fresh read가 실제 결정을 바꿀 수 있을 때만 같은 중립 브리프로 mate 하나를 더 병렬 실행한다. 두 mate에게 서로의 결론이나 디스패처의 선호를 주지 않고, 디스패처가 압축 결과를 중재한다. worker의 자기 리뷰와 외부 mate 리뷰는 서로 다른 증거원이다.
 
 ```bash
-meight dispatch review-X --mode mate --effort high --cwd <repo root> --brief-file - <<'EOF'
-Adversarial review. Target: <files>. Contract: <versioned PLAN.md>.
-Hunt for real defects: correctness, regressions, missing verification,
-security/data risk, edge cases, races. For each finding: severity P1/P2/P3,
-file:line, why, fix direction. End with GO or NO-GO.
+meight dispatch review-X --mode mate --cwd <repo root> --brief-file - <<'EOF'
+Review target: <exact files, commit, diff, or plan version>.
+Intended outcome and constraints: <contract>.
+Use independent judgment. Report anything material to the outcome or decision,
+including useful observations not asked for. Support claims with evidence.
+<Add a formal verdict only if the decision needs one.>
 EOF
 ```
 
-generative 축은 게이트가 아니라 판단 입력이라 기본 `sol medium`이면 충분하다:
-
-```bash
-meight dispatch improve-X --mode mate --cwd <repo root> --brief-file - <<'EOF'
-Generative review. Target: <files, plan version, or diff>.
-Not a defect hunt — tell me what would make this better: simplifications,
-missing opportunities, stronger structures, small changes with outsized payoff.
-Rank by value per unit of change, with payoff, cost, and evidence for each.
-No verdict; recommendations only.
-EOF
-```
+형식적 수용 verdict나 실패 비용이 `high`를 정당화할 때만 `--effort high`를 더한다. 두 번째 독립 read를 쓸 때는 위 명령과 같은 브리프를 다른 이름으로 동시에 실행한다. 충돌이 실제 결정을 바꿀 때만 해당 mate에 표적 follow-up을 보낸다.
 
 모든 리뷰 verdict는 리뷰한 정확한 입력을 지목한다 — 플랜 리뷰면 `PLAN.md` 버전, 코드 리뷰면 커밋 해시/디프 정체성. verdict에 따라 움직이기 전에 그 정체성을 현재 아티팩트와 비교하고, 안 맞으면 stale로 버린다.
 
-발견을 중재하는 건 디스패처다. `NO-GO`는 블로커가 나왔다는 뜻이다. 현재 사용자 승인 phase가 bounded 수리 1라운드를 명시적으로 포함하면 유효한 블로커를 구현자에게 넘기고, 수정을 검증하고, 새 리뷰 정체성에 대해 verdict 하나를 받는다. 아니면 멈추고 사용자에게 묻는다. 두 번째 NO-GO나 재리뷰 후 새 블로커는 campaign을 끝낸다 — 이걸 리셋하려고 워커나 리뷰 정체성을 새로 만들지 않는다. 리뷰된 작업의 sign-off는 리뷰 verdict + 검증 증거이고, 디프 전체를 읽는 건 sign-off 게이트가 아니다. 동결된 플랜의 스코프·방법·비용 범위·수용 경로를 바꾸는 변경은 그 결정을 다시 연다.
+발견을 중재하는 건 디스패처다. `NO-GO`는 블로커가 나왔다는 뜻이다. 현재 사용자 승인 phase가 bounded 수리 1라운드를 명시적으로 포함하면 유효한 블로커를 구현자에게 넘기고, 수정을 검증하고, 새 리뷰 정체성에 대해 verdict 하나를 받는다. 아니면 멈추고 사용자에게 묻는다. 두 번째 NO-GO나 재리뷰 후 새 블로커는 campaign을 끝낸다 — 이걸 리셋하려고 워커나 리뷰 정체성을 새로 만들지 않는다. acceptance gate로 선택한 리뷰만 verdict + 검증 증거를 sign-off에 요구하고, advisory 리뷰는 판단 입력으로 쓴다. 디프 전체를 읽는 건 sign-off 게이트가 아니다. 동결된 플랜의 스코프·방법·비용 범위·수용 경로를 바꾸는 변경은 그 결정을 다시 연다.
 
 리뷰의 severity 임계값과 스코프는 그 brief에서 정한다. 상세 로그가 decision 리포트를 과적재할 것 같으면 `<worker-name>-evidence.md`에 넣는다.
 

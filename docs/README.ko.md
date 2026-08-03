@@ -22,9 +22,9 @@
 계약을 노출한다:
 
 - **mate** (`--mode mate`)는 독립적인 생각 상대다. 블라인드/앵커드 설계에
-  참여하고, 진단하고, 진짜 verdict가 달린 플랜 리뷰를 하고, 적대적으로 결함을
-  사냥한다 — 계약이 말하길 *디스패처에게 반론하라, 동의가 목표가 아니다*.
-  어느 프로토콜을 적용할지는 브리프가 정한다.
+  참여하고, 진단하고, 이름 붙은 아티팩트를 독립적으로 리뷰한다 — 계약이
+  말하길 *디스패처에게 반론하라, 동의가 목표가 아니다*. 리뷰어는 근거에 따라
+  material한 문제와 더 나은 방향을 모두 올릴 수 있다.
 - **worker** (`--mode worker`)는 팀 구현자다. 코드, 테스트, 검증, 자기 리뷰를
   소유하고, 침묵 실행 대신 관찰과 더 나은 방향을 위로 올리며, 디스패처
   사인오프 게이트(보안 민감, 공개 API 계약, 데이터 마이그레이션, 돈 경로,
@@ -55,12 +55,12 @@ meight가 주는 건 두 개의 세션 자세지, 의무적인 개발 파이프�
 오버엔지니어링 회피가 최우선이다: 디스패처는 작업의 실패 비용이 정당화하는
 설계·리뷰·구현·검증 게이트만 고르고, 그 선택을 한 줄로 기록한다.
 
-블라인드/앵커드 설계는 진짜 방향 분기를 정리할 때 쓴다. 플랜 리뷰와 적대적
-코드 리뷰는 꺼내 쓰는 verdict 도구지 기본 단계가 아니다. worker는 계약상 자기
-리뷰를 하고(필요하면 내부 fresh-context 리뷰어를 스폰), 실패 비용이 값을 하면
-디스패처가 별도 외부 리뷰 세션을 띄운다. 그래도 worker의 `done`은 여전히
-주장일 뿐이다. 리뷰된 작업의 사인오프는 리뷰 verdict + 검증 증거고, 리뷰 없는
-작업도 검증 증거는 필요하다. 디프 전체를 읽는 건 사인오프 게이트가 아니다.
+블라인드/앵커드 설계는 진짜 방향 분기를 정리할 때 쓴다. 아티팩트 리뷰는
+부정·긍정 패스를 미리 나눈 절차가 아니라 독립 판단이다. 의도한 결과와 제약을
+주면 리뷰어가 요청받지 않은 내용이라도 material한 문제와 더 나은 방향을 올릴
+수 있다. 기본은 mate 하나고, 다른 fresh read가 실제 결정을 바꿀 수 있을 때만
+하나를 더 병렬로 띄운다. worker의 `done`은 여전히 주장일 뿐이며 사인오프에는
+검증 증거가 필요하다. acceptance gate로 선택한 리뷰만 verdict를 추가로 요구한다.
 
 동봉된 오퍼레이터 정책 템플릿은 worker를 `sol medium`으로 시작해 레포를
 이해하고 숨은 blocker를 드러내게 한다. 작업 전체의 계약(수용 기준)·범위
@@ -74,9 +74,9 @@ Fast가 함께 해소된다. 실패 비용은 별도 축으로 남아 브레인�
 
 effort도 같은 경제학을 따른다: 선택된 `luna`는 `max`로 돌린다 — `xhigh` 대비
 25% 비용으로 종합 4점을 사기 때문이다. worker의 `sol`은 `medium`에 머물러
-레포 이해 경로를 담당하고, reviewer는 `sol high`를 쓴다. 리뷰가 아닌 mate
-작업의 `high`는 정말 어려울 때 디스패처가 판단하고 띄우기 전에 사용자 확인을
-한 번 받는다. `sol`에 `xhigh`는 쓰지 않는다.
+레포 이해 경로를 담당한다. 형식적이거나 실패 비용이 큰 리뷰는 `sol high`를 쓸
+수 있다. 설계의 `high`는 정말 어려울 때 디스패처가 판단하고 띄우기 전에 사용자
+확인을 한 번 받는다. `sol`에 `xhigh`는 쓰지 않는다.
 
 ## 왜 이게 존재하나
 
@@ -241,10 +241,21 @@ Bash(command: "meight dispatch review-1 --mode mate --timeout 300 --brief-file -
 [`skills/meight-worker/`](../skills/meight-worker/SKILL.md), 공유 프로토콜은
 [`skills/meight-common/`](../skills/meight-common/CONTRACT.md)에 있다.
 
-기본 디스패처는 Claude Code 세션이다. Codex 앱/CLI 세션도
-[`skills/meight/SKILL.md`](../skills/meight/SKILL.md)를 가리키는 얇은
-`~/.codex/skills/meight` 바인딩으로 같은 프로토콜을 디스패치할 수 있다 —
-프로토콜 하나, 디스패처 런타임 둘.
+런타임별 프롬프트 원본은 [`bindings/`](../bindings/)에 둔다. Claude는
+[`bindings/claude/tech-lead.md`](../bindings/claude/tech-lead.md)에서 리뷰를
+meight로 라우팅한다. Codex는 네이티브
+[`meight`](../bindings/codex/skills/meight/SKILL.md),
+[`codex-reviewer`](../bindings/codex/skills/codex-reviewer/SKILL.md),
+[`codex-discusser`](../bindings/codex/skills/codex-discusser/SKILL.md) 스킬과
+read-only [`reviewer`](../bindings/codex/agents/reviewer.toml) 에이전트 정의를
+쓴다. 세 Codex 스킬 디렉터리는 `~/.codex/skills/`에 링크하고, 에이전트 정의는
+`~/.codex/agents/reviewer.toml`에 링크하거나 복사한다. 로컬 Codex 설정에는
+[`config-fragment.toml`](../bindings/codex/config-fragment.toml)의 reviewer
+항목만 병합하고 인증·MCP 설정은 로컬에 남긴다.
+
+기본 디스패처는 Claude Code 세션이다. Codex 앱은 네이티브 바인딩과 협업
+도구를 쓰되 같은 meight 계약을 유지한다 — 프로토콜 하나, 디스패처 런타임 둘.
+reviewer와 discusser는 공용 세션 계약이 아니라 Codex 전용 스킬이다.
 
 ## "에이전트에게 쉽다"의 의미
 

@@ -193,8 +193,9 @@ selects the session contract and skill (protocol epoch `ephemeral3`):
 
 - `mate` (legacy aliases `design` / `collab` / `collaborative` / `review`):
   `skills/meight-mate/SKILL.md` — thinking partner for blind or anchored
-  design, diagnosis, and verdict-first plan/diff/adversarial/doctrine review.
-  The brief selects which protocol section applies.
+  design, diagnosis, and independent artifact review. A review brief names the
+  decision and surface without restricting the mate to findings or suggestions;
+  a dispatcher may add a second independent read when it can change the decision.
 - `worker` (legacy aliases `delegate` / `delegated`):
   `skills/meight-worker/SKILL.md` — team implementer owning implementation,
   verification, and self-review; escalates dispatcher-sign-off gates
@@ -225,7 +226,8 @@ KIND: scope | ux | priority | risk | irreversible | acceptance | missing-info | 
 
 The harness records the declared target and kind; the orchestrating agent owns
 impact-based triage. A reply that would authorize a new worker, phase,
-plan/addendum, review identity beyond a preauthorized re-review, expensive
+plan/addendum, review identity beyond the initial round's optional fresh read
+or a preauthorized re-review, expensive
 rerun, materially different method, or campaign-cap extension must be
 escalated to the user even when the producer declared `TARGET: dispatcher` or
 `KIND: technical`. This is dispatcher policy, not a daemon-side semantic

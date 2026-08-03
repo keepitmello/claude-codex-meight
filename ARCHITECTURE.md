@@ -11,7 +11,7 @@ Every design decision optimizes for the orchestrating agent's economics, not hum
 3. **One call per intent (one-shot), or a supervised session.** `dispatch` = (ensure daemon → start → wait → print result) and `reply` = (follow → wait → print last-turn result) are symmetric single background calls. `start` plus `wait` keeps the door to `status`/`steer` open mid-run. The orchestrator selects either interface by whether supervision can change the outcome, without a fixed cadence.
 4. **Mode is harness policy, not memory.** `start` and `dispatch` require
    `--mode mate|worker`. Mate selects the thinking-partner contract (design,
-   diagnosis, verdict-first review — the brief picks the protocol). Worker
+   diagnosis, and independent review — the brief names the decision and surface). Worker
    selects team implementation with self-review and a dispatcher-owned
    external-review choice. The preamble injects the mode-selected skill plus
    `meight-common/CONTRACT.md`. `follow`/`reply` inherit mode; they
@@ -66,6 +66,11 @@ meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  g
   `skills/meight-common/CONTRACT.md`. Legacy four-mode names normalize onto
   the two postures. Status persists only the canonical mode. Legacy rows with
   a role field or long-form mode values remain renderable.
+- **Runtime binding path** = shared meight contracts stay under `skills/`;
+  runtime-specific installation sources stay under `bindings/`. The Claude
+  tech-lead prompt routes review into a mate session. Codex owns its native
+  meight transport binding, reviewer/discusser skills, read-only reviewer agent,
+  and minimal config fragment under `bindings/codex/`.
 - The SDK spawns `codex app-server --listen stdio://` and speaks JSON-RPC. Meight owns one SDK runtime per active worker so terminal workers can close their app-server, MCP subprocesses, and stdio file descriptors without waiting for daemon shutdown.
 - The daemon holds `Thread` objects in a registry keyed by `(repo_key, worker_name)` only while a turn is starting or running. It keeps a `TurnHandle` only while a stream is live. Every completed stream, including a final `QUESTION:`, closes the worker-owned SDK runtime. `reply`/`follow` starts a fresh ephemeral thread and injects a bounded handoff from saved brief, result, and recent events.
 - Workers always start with `ephemeral=True` and `thread_source=ThreadSource.subagent`. The SDK defines thread source as analytics metadata; it does not hide a persisted thread from Codex clients. Ephemeral threads are not materialized in stored thread listings, which prevents meight work from accumulating as Codex app tasks.
@@ -137,10 +142,11 @@ main orchestrator.
 |---|---|
 | Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` |
 | Blind/anchored design and diagnosis | `--mode mate` (`high` only for genuinely hard problems; `sol` stops at `high`) |
-| Plan and adversarial review | `--mode mate --effort high` (`sol high`; standing reviewer route) |
+| Independent artifact review | `--mode mate` (default `sol medium`; use `high` for a formal or high-cost verdict) |
+| Additional independent read | a second mate in parallel only when another unanchored judgment can change the decision |
 | Hard work of any kind | `--mode mate` for the plan first, then `--mode worker --model luna` on a frozen brief with complete contract, scope, and evidence |
 | Implementation still hard with a complete brief | `--mode worker --model luna` (`max` with Fast for execution) |
-| `sol high` | reviewer default; for non-review mate work, only genuinely hard design and confirm with the user before launching |
+| `sol high` | formal or high-cost review; for other mate work, only genuinely hard design and confirm with the user before launching |
 | Capability-specific fallback | either posture with `terra`; no default ownership, re-promotable on measured evidence |
 
 - **Brief completeness is the worker's first routing axis**: a brief that fully
@@ -153,9 +159,9 @@ main orchestrator.
   before acting.
 - **Difficulty is answered with a stage, not a bigger worker**: a `sol` mate
   plan is frozen, then handed to a worker with a complete brief for `luna max`
-  with Fast. Worker `sol` stays at `medium`; `sol high` is the reviewer default.
-  Non-review design takes one user confirmation before using it.
-- **Avoiding overengineering comes first**: design and review modes are tools,
+  with Fast. Worker `sol` stays at `medium`; formal or high-cost review may use
+  `sol high`. Design takes one user confirmation before using `high`.
+- **Avoiding overengineering comes first**: design and review gates are tools,
   not a default chain. The dispatcher selects gates by failure cost and records
   the choice in one line.
 - **Design supports real uncertainty**: blind design avoids anchoring when an
@@ -165,11 +171,11 @@ main orchestrator.
   alive for `reply` with a dispatcher-targeted `QUESTION:`, while `APPROVE` is
   terminal. If approval freezes a versioned `PLAN.md`, a material scope change
   reopens that decision.
-- **Review is verdict evidence, not a pipeline stage**: the worker owns its
-  self-review. When an independent internal read is warranted, it uses a
-  fresh-context `sol high` reviewer. For reviewed work, sign-off combines the
-  text verdict with verification evidence. Reading the entire diff is never a
-  sign-off gate.
+- **Review closes a named decision, not a pipeline stage**: give the mate the
+  exact surface, intended outcome, and constraints, then let independent
+  judgment surface both problems and better directions. One mate is the
+  default; add another only when its fresh read can change the decision.
+  Sign-off uses any requested verdict plus verification evidence.
 - Sessions may commit/push completed verified work; the orchestrator still owns integration and final sign-off.
 - Briefs must point at *existing patterns* relevant to the task — detail-oriented reviewers flag absent context as defects otherwise.
 - The CLI resolves omitted start/dispatch settings from the selected mode

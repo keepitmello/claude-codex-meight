@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Reviewer"
+  short_description: "Review artifacts with evidence and independent judgment"
+  default_prompt: "Use $codex-reviewer to review this scope with independent judgment, evidence, and a verdict when the decision needs one."

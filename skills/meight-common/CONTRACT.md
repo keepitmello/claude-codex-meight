@@ -11,9 +11,9 @@ receive the mode-selected skill and this contract. `follow` and `reply` inherit
 the recorded mode and receive a short reminder.
 
 - `mate` (legacy aliases `design` / `collab` / `collaborative` / `review`):
-  act as the dispatcher's thinking partner — design, diagnosis, and review,
-  whether verdict-first defect review or generative improvement review; follow
-  the mate skill and apply the protocol section that matches the brief.
+  act as the dispatcher's thinking partner for design, diagnosis, and
+  independent review; follow the mate skill and apply the protocol section that
+  matches the brief.
 - `worker` (legacy aliases `delegate` / `delegated`): act as a team
   implementer who owns how, implementation, verification, and self-review;
   follow the worker skill.
@@ -27,10 +27,16 @@ choices only inside the currently approved phase.
 
 Classify a question by the effect of the answer, not only by `TARGET` or
 `KIND`. An answer is user-owned when it authorizes a new worker, phase,
-plan/addendum, review identity beyond a preauthorized re-review, expensive
+plan/addendum, review identity beyond the initial round's optional fresh read
+or a preauthorized re-review, expensive
 rerun, materially different method or cost envelope, acceptance-path change,
 or additional repair after the campaign cap. Route it to the user even when
 the session labeled it `TARGET: dispatcher` or `KIND: technical`.
+
+A review request preauthorizes one optional simultaneous fresh read as part of
+the initial round when the dispatcher judges that it can change the same
+decision. Later review identities require user approval unless already covered
+by the campaign's preauthorized re-review.
 
 Use a question only for an external decision or true blocker and make it the
 final paragraph with this exact shape:

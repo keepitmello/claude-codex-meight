@@ -1,0 +1,3 @@
+[agents.reviewer]
+description = "Sol Medium read-only reviewer with independent judgment."
+config_file = "agents/reviewer.toml"
