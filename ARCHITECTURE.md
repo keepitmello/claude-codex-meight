@@ -69,8 +69,8 @@ meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  g
 - **Runtime binding path** = shared meight contracts stay under `skills/`;
   runtime-specific installation sources stay under `bindings/`. The Claude
   tech-lead prompt routes review into a mate session. Codex owns its native
-  meight transport binding, reviewer/discusser skills, read-only reviewer agent,
-  and minimal config fragment under `bindings/codex/`.
+  global `AGENTS.md`, meight transport binding, reviewer/discusser skills,
+  read-only reviewer agent, and minimal config fragment under `bindings/codex/`.
 - The SDK spawns `codex app-server --listen stdio://` and speaks JSON-RPC. Meight owns one SDK runtime per active worker so terminal workers can close their app-server, MCP subprocesses, and stdio file descriptors without waiting for daemon shutdown.
 - The daemon holds `Thread` objects in a registry keyed by `(repo_key, worker_name)` only while a turn is starting or running. It keeps a `TurnHandle` only while a stream is live. Every completed stream, including a final `QUESTION:`, closes the worker-owned SDK runtime. `reply`/`follow` starts a fresh ephemeral thread and injects a bounded handoff from saved brief, result, and recent events.
 - Workers always start with `ephemeral=True` and `thread_source=ThreadSource.subagent`. The SDK defines thread source as analytics metadata; it does not hide a persisted thread from Codex clients. Ephemeral threads are not materialized in stored thread listings, which prevents meight work from accumulating as Codex app tasks.

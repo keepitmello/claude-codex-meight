@@ -245,12 +245,13 @@ Bash(command: "meight dispatch review-1 --mode mate --timeout 300 --brief-file -
 -> healthy: same dispatch again · drifting: meight steer review-1 "..."
 ```
 
-A drop-in Claude orchestrator prompt ships as [`CLAUDE.md`](./CLAUDE.md). A
-Codex-as-orchestrator prompt ships as [`AGENTS.md`](./AGENTS.md). The full
-dispatcher-facing skill is [`skills/meight/`](./skills/meight/SKILL.md). The
-session contracts are [`skills/meight-mate/`](./skills/meight-mate/SKILL.md)
-and [`skills/meight-worker/`](./skills/meight-worker/SKILL.md), with their
-shared protocol in
+A drop-in Claude orchestrator prompt ships as [`CLAUDE.md`](./CLAUDE.md). The
+root [`AGENTS.md`](./AGENTS.md) guides work on this repository; the installable
+global Codex policy lives at
+[`bindings/codex/AGENTS.md`](./bindings/codex/AGENTS.md). The full dispatcher-facing
+skill is [`skills/meight/`](./skills/meight/SKILL.md). The session contracts are
+[`skills/meight-mate/`](./skills/meight-mate/SKILL.md) and
+[`skills/meight-worker/`](./skills/meight-worker/SKILL.md), with their shared protocol in
 [`skills/meight-common/`](./skills/meight-common/CONTRACT.md).
 
 Runtime-specific prompt sources live under [`bindings/`](./bindings/). Claude
@@ -260,10 +261,11 @@ review through meight. Codex uses the native
 [`codex-reviewer`](./bindings/codex/skills/codex-reviewer/SKILL.md), and
 [`codex-discusser`](./bindings/codex/skills/codex-discusser/SKILL.md) skills,
 plus the read-only
-[`reviewer`](./bindings/codex/agents/reviewer.toml) agent definition. Link the
-three Codex skill directories into `~/.codex/skills/`, link or copy the agent
-definition to `~/.codex/agents/reviewer.toml`, and merge only the reviewer
-stanza from
+[`reviewer`](./bindings/codex/agents/reviewer.toml) agent definition. Copy the
+global policy to `~/.codex/AGENTS.md`, or merge it when that file already has
+local rules. Link the three Codex skill directories into `~/.codex/skills/`,
+link or copy the agent definition to `~/.codex/agents/reviewer.toml`, and merge
+only the reviewer stanza from
 [`config-fragment.toml`](./bindings/codex/config-fragment.toml) into the local
 Codex config. Keep authentication and MCP configuration local.
 
