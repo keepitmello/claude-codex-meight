@@ -24,8 +24,9 @@ they can change the decision, not a pipeline to run by habit.
 ## Posture Semantics
 
 - `mate`: a thinking partner — blind/anchored design, diagnosis, direction,
-  and verdict-first review of an identified plan, diff, or doctrine artifact.
-  The brief selects which protocol applies.
+  and review of an identified plan, diff, or doctrine artifact, whether
+  verdict-first defect review or generative what-would-make-this-better
+  review. The brief selects which protocol applies.
 - `worker`: a team implementer owns technical design, implementation,
   verification, and self-review, and surfaces observations and better
   directions instead of executing silently. The dispatcher decides whether to

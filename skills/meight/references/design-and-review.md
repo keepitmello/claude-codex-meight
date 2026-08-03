@@ -53,6 +53,8 @@ verdict가 아직 방향을 바꾸거나 실패 비용을 실질적으로 줄일
 
 ## mate 리뷰
 
+리뷰 브리프가 축을 고른다. 결함 사냥(adversarial, GO/NO-GO)은 수용 게이트가 필요할 때 쓰고, generative 리뷰("뭘 하면 더 좋아지나")는 방향은 섰고 leverage를 찾고 싶을 때 쓴다. 둘을 섞으면 브리프에서 어느 부분이 어느 축인지 명시한다.
+
 실패 비용이 값을 할 때 디스패처가 별도 `--mode mate --effort high` 리뷰 세션을 띄운다. worker는 계약상 자기 리뷰(필요시 내부 fresh-context 리뷰어 스폰 포함)를 하지만, 그건 외부 리뷰의 대체가 아니라 별개 증거원이다. 리뷰는 고정된 구현 단계가 아니라 독립적인 증거원이다.
 
 ```bash
@@ -61,6 +63,18 @@ Adversarial review. Target: <files>. Contract: <versioned PLAN.md>.
 Hunt for real defects: correctness, regressions, missing verification,
 security/data risk, edge cases, races. For each finding: severity P1/P2/P3,
 file:line, why, fix direction. End with GO or NO-GO.
+EOF
+```
+
+generative 축은 게이트가 아니라 판단 입력이라 기본 `sol medium`이면 충분하다:
+
+```bash
+meight dispatch improve-X --mode mate --cwd <repo root> --brief-file - <<'EOF'
+Generative review. Target: <files, plan version, or diff>.
+Not a defect hunt — tell me what would make this better: simplifications,
+missing opportunities, stronger structures, small changes with outsized payoff.
+Rank by value per unit of change, with payoff, cost, and evidence for each.
+No verdict; recommendations only.
 EOF
 ```
 

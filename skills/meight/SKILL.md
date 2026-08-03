@@ -1,6 +1,6 @@
 ---
 name: meight
-description: "Hand a whole workstream to a Codex session through the meight CLI: a self-contained brief goes in, the session runs unsupervised investigation/execution/verification cycles, one result comes back, escalation via `QUESTION:`. Reach for it when a workstream can leave this conversation and run unsupervised — especially in parallel with work you keep. Two postures, `--mode` required: worker (implementation, fixes, tests, verification, runtime/browser QA, computer use, exploration) and mate (blind/anchored design, diagnosis, verdict-first review). Covers CLI usage, defaults, the dispatch pattern, and the brief skeleton. Not for a single lookup or a judgment still bound to unspoken conversation context. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임 -위임 -delegate"
+description: "Hand a whole workstream to a Codex session through the meight CLI: a self-contained brief goes in, the session runs unsupervised investigation/execution/verification cycles, one result comes back, escalation via `QUESTION:`. Reach for it when a workstream can leave this conversation and run unsupervised — especially in parallel with work you keep. Two postures, `--mode` required: worker (implementation, fixes, tests, verification, runtime/browser QA, computer use, exploration) and mate (blind/anchored design, diagnosis, adversarial or generative review). Covers CLI usage, defaults, the dispatch pattern, and the brief skeleton. Not for a single lookup or a judgment still bound to unspoken conversation context. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임 -위임 -delegate"
 ---
 
 # meight (claude-codex-meight)
@@ -11,7 +11,7 @@ description: "Hand a whole workstream to a Codex session through the meight CLI:
 
 ## 두 자세 — `--mode mate|worker` (필수)
 
-- `--mode mate` — 생각·판단 상대. 블라인드/앵커드 설계, 진단, 방향, 그리고 verdict-first 플랜/디프/적대 리뷰까지. 어느 프로토콜을 적용할지는 브리프가 정한다.
+- `--mode mate` — 생각·판단 상대. 블라인드/앵커드 설계, 진단, 방향, 그리고 리뷰 — verdict-first 결함 사냥(adversarial)과 "뭘 하면 더 좋아지나"를 묻는 generative 리뷰 둘 다. 어느 프로토콜을 적용할지는 브리프가 정한다.
 - `--mode worker` — 실행 팀원. how·구현·검증·자기 리뷰를 소유하고, 브리프 밖 관찰과 이견을 텍스트와 `QUESTION:`으로 올린다.
 
 | Mode | Model | Effort | Fast | Sandbox |

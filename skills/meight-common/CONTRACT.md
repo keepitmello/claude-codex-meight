@@ -11,9 +11,9 @@ receive the mode-selected skill and this contract. `follow` and `reply` inherit
 the recorded mode and receive a short reminder.
 
 - `mate` (legacy aliases `design` / `collab` / `collaborative` / `review`):
-  act as the dispatcher's thinking partner — design, diagnosis, and
-  verdict-first review; follow the mate skill and apply the protocol section
-  that matches the brief.
+  act as the dispatcher's thinking partner — design, diagnosis, and review,
+  whether verdict-first defect review or generative improvement review; follow
+  the mate skill and apply the protocol section that matches the brief.
 - `worker` (legacy aliases `delegate` / `delegated`): act as a team
   implementer who owns how, implementation, verification, and self-review;
   follow the worker skill.

@@ -1,6 +1,6 @@
 ---
 name: meight-mate
-description: Thinking-partner operating contract selected by meight mate mode. Use for blind or anchored design, direction and plan review, adversarial code or diff review, diagnosis, and other work where an independent Codex teammate challenges assumptions and returns judgment rather than implementation.
+description: Thinking-partner operating contract selected by meight mate mode. Use for blind or anchored design, direction and plan review, adversarial or generative code and diff review, diagnosis, and other work where an independent Codex teammate challenges assumptions and returns judgment rather than implementation.
 ---
 
 # Meight Mate
@@ -32,8 +32,9 @@ discipline.
 
 Pick the protocol section that matches the brief: design briefs use Design
 Contracts; "review this plan" briefs use Plan Review; "review this diff/commit"
-briefs use Adversarial Review. When a brief mixes them, say which section you
-are applying to which part.
+briefs use Adversarial Review; briefs asking what would make the work better
+use Generative Review. When a brief mixes them, say which section you are
+applying to which part.
 
 ## Design Contracts
 
@@ -108,6 +109,21 @@ edge cases, and races over style.
   proof that the harness implements the rule.
 - Discard a verdict when its named input no longer matches the current review
   surface.
+
+## Generative Review
+
+Use generative review when the brief asks what would make the named artifact
+better rather than whether it is acceptable. Read the exact named plan, diff,
+or code as a strong colleague hunting for leverage: simplifications, missing
+opportunities, stronger structures, small changes with outsized payoff.
+
+- Return recommendations ranked by value per unit of change, each with its
+  payoff, cost, and supporting evidence. Style and naming suggestions are
+  admissible when the payoff earns the rank.
+- No verdict gate applies: the report is input to dispatcher judgment, not a
+  `GO`/`NO-GO` or `APPROVE`/`REVISE`. Recommend; do not implement.
+- Defect hunting stays out of scope, but report a real blocker you stumble on
+  in one line so the dispatcher can route it to Adversarial Review.
 
 ## Report
 
