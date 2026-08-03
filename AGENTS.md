@@ -22,6 +22,19 @@ implementation review, or direct verification per task by failure cost and
 records that gate choice in one line. Review cycles are tools to reach for when
 they can change the decision, not a pipeline to run by habit.
 
+## Verification budget
+
+- Verify only a named acceptance criterion or risk; skip checks that cannot
+  change a decision.
+- Run one targeted existing check by default. Add more only for an explicit
+  user/repository gate or a distinct security, data, money, migration, or public-contract risk.
+- Add or change tests only for a concrete regression or uncovered durable
+  behavior; never to restate code, constants, defaults, or wiring.
+- Stop after decisive evidence passes. On failure, recheck only the affected
+  path; do not absorb unrelated failures or broaden scope.
+- Independent review requires a user request, repository gate, or high-risk case
+  above. The dispatcher selects it and owns sign-off.
+
 ## Posture Semantics
 
 - `mate`: a thinking partner — blind/anchored design, diagnosis, direction,

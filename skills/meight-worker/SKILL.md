@@ -50,7 +50,8 @@ labels it routine.
 3. Fix the owning cause in the smallest correct ownership area. Reuse existing
    helpers and conventions before adding an abstraction.
 4. Preserve the public behavior and invariants outside the requested change.
-5. Verify, self-review, and fix your own findings before reporting.
+5. Run the smallest decisive check and review the owned diff once. Fix only
+   in-scope findings.
 6. Return a concise text result, with detail in a worker-unique evidence
    artifact when needed.
 
@@ -71,27 +72,14 @@ them. Write steps as outcomes, not mechanics.
 
 ## Self-Review
 
-Review your own diff before reporting: correctness, regressions, missing
-verification, security and data/state risk, edge cases, races. Fix what you
-find and re-run the checks the fix touches.
+Review the owned diff once. After a fix, recheck only the changed part and its
+affected verification.
 
 ## Internal Independent Review
 
-For non-trivial work, when an independent read would change your confidence in
-the result, spawn a fresh-context internal reviewer with
-`multi_agent_v1.spawn_agent(agent_type="reviewer", fork_context=false)`. Give
-it the exact diff and verification evidence, keep it read-only, and cap the
-internal loop at two rounds. Before spawning, verify that the reviewer resolves
-to `gpt-5.6-sol` at `high` effort; do not look for or substitute a Luna or Terra
-reviewer. If that exact reviewer is unavailable, record the review as `NOT_RUN`
-and return it to the dispatcher instead of silently weakening the model.
-Record the invocation, verdict, and accepted fixes in the evidence artifact.
-Skip this for small reversible changes; say in the report that you skipped it
-and why.
-
-Whether a separate external review session runs is the dispatcher's call; your
-self-review does not replace it, and its existence does not excuse skipping
-yours.
+Do not start one unless the brief selects it as an acceptance gate. Difficulty
+or confidence alone is not a reason. The dispatcher owns review selection; do
+not report an unrequested review as `NOT_RUN`.
 
 ## Frozen-Plan Implementation
 
@@ -106,10 +94,12 @@ commits in concise text when a frozen plan governs the work.
 
 ## Verification
 
-- Prefer the most relevant test, type check, build, smoke test, runtime check,
-  or rendered walkthrough for the affected path.
+- Run one targeted check unless the brief, user, or repository names more.
+- Add or change a test only for a concrete regression or changed durable
+  behavior not covered by existing checks.
+- Stop after decisive evidence passes; do not rerun it or test the test.
 - Record commands and concrete outcomes, not only conclusions.
-- Mark skipped checks `NOT_RUN` with the blocker and next best post-condition.
+- Mark only requested or required skipped checks `NOT_RUN`.
 - Do not claim completion while a requested check fails or a P1 blocker
   remains.
 - For frontend work, verify the affected user path in the rendered interface;
@@ -117,9 +107,7 @@ commits in concise text when a frozen plan governs the work.
 
 ## Completion Check
 
-Before reporting, confirm scope stayed bounded, the primary behavior was
-verified, self-review ran (or was explicitly skipped with a reason), deviations
-and deliberate omissions were named, exact files and commits were listed, each
-newly introduced field, option, or abstraction was reported together with the
-requirement or call site that justifies it, and no P1 blocker remains. A worker's `done` is evidence for dispatcher sign-off,
-not final approval.
+Before reporting, confirm bounded scope, decisive evidence, one diff review,
+named deviations, changed files and commits, and no P1 blocker. Justify any new
+field, option, or abstraction by its requirement or call site. A worker's `done`
+is evidence for dispatcher sign-off, not final approval.
