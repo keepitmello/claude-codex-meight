@@ -2290,6 +2290,86 @@ class ModeLifecycleTests(unittest.TestCase):
             self.assertIn("skills/meight-mate/SKILL.md", capture_thread.inputs[0])
 
 
+class MessageLogTests(unittest.TestCase):
+    def _worker(self, tmp: str, name: str = "speaker") -> "meight.Worker":
+        worker = meight.Worker(name, Path(tmp), "/repo", "repo-key", "/repo",
+                               "workspace_write", "gpt-5.6-sol", "medium", "default")
+        worker.dir.mkdir(parents=True)
+        worker.init_status(thread_id="thread-1")
+        self.addCleanup(worker.close_message_log)
+        return worker
+
+    def _messages(self, worker) -> str:
+        return (worker.dir / meight.MESSAGE_LOG_NAME).read_text(encoding="utf-8")
+
+    def test_deltas_reach_disk_immediately_and_unthrottled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            worker = self._worker(tmp)
+            path = worker.dir / meight.MESSAGE_LOG_NAME
+            sizes = []
+            for delta in ("계약을 ", "먼저 확인하겠습니다.", " 그다음 구현합니다."):
+                worker._handle_event("item/agentMessage/delta", {"delta": delta})
+                sizes.append(path.stat().st_size)
+            self.assertEqual(sizes, sorted(sizes))
+            self.assertEqual(len(set(sizes)), 3)  # every delta grew the file
+            self.assertIn("계약을 먼저 확인하겠습니다. 그다음 구현합니다.", self._messages(worker))
+
+    def test_message_blocks_are_separated_for_a_reader(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            worker = self._worker(tmp)
+            for text in ("첫 번째 메시지입니다.", "두 번째 메시지입니다."):
+                worker._handle_event("item/started", {"item": {"type": "agentMessage"}})
+                worker._handle_event("item/agentMessage/delta", {"delta": text})
+                worker._on_item_completed({"type": "agentMessage", "text": text})
+            body = self._messages(worker)
+            self.assertEqual(body.count("──"), 4)  # one delimited header per message
+            self.assertIn("첫 번째 메시지입니다.\n", body)
+            self.assertIn("두 번째 메시지입니다.\n", body)
+            self.assertNotIn("{", body)  # plain prose, not JSON lines
+
+    def test_completion_writes_the_text_deltas_did_not_carry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            worker = self._worker(tmp)
+            worker._on_item_completed({"type": "agentMessage", "text": "델타 없이 도착한 전문"})
+            self.assertIn("델타 없이 도착한 전문", self._messages(worker))
+
+            worker._handle_event("item/agentMessage/delta", {"delta": "앞부분만 "})
+            worker._on_item_completed({"type": "agentMessage", "text": "앞부분만 그리고 나머지"})
+            body = self._messages(worker)
+            self.assertIn("앞부분만 그리고 나머지", body)
+            self.assertEqual(body.count("앞부분만"), 1)  # no duplicated prefix
+
+    def test_only_agent_messages_stream_and_existing_digests_are_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            worker = self._worker(tmp)
+            for method in ("item/reasoning/textDelta", "item/commandExecution/outputDelta",
+                           "item/reasoning/summaryTextDelta"):
+                worker._handle_event(method, {"delta": "noise"})
+            self.assertFalse((worker.dir / meight.MESSAGE_LOG_NAME).exists())
+
+            long_text = "가" * 900
+            worker._handle_event("item/agentMessage/delta", {"delta": long_text})
+            worker._on_item_completed({"type": "agentMessage", "text": long_text})
+            self.assertEqual(worker.status["last_message_tail"], long_text[-500:])
+            events = (worker.dir / "events.log").read_text(encoding="utf-8")
+            self.assertIn("[item/completed] agentMessage: ", events)
+            self.assertLessEqual(max(len(line) for line in events.splitlines()),
+                                 meight.EVENT_LINE_MAX)
+            self.assertIn(long_text, self._messages(worker))  # only the new file is complete
+
+    def test_follow_turn_separates_messages_and_start_clears_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            worker = self._worker(tmp)
+            worker._handle_event("item/agentMessage/delta", {"delta": "턴 1 발언"})
+            worker.status["state"] = "completed"
+            worker.reset_for_follow("다음 지시")
+            worker._handle_event("item/agentMessage/delta", {"delta": "턴 2 발언"})
+            body = self._messages(worker)
+            self.assertIn("=== turn 2 (", body)
+            self.assertLess(body.index("턴 1 발언"), body.index("=== turn 2 ("))
+            self.assertLess(body.index("=== turn 2 ("), body.index("턴 2 발언"))
+
+
 class WatchTests(unittest.TestCase):
     def _worker(self, repo_home: Path, name: str, **status) -> Path:
         wdir = repo_home / "workers" / name
@@ -2304,81 +2384,79 @@ class WatchTests(unittest.TestCase):
         row.update(status)
         meight.atomic_write_json(wdir / "status.json", row)
 
-    def _log(self, wdir: Path, method: str, detail: str) -> None:
-        with open(wdir / "events.log", "a", encoding="utf-8") as f:
-            f.write(f"{meight.now_iso()} [{method}] {detail}\n")
+    def _say(self, wdir: Path, text: str) -> None:
+        with open(wdir / meight.MESSAGE_LOG_NAME, "a", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
 
-    def test_item_started_logs_work_items_and_skips_noise(self):
+    def test_follower_shows_a_recent_tail_then_follows_appends(self):
         with tempfile.TemporaryDirectory() as tmp:
-            worker = meight.Worker(
-                "watch-log", Path(tmp), "/repo", "repo-key", "/repo",
-                "workspace_write", "gpt-5.6-sol", "medium", "default")
-            worker.dir.mkdir(parents=True)
-            worker.init_status(thread_id="thread-1")
-            for item in ({"type": "reasoning"},
-                         {"type": "agentMessage"},
-                         {"type": "commandExecution", "command": "pytest -q"},
-                         {"type": "fileChange"}):
-                worker._handle_event("item/started", {"item": item})
-            worker._on_item_completed({"type": "commandExecution", "command": "pytest -q",
-                                       "exit_code": 0})
-            events = (worker.dir / "events.log").read_text(encoding="utf-8").splitlines()
-            methods = [meight.parse_event_line(line)[1] for line in events]
-            self.assertEqual(methods, ["item/started", "item/started", "item/completed"])
-            self.assertIn("[item/started] commandExecution: pytest -q", events[0])
-            self.assertIn("[item/started] fileChange", events[1])
-            self.assertIn("[item/completed] commandExecution: pytest -q → exit 0", events[2])
-
-    def test_handoff_events_tail_drops_started_lines(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "events.log"
-            path.write_text(
-                "2026-08-05T01:00:00+09:00 [item/started] commandExecution: pytest -q\n"
-                "2026-08-05T01:00:09+09:00 [item/completed] commandExecution: pytest -q → exit 0\n"
-                "--- turn 2 (2026-08-05T01:00:10+09:00) ---\n",
-                encoding="utf-8")
-            tail = meight.read_events_tail(path)
-            self.assertNotIn("[item/started]", tail)
-            self.assertIn("[item/completed] commandExecution: pytest -q → exit 0", tail)
-            self.assertIn("--- turn 2", tail)
-
-    def test_follower_shows_recent_history_then_follows_appends(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "events.log"
-            path.write_text("".join(f"line-{i}\n" for i in range(10)), encoding="utf-8")
-            follower = meight.EventLogFollower(path, tail_lines=3)
-            self.assertEqual(follower.poll(), ["line-7", "line-8", "line-9"])
-            self.assertEqual(follower.poll(), [])
+            path = Path(tmp) / meight.MESSAGE_LOG_NAME
+            path.write_text("버려질 첫 줄\n" + "이전 메시지\n" * 5, encoding="utf-8")
+            follower = meight.MessageLogFollower(path, tail_chars=30)
+            first = follower.poll()
+            self.assertNotIn("버려질 첫 줄", first)
+            self.assertIn("이전 메시지", first)
+            self.assertEqual(follower.poll(), "")
             with open(path, "a", encoding="utf-8") as f:
-                f.write("line-10\npartial")
-            self.assertEqual(follower.poll(), ["line-10"])
-            with open(path, "a", encoding="utf-8") as f:
-                f.write("-tail\n")
-            self.assertEqual(follower.poll(), ["partial-tail"])
+                f.write("새로 하는 말")
+            self.assertEqual(follower.poll(), "새로 하는 말")
+
+    def test_follower_holds_a_split_multibyte_character(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / meight.MESSAGE_LOG_NAME
+            path.write_bytes(b"")
+            follower = meight.MessageLogFollower(path, from_start=True)
+            self.assertEqual(follower.poll(), "")
+            encoded = "한글".encode("utf-8")
+            with open(path, "ab") as f:
+                f.write(encoded[:4])  # splits the second character
+            self.assertEqual(follower.poll(), "한")
+            with open(path, "ab") as f:
+                f.write(encoded[4:])
+            self.assertEqual(follower.poll(), "글")
 
     def test_follower_waits_for_a_missing_file_and_replays_a_replaced_one(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "events.log"
-            follower = meight.EventLogFollower(path, from_start=True)
-            self.assertEqual(follower.poll(), [])
-            path.write_text("first\n", encoding="utf-8")
-            self.assertEqual(follower.poll(), ["first"])
+            path = Path(tmp) / meight.MESSAGE_LOG_NAME
+            follower = meight.MessageLogFollower(path, from_start=True)
+            self.assertEqual(follower.poll(), "")
+            path.write_text("첫 세션\n", encoding="utf-8")
+            self.assertEqual(follower.poll(), "첫 세션\n")
             path.unlink()
-            self.assertEqual(follower.poll(), [])
-            path.write_text("fresh\n", encoding="utf-8")
-            self.assertEqual(follower.poll(), ["fresh"])
+            self.assertEqual(follower.poll(), "")
+            path.write_text("새 세션\n", encoding="utf-8")
+            self.assertEqual(follower.poll(), "새 세션\n")
 
-    def test_format_watch_line_pairs_start_with_completion(self):
-        started = meight.format_watch_line(
-            "2026-08-05T01:02:03+09:00 [item/started] commandExecution: pytest -q")
-        completed = meight.format_watch_line(
-            "2026-08-05T01:02:09+09:00 [item/completed] commandExecution: pytest -q → exit 0",
-            prefix="impl-1 ")
-        self.assertEqual(started, "01:02:03 ▸ commandExecution: pytest -q")
-        self.assertEqual(completed, "01:02:09 impl-1 ✓ commandExecution: pytest -q → exit 0")
-        self.assertIn("[turn/started]", meight.format_watch_line(
-            "2026-08-05T01:02:03+09:00 [turn/started] turn=abc"))
-        self.assertIn("--- turn 2 ---", meight.format_watch_line("--- turn 2 ---"))
+    def test_renderer_keeps_the_footer_off_an_unfinished_line(self):
+        class Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        stream = Tty()
+        renderer = meight.WatchRenderer(stream)
+        renderer.write("문장이 이어지는 중")
+        renderer.set_footer("▸ running")
+        self.assertNotIn("running", stream.getvalue())  # would land inside the sentence
+        renderer.write("\n")
+        renderer.set_footer("▸ running")
+        self.assertIn("▸ running", stream.getvalue())
+
+    def test_footer_advances_on_the_viewer_clock_when_status_stalls(self):
+        session = meight.WatchSession("w1", Path("/nonexistent"))
+        session.status = {"state": "running", "current_item": "commandExecution: sleep 600 (2s)"}
+        with patch.object(meight.time, "monotonic", side_effect=[10.0, 10.0]):
+            self.assertEqual(session.footer(), "commandExecution: sleep 600 (2s)")
+        with patch.object(meight.time, "monotonic", return_value=25.0):
+            self.assertEqual(session.footer(), "commandExecution: sleep 600 (17s)")
+        # A repeat of the same command restarts the count instead of inheriting it.
+        session.status["current_item"] = "commandExecution: sleep 600 (0s)"
+        with patch.object(meight.time, "monotonic", side_effect=[40.0, 40.0]):
+            self.assertEqual(session.footer(), "commandExecution: sleep 600 (0s)")
+        session.status["current_item"] = None
+        self.assertEqual(session.footer(), "running")
+        session.status["current_item"] = "capacity retry #3 in 5s"
+        self.assertEqual(session.footer(), "capacity retry #3 in 5s")
 
     def test_watch_stop_state_covers_terminal_and_dormant_question_only(self):
         self.assertEqual(meight.watch_stop_state({"state": "completed"}), "completed")
@@ -2389,37 +2467,35 @@ class WatchTests(unittest.TestCase):
         self.assertEqual(meight.watch_stop_state(
             {"state": "needs_input", "needs_input_source": "question"}), "needs_input")
 
-    def test_run_watch_follows_appends_until_the_worker_is_terminal(self):
+    def test_run_watch_streams_speech_verbatim_until_terminal(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo_home = Path(tmp)
             wdir = self._worker(repo_home, "w1")
-            for i in range(30):
-                self._log(wdir, "item/completed", f"commandExecution: old-{i} → exit 0")
+            self._say(wdir, "\n── 01:00:00+09:00 ──\n오래된 메시지\n")
 
             def writer():
                 time.sleep(0.05)
-                self._log(wdir, "item/started", "commandExecution: pytest -q")
+                self._say(wdir, "\n── 01:02:03+09:00 ──\n계약을 ")
                 time.sleep(0.05)
-                self._log(wdir, "item/completed", "commandExecution: pytest -q → exit 0")
-                self._log(wdir, "turn/completed", "state=completed")
+                self._say(wdir, "먼저 확인하겠습니다.\n")
                 self._status(wdir, "w1", state="completed", terminal_at=meight.now_iso(),
                              files_changed=["meight.py"])
 
             stream = io.StringIO()
             appender = threading.Thread(target=writer)
             appender.start()
-            code = meight.run_watch(repo_home, ["w1"], tail_lines=5, poll_sec=0.01, stream=stream)
+            code = meight.run_watch(repo_home, ["w1"], tail_chars=200, poll_sec=0.01,
+                                    stream=stream)
             appender.join()
             out = stream.getvalue()
             self.assertEqual(code, 0)
-            self.assertNotIn("old-24", out)  # older than the requested tail
-            self.assertIn("old-29", out)
-            self.assertIn("▸ commandExecution: pytest -q", out)
-            self.assertIn("✓ commandExecution: pytest -q → exit 0", out)
+            self.assertEqual(code, 0)
+            self.assertIn("계약을 먼저 확인하겠습니다.", out)  # verbatim, not reformatted
+            self.assertIn("── 01:02:03+09:00 ──", out)
             self.assertIn("w1", out.splitlines()[-1])
             self.assertNotIn("\x1b", out)  # no escapes when stdout is not a TTY
 
-    def test_run_watch_waits_for_a_worker_that_has_not_written_events_yet(self):
+    def test_run_watch_waits_for_a_worker_that_has_not_spoken_yet(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo_home = Path(tmp)
             wdir = repo_home / "workers" / "late-1"
@@ -2427,7 +2503,7 @@ class WatchTests(unittest.TestCase):
             def writer():
                 time.sleep(0.05)
                 self._worker(repo_home, "late-1")
-                self._log(wdir, "item/started", "commandExecution: cargo build")
+                self._say(wdir, "빌드가 깨졌습니다.\n")
                 self._status(wdir, "late-1", state="failed", terminal_at=meight.now_iso(),
                              error_detail={"message": "build broke", "status": 500,
                                            "type": "server_error"})
@@ -2439,21 +2515,30 @@ class WatchTests(unittest.TestCase):
             appender.join()
             out = stream.getvalue()
             self.assertEqual(code, 0)
-            self.assertIn("(waiting for events from 'late-1')", out)
-            self.assertIn("▸ commandExecution: cargo build", out)
+            self.assertIn("(waiting for 'late-1' to speak)", out)
+            self.assertIn("빌드가 깨졌습니다.", out)
             self.assertIn("error: HTTP 500 server_error: build broke", out)
 
-    def test_run_watch_stops_on_a_dormant_question(self):
+    def test_run_watch_prefixes_every_line_when_interleaving(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo_home = Path(tmp)
-            wdir = self._worker(
-                repo_home, "q1", state="needs_input", needs_input_source="question",
-                needs_input_detail="QUESTION: TARGET: dispatcher KIND: scope Ship it?")
-            self._log(wdir, "question", "QUESTION: TARGET: dispatcher KIND: scope Ship it?")
+            first = self._worker(repo_home, "impl-a")
+            second = self._worker(repo_home, "mate-b")
+            self._say(first, "\n── 01:00:00+09:00 ──\n구현을 시작합니다.\n")
+            self._say(second, "\n── 01:00:01+09:00 ──\n설계를 검토합니다.\n")
+            self._status(first, "impl-a", state="completed", terminal_at=meight.now_iso())
+            self._status(second, "mate-b", state="needs_input",
+                         needs_input_source="question",
+                         needs_input_detail="QUESTION: TARGET: user KIND: scope 범위?")
             stream = io.StringIO()
-            code = meight.run_watch(repo_home, ["q1"], poll_sec=0.01, stream=stream)
+            code = meight.run_watch(repo_home, ["impl-a", "mate-b"], from_start=True,
+                                    poll_sec=0.01, stream=stream)
+            out = stream.getvalue()
             self.assertEqual(code, 0)
-            self.assertIn("question: QUESTION: TARGET: dispatcher", stream.getvalue())
+            self.assertIn("impl-a         구현을 시작합니다.", out)
+            self.assertIn("mate-b         설계를 검토합니다.", out)
+            self.assertNotIn("impl-a         \n", out)  # blank separators stay unprefixed
+            self.assertIn("question: QUESTION: TARGET: user", out)
 
     def test_watch_selects_the_only_active_worker_and_refuses_ambiguity(self):
         with tempfile.TemporaryDirectory() as tmp:

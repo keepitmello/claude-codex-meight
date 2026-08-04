@@ -131,17 +131,20 @@ EOF
 # exit 0=completed · 2=failed/interrupted/runtime-lost · 3=replyable question · 4=daemon dead · 1=checkpoint timeout
 ```
 
-While that call blocks, a second terminal can watch the worker work:
+While that call blocks, a second terminal can watch the worker talk:
 
 ```bash
 meight watch impl-1
-# 01:44:19 ▸ commandExecution: .venv/bin/python -m unittest discover -s tests
-# 01:44:23 ✓ commandExecution: .venv/bin/python -m unittest discover -s tests → exit 0
-# ▸ fileChange (3s)     <- footer, timing the item in flight
+# ── 2026-08-05T02:01:59+09:00 ──
+# 실패 원인을 녹화 흐름으로 좁혔습니다. dev 서버가 첫 `/app` 요청 때 Fast
+# Refresh를 일으켜 탭 선택을 되돌린 것이어서, 서버 readiness에 warm-up을 넣었습니다.
+# ▸ commandExecution: pnpm test (12s)   <- footer while the worker is quiet
 ```
 
-This is for a human. An orchestrating agent still pulls digests, because
-streaming worker events into its context costs tokens linearly with runtime.
+Messages stream as the worker writes them, in full: `status.json` keeps only a
+500-character tail and `events.log` a 150-character summary. This is for a
+human. An orchestrating agent still pulls digests, because streaming worker
+output into its context costs tokens linearly with runtime.
 
 On exit `1`, the worker is still running. Inspect once, steer if needed, then
 run the same `dispatch` again to reattach; no separate polling command is needed:
@@ -312,7 +315,7 @@ are Codex-native skills, not shared session contracts.
 | `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | One-shot answer to a replyable question; inherits mode and omitted turn settings, applies explicit turn overrides, and prints the latest result. |
 | `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | Low-level: new turn on the same live thread; inherits mode and omitted turn settings, while explicit overrides become the defaults for later turns. |
 | `meight result <name>` | Print `result.md`. |
-| `meight watch [name] [--all] [--from-start] [--tail N]` | Stream a worker's tool calls live in a second terminal while `dispatch` blocks. Read-only, no daemon needed. No name selects the only active worker; `--all` interleaves them with a name prefix. Ctrl-C leaves the worker running. |
+| `meight watch [name] [--all] [--from-start] [--tail N]` | Stream what a worker says, live, in a second terminal while `dispatch` blocks. Full message text, unmodified. Read-only, no daemon needed. No name selects the only active worker; `--all` interleaves them with a name prefix. Ctrl-C leaves the worker running. |
 | `meight status [name] [--json] [--all-repos] [--archived \| --all]` | Pull digest. With no name, the default view includes active workers and terminal workers from the last 6 hours; `--archived` shows older terminal rows and `--all` shows both. Table includes `MODE`; legacy rows with old role or long-form mode values remain readable. Reads disk. |
 | `meight steer <name> "text"` | Inject instruction into the running turn. |
 | `meight interrupt <name>` | Cancel the turn. An interrupt that arrives while a worker is still starting — or while a reply turn is being opened — is recorded, and aborts the turn the moment it would commit. |

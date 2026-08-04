@@ -8,6 +8,7 @@ Observe by pulling disk digests, steer mid-turn, and push only through wait.
 from __future__ import annotations
 
 import argparse
+import codecs
 import fcntl
 import hashlib
 import json
@@ -35,13 +36,10 @@ SOCKET_TIMEOUT_SEC = 60.0  # start/follow may take several seconds for thread_st
 TOOL_WAIT_GRACE_SEC = 15.0  # tool/approval waits older than this surface as exit 3 instead of hanging
 STATUS_THROTTLE_SEC = 2.0
 EVENT_LINE_MAX = 300
-# Item starts are logged so `watch` can show work in flight. Reasoning is not
-# work, and an agentMessage start carries no detail its completed line lacks.
-ITEM_START_LOG_SKIP = {"reasoning", "agentMessage"}
-EVENT_LINE_RE = re.compile(r"^(\S+) \[([^\]]+)\] ?(.*)$")
+MESSAGE_LOG_NAME = "messages.log"  # unthrottled full agentMessage text for `watch`
 WATCH_POLL_SEC = 0.25
-WATCH_TAIL_LINES = 20
-WATCH_GLYPHS = {"item/started": "▸", "item/completed": "✓"}
+WATCH_TAIL_CHARS = 2_000
+WATCH_ELAPSED_RE = re.compile(r"^(?P<label>.*) \((?P<seconds>\d+)s\)\Z")
 RECOVERY_ARTIFACT_MAX_CHARS = 24_000
 DEFAULT_IDLE_TIMEOUT_SEC = 30 * 60
 DEFAULT_WORKER_GC_TTL_SEC = 60 * 60
@@ -545,26 +543,6 @@ def read_text_tail(path: Path, limit: int = RECOVERY_ARTIFACT_MAX_CHARS) -> str:
         return ""
 
 
-def parse_event_line(line: str) -> tuple[str, str, str] | None:
-    """Split an `<iso> [<method>] <detail>` event line; None for turn separators."""
-    m = EVENT_LINE_RE.match(line)
-    return (m.group(1), m.group(2), m.group(3)) if m else None
-
-
-def read_events_tail(path: Path, limit: int = RECOVERY_ARTIFACT_MAX_CHARS) -> str:
-    """Read an events tail without the live-progress start lines.
-
-    `item/started` exists for `watch`, and the matching completed line repeats
-    its detail, so handoff continuity keeps its depth by reading past them."""
-    kept = []
-    for line in read_text_tail(path, limit * 2).splitlines():
-        parsed = parse_event_line(line)
-        if parsed and parsed[1] == "item/started":
-            continue
-        kept.append(line)
-    return "\n".join(kept)[-limit:]
-
-
 def dig(d: object, *keys: str, default=None):
     """Chained dict.get helper for missing SDK payload fields."""
     cur = d
@@ -668,8 +646,6 @@ def describe_item(item: dict) -> str:
         return "reasoning"
     if itype == "fileChange":
         paths = [dig(c, "path", default="?") for c in item.get("changes") or []]
-        if not paths:
-            return "fileChange"  # a started item has no changes recorded yet
         return f"fileChange: {truncate(', '.join(str(p) for p in paths), 150)}"
     if itype == "mcpToolCall":
         return f"mcpToolCall: {item.get('server', '?')}/{item.get('tool', '?')}"
@@ -735,6 +711,9 @@ class Worker:
         self._capacity_retry_deadline: float | None = None
         self._current_item_label: str | None = None
         self._current_item_since: float | None = None
+        self._message_file = None      # messages.log handle, held for the live turn
+        self._message_open = False     # a message block header has been written
+        self._message_chars = 0        # characters of the current message already on disk
         # The public status.json field needs_input_source is the SSOT for needs_input:
         # "question" (final QUESTION; wait exits 3 only while daemon-attached) |
         # "tool" (mid-turn wait; treated as active)
@@ -839,6 +818,48 @@ class Worker:
         with open(self.dir / "events.log", "a", encoding="utf-8") as f:
             f.write(line[:EVENT_LINE_MAX] + "\n")
 
+    # ── messages.log ──
+    # The full text the worker speaks, streamed as it arrives. status.json keeps
+    # a 500-character tail and events.log a 150-character summary; neither can
+    # carry a message a human wants to read while it is still being written.
+
+    def append_message_text(self, text: str) -> None:
+        """Append agent message text immediately, opening the block on first write."""
+        if not text:
+            return
+        try:
+            if self._message_file is None:
+                self._message_file = open(self.dir / MESSAGE_LOG_NAME, "a", encoding="utf-8")
+            if not self._message_open:
+                self._message_file.write(f"\n── {now_iso()} ──\n")
+                self._message_open = True
+            self._message_file.write(text)
+            self._message_file.flush()  # a buffered live view is not a live view
+            self._message_chars += len(text)
+        except OSError:
+            # The live view is an accessory; losing it must not stop the turn.
+            self.close_message_log()
+
+    def close_message_block(self, text: str = "") -> None:
+        """End the current message, writing whatever the deltas did not carry."""
+        self.append_message_text(text[self._message_chars:])
+        if self._message_open and self._message_file is not None:
+            try:
+                self._message_file.write("\n")
+                self._message_file.flush()
+            except OSError:
+                self.close_message_log()
+        self._message_open = False
+        self._message_chars = 0
+
+    def close_message_log(self) -> None:
+        if self._message_file is not None:
+            try:
+                self._message_file.close()
+            except OSError:
+                pass
+            self._message_file = None
+
     def _clear_needs_input_locked(self) -> None:
         self.status["needs_input_detail"] = None
         self.status["needs_input_source"] = None
@@ -878,6 +899,9 @@ class Worker:
                     self.write_status(force=True)
             daemon.log(f"worker={self.name} stream exception: {traceback.format_exc(limit=3)}")
         finally:
+            with self.lock:
+                self.close_message_block()
+                self.close_message_log()
             self.detach_runtime_refs_if_idle(daemon, gen, "stream ended")
             daemon.touch_activity()
 
@@ -1029,21 +1053,19 @@ class Worker:
 
         elif method == "item/started":
             item = p.get("item") or {}
-            itype = item.get("type")
             self._current_item_label = describe_item(item)
             self._current_item_since = time.monotonic()
-            if itype == "agentMessage":
+            if item.get("type") == "agentMessage":
                 self._agent_msg_buf = ""
-            if itype not in ITEM_START_LOG_SKIP:
-                # Pairs with the item/completed line carrying the same label.
-                self.log_event(method, self._current_item_label)
             if self.status["state"] in ("starting", "needs_input"):
                 self.status["state"] = "running"
                 self._clear_needs_input_locked()
             self.write_status(force=True)
 
         elif method == "item/agentMessage/delta":
-            self._agent_msg_buf += p.get("delta") or ""
+            delta = p.get("delta") or ""
+            self._agent_msg_buf += delta
+            self.append_message_text(delta)  # unthrottled: this is the live view
             self.status["last_message_tail"] = self._agent_msg_buf[-500:]
             self.write_status()  # throttled
 
@@ -1116,6 +1138,7 @@ class Worker:
         itype = item.get("type", "unknown")
         if itype == "agentMessage":
             text = item.get("text") or self._agent_msg_buf
+            self.close_message_block(text)
             self._last_agent_msg = text
             self.status["last_message_tail"] = text[-500:]
             self.log_event("item/completed", f"agentMessage: {truncate(text, 150)}")
@@ -1206,6 +1229,7 @@ class Worker:
             retry_info.update({"state": "completed", "elapsed_sec": round(elapsed, 1)})
         self._current_item_label = None
         self._current_item_since = None
+        self.close_message_block()  # an interrupted message still ends the block
         self.write_result()
         self.log_event("turn/completed", f"state={self.status['state']}")
         self.write_status(force=True)
@@ -1267,12 +1291,17 @@ class Worker:
             self._current_item_label = None
             self._current_item_since = None
             self.terminal_since = None
+            self.close_message_log()
+            self._message_open = False
+            self._message_chars = 0
             turns = int(self.status.get("turns", 1)) + 1
             sep = f"\n\n---\n## Turn {turns} ({now_iso()})\n\n"
             with open(self.dir / "brief.md", "a", encoding="utf-8") as f:
                 f.write(sep + brief + "\n")
             with open(self.dir / "events.log", "a", encoding="utf-8") as f:
                 f.write(f"--- turn {turns} ({now_iso()}) ---\n")
+            with open(self.dir / MESSAGE_LOG_NAME, "a", encoding="utf-8") as f:
+                f.write(f"\n=== turn {turns} ({now_iso()}) ===\n")
             for fname in ("decision.json", "decision.md"):
                 try:
                     (self.dir / fname).unlink()
@@ -1305,7 +1334,7 @@ class Worker:
         """Build bounded continuity for a fresh ephemeral follow/reply thread."""
         prior_brief = read_text_tail(self.dir / "brief.md")
         prior_result = read_text_tail(self.dir / "result.md")
-        prior_events = read_events_tail(self.dir / "events.log", 12_000)
+        prior_events = read_text_tail(self.dir / "events.log", 12_000)
         return (
             "Meight uses ephemeral Codex threads so worker sessions do not accumulate "
             "in the Codex app. Continue this worker from the durable handoff below. "
@@ -2007,7 +2036,8 @@ class Daemon:
             )
             ensure_worker_state_dir(self.home, repo_home, name)
             # Restarting the same name creates a new worker, so reset prior outputs.
-            for fname in ("events.log", "result.md", "debug-events.log", "decision.json", "decision.md"):
+            for fname in ("events.log", MESSAGE_LOG_NAME, "result.md", "debug-events.log",
+                          "decision.json", "decision.md"):
                 try:
                     (w.dir / fname).unlink()
                 except FileNotFoundError:
@@ -2758,72 +2788,76 @@ def watchable_statuses(repo_home: Path) -> list[dict]:
             if st.get("name") and watch_stop_state(st) is None]
 
 
-class EventLogFollower:
-    """Tail one worker's events.log across creation, growth, and replacement."""
+class MessageLogFollower:
+    """Tail one worker's messages.log as text, across creation and replacement."""
 
     def __init__(self, path: Path, from_start: bool = False,
-                 tail_lines: int = WATCH_TAIL_LINES):
+                 tail_chars: int = WATCH_TAIL_CHARS):
         self.path = path
         self.from_start = from_start
-        self.tail_lines = tail_lines
+        self.tail_chars = tail_chars
         self.identity: tuple[int, int] | None = None
         self.offset = 0
-        self.pending = ""  # bytes after the last newline; a writer may be mid-line
+        # A delta boundary can split a multi-byte character, so decoding is
+        # incremental instead of per-chunk.
+        self.decoder = codecs.getincrementaldecoder("utf-8")("replace")
 
-    def poll(self) -> list[str]:
-        """Return the complete lines appended since the previous poll."""
+    def poll(self) -> str:
+        """Return the text appended since the previous poll."""
         try:
             info = os.stat(self.path)
         except OSError:
-            return []  # not created yet, or pruned mid-watch
+            return ""  # not created yet, or pruned mid-watch
         identity = (info.st_dev, info.st_ino)
         attached = identity == self.identity and info.st_size >= self.offset
         if not attached:
             self.identity = identity
             self.offset = 0
-            self.pending = ""
+            self.decoder = codecs.getincrementaldecoder("utf-8")("replace")
         if info.st_size <= self.offset:
-            return []
+            return ""
         try:
             with open(self.path, "rb") as f:
                 f.seek(self.offset)
                 chunk = f.read()
                 self.offset = f.tell()
         except OSError:
-            return []
-        self.pending += chunk.decode("utf-8", errors="replace")
-        *lines, self.pending = self.pending.split("\n")
-        if not attached and not self.from_start:
-            lines = lines[-self.tail_lines:] if self.tail_lines > 0 else []
-        return lines
+            return ""
+        text = self.decoder.decode(chunk)
+        if attached or self.from_start:
+            return text
+        if self.tail_chars <= 0:
+            return ""
+        if len(text) > self.tail_chars:
+            # Resume at a line boundary rather than mid-sentence.
+            text = text[-self.tail_chars:].split("\n", 1)[-1]
+        return text
 
 
 class WatchSession:
-    """Live view state for one worker: its log tail plus the item in flight."""
+    """Live view state for one worker: its message stream plus its status."""
 
     def __init__(self, name: str, worker_dir: Path, from_start: bool = False,
-                 tail_lines: int = WATCH_TAIL_LINES):
+                 tail_chars: int = WATCH_TAIL_CHARS):
         self.name = name
         self.dir = worker_dir
-        self.follower = EventLogFollower(worker_dir / "events.log", from_start, tail_lines)
+        self.follower = MessageLogFollower(worker_dir / MESSAGE_LOG_NAME, from_start, tail_chars)
         self.status: dict = {}
-        self.current_label: str | None = None
-        self.current_since: datetime | None = None
+        self.pending = ""  # text after the last newline, for the prefixed view
+        self._item_label: str | None = None
+        self._item_base = 0
+        self._item_seen = 0.0
 
-    def poll_events(self) -> list[str]:
-        lines = self.follower.poll()
-        for line in lines:
-            parsed = parse_event_line(line)
-            if not parsed:
-                continue
-            timestamp, method, detail = parsed
-            if method == "item/started":
-                self.current_label = detail
-                self.current_since = parse_aware_timestamp(timestamp)
-            elif method in ("item/completed", "turn/completed"):
-                self.current_label = None
-                self.current_since = None
-        return lines
+    def poll_text(self) -> str:
+        return self.follower.poll()
+
+    def poll_lines(self) -> list[str]:
+        """Complete lines only: an interleaved view needs a name on every line.
+
+        Blank separator lines are dropped here; prefixed, they would be noise."""
+        self.pending += self.follower.poll()
+        *lines, self.pending = self.pending.split("\n")
+        return [line for line in lines if line.strip()]
 
     def poll_status(self) -> dict:
         status = read_status_file(self.dir)
@@ -2832,29 +2866,51 @@ class WatchSession:
         return self.status
 
     def footer(self) -> str:
-        """Time the in-flight item locally: status.json elapsed is throttled, and a
-        silent long command refreshes nothing at all."""
-        if self.current_label and self.current_since is not None:
-            elapsed = max(0, int((now_kst() - self.current_since).total_seconds()))
-            return f"{self.current_label} ({elapsed}s)"
-        return self.status.get("current_item") or self.status.get("state") or "waiting"
+        """Keep the elapsed seconds moving on the viewer's own clock.
+
+        status.json is throttled, and a command that prints nothing stops
+        refreshing it entirely — exactly the silence this footer exists for."""
+        current = self.status.get("current_item")
+        if not current:
+            self._item_label = None
+            return self.status.get("state") or "waiting"
+        m = WATCH_ELAPSED_RE.match(current)
+        if not m:
+            return current
+        label, seconds = m.group("label"), int(m.group("seconds"))
+        if label != self._item_label or seconds < self._item_base:
+            self._item_label, self._item_base = label, seconds
+            self._item_seen = time.monotonic()
+        return f"{label} ({self._item_base + int(time.monotonic() - self._item_seen)}s)"
 
 
 class WatchRenderer:
-    """Event lines with an in-place footer on a TTY, plain text anywhere else."""
+    """A raw text stream with an in-place footer on a TTY, plain text elsewhere."""
 
     def __init__(self, stream=None):
         self.stream = stream or sys.stdout
         self.live = bool(getattr(self.stream, "isatty", lambda: False)())
         self.footer = ""
+        self.at_line_start = True
+
+    def write(self, text: str) -> None:
+        """Write worker text exactly as it was spoken."""
+        if not text:
+            return
+        self._erase()
+        self.stream.write(text)
+        self.stream.flush()
+        self.at_line_start = text.endswith("\n")
 
     def line(self, text: str) -> None:
-        self._erase()
-        self.stream.write(text + "\n")
-        self.stream.flush()
+        if not self.at_line_start:
+            self.write("\n")
+        self.write(text + "\n")
 
     def set_footer(self, text: str) -> None:
-        if not self.live or text == self.footer:
+        # Only on a line boundary: mid-line the worker's own text is already
+        # moving, and a footer would land inside its sentence.
+        if not self.live or not self.at_line_start or text == self.footer:
             return
         width = max(20, shutil.get_terminal_size((80, 24)).columns - 1)
         self.stream.write("\r\x1b[2K" + truncate(text, width))
@@ -2871,19 +2927,6 @@ class WatchRenderer:
         self.stream.flush()
 
 
-def format_watch_line(line: str, prefix: str = "") -> str:
-    """Render one events.log line for a human reader."""
-    parsed = parse_event_line(line)
-    if not parsed:
-        return f"{'':8} {prefix}{line}"
-    timestamp, method, detail = parsed
-    clock = timestamp[11:19] if len(timestamp) >= 19 else timestamp
-    glyph = WATCH_GLYPHS.get(method)
-    if glyph is None:
-        return f"{clock} {prefix}· [{method}] {detail}"
-    return f"{clock} {prefix}{glyph} {detail}"
-
-
 def watch_footer_text(sessions: list[WatchSession], show_names: bool) -> str:
     if not show_names:
         return f"▸ {sessions[0].footer()}"
@@ -2891,32 +2934,41 @@ def watch_footer_text(sessions: list[WatchSession], show_names: bool) -> str:
 
 
 def run_watch(repo_home: Path, names: list[str], from_start: bool = False,
-              tail_lines: int = WATCH_TAIL_LINES, poll_sec: float = WATCH_POLL_SEC,
+              tail_chars: int = WATCH_TAIL_CHARS, poll_sec: float = WATCH_POLL_SEC,
               stream=None) -> int:
-    """Stream worker progress from disk until every watched worker stops.
+    """Stream what workers say, from disk, until every watched worker stops.
 
     Read-only by construction: no daemon RPC, no writes to worker state."""
     renderer = WatchRenderer(stream)
     show_names = len(names) > 1
     prefixes = {name: (f"{truncate(name, 14):<14} " if show_names else "") for name in names}
-    pending = [WatchSession(name, repo_home / "workers" / name, from_start, tail_lines)
+    pending = [WatchSession(name, repo_home / "workers" / name, from_start, tail_chars)
                for name in names]
     for session in pending:
-        if not (session.dir / "events.log").is_file():
-            renderer.line(f"(waiting for events from '{session.name}')")
+        if not (session.dir / MESSAGE_LOG_NAME).is_file():
+            renderer.line(f"(waiting for '{session.name}' to speak)")
+
+    def drain(session: WatchSession) -> None:
+        prefix = prefixes[session.name]
+        if show_names:
+            for line in session.poll_lines():
+                renderer.line(f"{prefix}{line}")
+        else:
+            renderer.write(session.poll_text())
+
     try:
         while pending:
             for session in list(pending):
-                prefix = prefixes[session.name]
-                for line in session.poll_events():
-                    renderer.line(format_watch_line(line, prefix))
+                drain(session)
                 stop = watch_stop_state(session.poll_status())
                 if stop is None:
                     continue
-                # The daemon logs the closing line before it writes the terminal
-                # status, so one more read cannot miss it.
-                for line in session.poll_events():
-                    renderer.line(format_watch_line(line, prefix))
+                # The worker's closing message reaches disk before its terminal
+                # status, so one more read cannot cut the last sentence off.
+                drain(session)
+                if session.pending:
+                    renderer.line(f"{prefixes[session.name]}{session.pending}")
+                    session.pending = ""
                 renderer.line(summary_line(session.status))
                 if session.status.get("error_detail"):
                     renderer.line(f"  error: {format_failure_detail(session.status['error_detail'])}")
@@ -2958,7 +3010,7 @@ def cmd_watch(args, home: Path) -> int:
         names = [rows[0]["name"]]
     return run_watch(repo_home, names,
                      from_start=getattr(args, "from_start", False),
-                     tail_lines=getattr(args, "tail", WATCH_TAIL_LINES))
+                     tail_chars=getattr(args, "tail", WATCH_TAIL_CHARS))
 
 
 def classify_wait_state(st: dict) -> int | None:
@@ -3571,15 +3623,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("name", type=worker_name_arg)
     sp.set_defaults(fn=cmd_result)
 
-    sp = sub.add_parser("watch", help="stream live worker progress (daemon not required)")
+    sp = sub.add_parser("watch", help="stream what a worker says, live (daemon not required)")
     sp.add_argument("name", nargs="?", type=worker_name_arg,
                     help="omitted selects the only active worker in this repo")
     sp.add_argument("--all", dest="all_workers", action="store_true",
                     help="interleave every active worker in this repo")
     sp.add_argument("--from-start", action="store_true",
-                    help="replay the whole event history before following")
-    sp.add_argument("--tail", type=int, default=WATCH_TAIL_LINES,
-                    help="lines of existing history to show before following")
+                    help="replay every message before following")
+    sp.add_argument("--tail", type=int, default=WATCH_TAIL_CHARS,
+                    help="characters of existing messages to show before following")
     sp.set_defaults(fn=cmd_watch)
 
     sp = sub.add_parser("shutdown", help="shut down daemon")

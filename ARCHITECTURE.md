@@ -6,7 +6,7 @@ For users: see [`README.md`](./README.md). This document is for people (or agent
 
 Every design decision optimizes for the orchestrating agent's economics, not human ergonomics:
 
-1. **Observation is pull, completion is push.** Streaming worker events into the orchestrator's context would burn tokens linearly with worker runtime. Instead the daemon reduces the event stream to disk digests (`status.json`, `events.log`, `result.md`); the orchestrator polls only when it cares, and a blocking `wait`/`dispatch` (run as a background shell) delivers a push — the completion notification with the result attached, or a checkpoint wake-up when `wait --timeout` elapses while the worker keeps running. Supervised dispatch leans on that second case: a `wait --timeout` set near the expected duration is a sparse checkpoint, letting the orchestrator read one `status` and `steer` mid-run without ever streaming. `watch` is the one streaming surface, and it exists for a human in a second terminal — it tails `events.log` from disk without the daemon, so it costs the orchestrator nothing precisely because the orchestrator does not run it.
+1. **Observation is pull, completion is push.** Streaming worker events into the orchestrator's context would burn tokens linearly with worker runtime. Instead the daemon reduces the event stream to disk digests (`status.json`, `events.log`, `result.md`); the orchestrator polls only when it cares, and a blocking `wait`/`dispatch` (run as a background shell) delivers a push — the completion notification with the result attached, or a checkpoint wake-up when `wait --timeout` elapses while the worker keeps running. Supervised dispatch leans on that second case: a `wait --timeout` set near the expected duration is a sparse checkpoint, letting the orchestrator read one `status` and `steer` mid-run without ever streaming. `watch` is the one streaming surface, and it exists for a human in a second terminal — it tails `messages.log` from disk without the daemon, so it costs the orchestrator nothing precisely because the orchestrator does not run it.
 2. **Exit codes are the API.** `0` done, `2` failed/interrupted, `3` worker has a question, `4` daemon dead, `1` timeout. An agent branches on these without parsing prose.
 3. **One call per intent (one-shot), or a supervised session.** `dispatch` = (ensure daemon → start → wait → print result) and `reply` = (follow → wait → print last-turn result) are symmetric single background calls. `start` plus `wait` keeps the door to `status`/`steer` open mid-run. The orchestrator selects either interface by whether supervision can change the outcome, without a fixed cadence.
 4. **Mode is harness policy, not memory.** `start` and `dispatch` require
@@ -49,7 +49,7 @@ meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  g
    (work without the daemon)                              codex app-server (worker-owned)
                                                                 │ released after terminal turn
 ~/.meight/repos/<repo-key>/workers/<name>/              ▼
-   brief.md · status.json · events.log · result.md
+   brief.md · status.json · events.log · messages.log · result.md
                                                  ◀── per-worker consumer thread
 ```
 

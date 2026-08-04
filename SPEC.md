@@ -93,6 +93,7 @@ LaunchAgent umask: worker subprocess repository file modes must not change.
       brief.md       # original dispatched prompt
       status.json    # digest; schema below
       events.log     # append-only meaningful event lines
+      messages.log   # append-only full agent message text, streamed live
       result.md      # final agent message at turn completion
 ```
 
@@ -159,12 +160,17 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   `scope|ux|priority|risk|irreversible|acceptance|missing-info|better-direction|technical|null`.
 - `events.log` line format:
   `2026-06-12T20:01:02+09:00 [item/completed] commandExecution: pnpm typecheck:be -> exit 0`.
-- Every started item except `reasoning` and `agentMessage` also writes an
-  `[item/started]` line carrying the same label as its completed line, so a
-  viewer pairs them and can time the item in flight. The `follow`/`reply`
-  handoff reads the events tail without those start lines.
 - Do not write delta events to `events.log`.
 - Truncate each event line to at most 300 characters.
+- `messages.log` holds the full text of every agent message. `agentMessage`
+  deltas are appended and flushed as they arrive, without the status throttle,
+  because a live reader's whole value is seeing the worker speak as it writes.
+  Each message opens with a `── <iso timestamp> ──` header line and a follow
+  turn opens with `=== turn N (<iso timestamp>) ===`; the body is the worker's
+  own prose, unmodified. Reasoning and command output deltas are still never
+  recorded. A message completing with text the deltas did not carry appends
+  only the missing remainder. `status.json` `last_message_tail` (500
+  characters) and the `events.log` summary keep their existing truncation.
 
 ## CLI Contract
 
@@ -184,7 +190,7 @@ The command table must match the `python3 meight.py --help` subcommand list exac
 | `status [name] [--json] [--all-repos] [--archived \| --all]` | Does not require the daemon. Read repo-scoped `status.json` directly. With no name, the default view includes active workers and terminal workers from the last 6 hours; `--archived` selects older terminal rows and `--all` combines both views. `--all-repos` reads every repo namespace. Legacy rows with a role field or long-form mode values remain readable. |
 | `list [--json] [--all-repos] [--archived \| --all]` | Alias for `status` with no worker name. |
 | `result <name>` | Print `result.md`. |
-| `watch [name] [--all] [--from-start] [--tail N]` | Does not require the daemon and writes nothing. Stream a worker's `events.log` for a human in a second terminal while `dispatch` blocks elsewhere. With no name, select the only worker that is neither terminal nor holding a final `QUESTION:`; several candidates print the table and exit `1`. Show the last `N` lines (default `20`, `--from-start` replays everything) and then follow, waiting for a worker whose log does not exist yet. On a TTY, a footer line times the in-flight item from its `[item/started]` timestamp. Print the final status summary when every watched worker stops: exit `0`, `1` for a selection error, `130` for Ctrl-C. |
+| `watch [name] [--all] [--from-start] [--tail N]` | Does not require the daemon and writes nothing. Stream a worker's `messages.log` verbatim for a human in a second terminal while `dispatch` blocks elsewhere. With no name, select the only worker that is neither terminal nor holding a final `QUESTION:`; several candidates print the table and exit `1`. Show the last `N` characters (default `2000`, resumed at a line boundary; `--from-start` replays everything) and then follow, waiting for a worker that has not spoken yet. `--all` interleaves every active worker, prefixing each line with its name. On a TTY, a footer shows the current item and advances its elapsed seconds on the viewer's clock, and it is suppressed mid-line so it cannot land inside a sentence. Print the final status summary when every watched worker stops: exit `0`, `1` for a selection error, `130` for Ctrl-C. |
 | `wait <name> [--timeout SEC] [--progress SEC] [--narrate]` | Poll `status.json` once per second. `--narrate` additionally prints each newly active worker plan step (opt-in; for a human watching a terminal). Terminal states return `completed=0`, `failed=2`, `interrupted=2`. A durable final `QUESTION:` returns `3` even after its runtime is released and can accept `reply` after daemon restart. Daemon death during a live turn returns `4`. Timeout returns `1`. Print one final status summary line to stdout. |
 | `shutdown [--force]` | Refuse shutdown while active workers exist. With `--force`, interrupt live turns, mark final `QUESTION:` waits interrupted, and then shut down. |
 
