@@ -10,7 +10,7 @@ import threading
 import time
 import types
 import unittest
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -1976,6 +1976,31 @@ class ModeLifecycleTests(unittest.TestCase):
         self.assertNotIn("ROLE", output.getvalue().splitlines()[0])
         self.assertIn("MODE", output.getvalue().splitlines()[0])
         self.assertIn("mate", output.getvalue().splitlines()[1])
+
+    def test_status_views_archive_terminal_rows_after_six_hours(self):
+        now = datetime(2026, 8, 4, 18, 0, tzinfo=meight.KST)
+        statuses = [
+            {"name": "active", "state": "running", "updated_at": "2026-08-03T00:00:00+09:00"},
+            {"name": "fresh", "state": "completed", "terminal_at": "2026-08-04T12:00:01+09:00"},
+            {"name": "archived", "state": "failed", "terminal_at": "2026-08-04T12:00:00+09:00"},
+            {"name": "legacy", "state": "interrupted", "updated_at": "2026-08-04T11:00:00+09:00"},
+            {"name": "invalid", "state": "completed", "terminal_at": "not-a-time"},
+        ]
+
+        recent = meight.filter_statuses(statuses, "recent", cutoff_now=now)
+        archived = meight.filter_statuses(statuses, "archived", cutoff_now=now)
+
+        self.assertEqual([status["name"] for status in recent], ["active", "fresh", "invalid"])
+        self.assertEqual([status["name"] for status in archived], ["archived", "legacy"])
+        self.assertIs(meight.filter_statuses(statuses, "all", cutoff_now=now), statuses)
+
+    def test_status_and_list_accept_archive_views(self):
+        parser = meight.build_parser()
+
+        self.assertTrue(parser.parse_args(["status", "--archived"]).archived)
+        self.assertTrue(parser.parse_args(["status", "--all"]).show_all)
+        self.assertTrue(parser.parse_args(["list", "--archived"]).archived)
+        self.assertTrue(parser.parse_args(["list", "--all"]).show_all)
 
     def test_status_serializes_both_canonical_postures(self):
         with tempfile.TemporaryDirectory() as tmp:

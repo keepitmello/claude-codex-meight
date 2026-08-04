@@ -38,6 +38,7 @@ EVENT_LINE_MAX = 300
 RECOVERY_ARTIFACT_MAX_CHARS = 24_000
 DEFAULT_IDLE_TIMEOUT_SEC = 30 * 60
 DEFAULT_WORKER_GC_TTL_SEC = 60 * 60
+STATUS_ARCHIVE_AFTER_SEC = 6 * 60 * 60
 DEFAULT_SESSION_RETENTION_SEC = 30 * 24 * 60 * 60
 RETENTION_CLEANUP_INTERVAL_SEC = 60 * 60
 MAX_SOCKET_REQUEST_BYTES = 1024 * 1024
@@ -2400,6 +2401,31 @@ def load_all_statuses(home: Path) -> list[dict]:
     return out
 
 
+def filter_statuses(statuses: list[dict], view: str,
+                    cutoff_now: datetime | None = None) -> list[dict]:
+    """Split terminal disk rows into recent and archived status views."""
+    if view == "all":
+        return statuses
+    cutoff_now = cutoff_now or now_kst()
+    selected: list[dict] = []
+    for status in statuses:
+        archived = False
+        if status.get("state") in TERMINAL_STATES:
+            timestamp_value = (
+                status.get("terminal_at")
+                if "terminal_at" in status
+                else status.get("updated_at")
+            )
+            terminal_at = parse_aware_timestamp(timestamp_value)
+            if terminal_at is not None:
+                archived = (
+                    cutoff_now - terminal_at
+                ).total_seconds() >= STATUS_ARCHIVE_AFTER_SEC
+        if (view == "archived") == archived:
+            selected.append(status)
+    return selected
+
+
 def fmt_elapsed(st: dict) -> str:
     try:
         start = datetime.fromisoformat(st["started_at"])
@@ -2651,6 +2677,12 @@ def cmd_status(args, home: Path) -> int:
         return 0
     all_repos = getattr(args, "all_repos", False)
     statuses = load_all_statuses(home) if all_repos else load_statuses(repo_home)
+    view = (
+        "all" if getattr(args, "show_all", False)
+        else "archived" if getattr(args, "archived", False)
+        else "recent"
+    )
+    statuses = filter_statuses(statuses, view)
     if getattr(args, "json", False):
         print(json.dumps(statuses, ensure_ascii=False, indent=2))
     else:
@@ -3257,11 +3289,21 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("name", nargs="?", type=worker_name_arg)
     sp.add_argument("--json", action="store_true")
     sp.add_argument("--all-repos", action="store_true", help="show workers from every repo namespace")
+    status_view = sp.add_mutually_exclusive_group()
+    status_view.add_argument("--archived", action="store_true",
+                             help="show terminal workers older than 6 hours")
+    status_view.add_argument("--all", dest="show_all", action="store_true",
+                             help="show recent and archived workers")
     sp.set_defaults(fn=cmd_status)
 
     sp = sub.add_parser("list", help="status alias")
     sp.add_argument("--json", action="store_true")
     sp.add_argument("--all-repos", action="store_true", help="show workers from every repo namespace")
+    list_view = sp.add_mutually_exclusive_group()
+    list_view.add_argument("--archived", action="store_true",
+                           help="show terminal workers older than 6 hours")
+    list_view.add_argument("--all", dest="show_all", action="store_true",
+                           help="show recent and archived workers")
     sp.set_defaults(fn=cmd_status, name=None)
 
     sp = sub.add_parser("result", help="print result.md")

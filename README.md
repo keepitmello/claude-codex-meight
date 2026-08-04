@@ -300,7 +300,7 @@ are Codex-native skills, not shared session contracts.
 | `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | One-shot answer to a replyable question; inherits mode and omitted turn settings, applies explicit turn overrides, and prints the latest result. |
 | `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | Low-level: new turn on the same live thread; inherits mode and omitted turn settings, while explicit overrides become the defaults for later turns. |
 | `meight result <name>` | Print `result.md`. |
-| `meight status [name] [--json] [--all-repos]` | Pull digest. Table includes `MODE`; legacy rows with old role or long-form mode values remain readable. Reads disk. |
+| `meight status [name] [--json] [--all-repos] [--archived \| --all]` | Pull digest. With no name, the default view includes active workers and terminal workers from the last 6 hours; `--archived` shows older terminal rows and `--all` shows both. Table includes `MODE`; legacy rows with old role or long-form mode values remain readable. Reads disk. |
 | `meight steer <name> "text"` | Inject instruction into the running turn. |
 | `meight interrupt <name>` | Cancel the turn. An interrupt that arrives while a worker is still starting — or while a reply turn is being opened — is recorded, and aborts the turn the moment it would commit. |
 | `meight list / daemon / ping / shutdown / launchd` | Low-level support commands. |
@@ -373,6 +373,10 @@ workers, and uses immutable `terminal_at` (`updated_at` only for legacy rows).
 After a daemon crash/restart, orphaned active rows become
 `failed`/`runtime_lost_detail`. Final questions and terminal workers remain
 continuable through the same bounded artifact handoff.
+
+The default status/list view keeps active workers and terminal workers from the
+last 6 hours visible. Older terminal rows remain on disk and continuable through
+`follow`; inspect them with `--archived`, or combine both views with `--all`.
 
 ## Upgrading An Old Daemon To A New Protocol Epoch
 

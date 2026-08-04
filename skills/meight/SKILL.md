@@ -46,7 +46,7 @@ Bash(command: "meight dispatch fix-auth --mode worker --cwd ~/repo --brief-file 
 ```
 
 ```bash
-meight status                # 이 레포 테이블, MODE 포함 / --all-repos, <name> 상세
+meight status                # 활성 + 최근 6시간 terminal / --archived, --all, --all-repos, <name> 상세
 meight result <name>         # result.md
 meight reply <name> --brief "..."      # 최종 QUESTION에 답하고 재개
 meight follow <name> --brief "..."     # 같은 세션의 다음 단계
