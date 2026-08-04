@@ -2788,6 +2788,72 @@ def watchable_statuses(repo_home: Path) -> list[dict]:
             if st.get("name") and watch_stop_state(st) is None]
 
 
+def watch_candidates(repo_home: Path, include_archived: bool = False) -> list[tuple[str, dict]]:
+    """Group selectable workers, reusing the `status` recent/archived split.
+
+    Live work comes first because that is what a watcher is usually looking
+    for; finished workers stay selectable since their messages remain on disk."""
+    named = [st for st in load_statuses(repo_home) if st.get("name")]
+    recent = filter_statuses(named, "recent")
+    rows = [("active", st) for st in recent if watch_stop_state(st) is None]
+    idle = [st for st in recent if watch_stop_state(st) is not None]
+    # A question is blocked on the reader; a finished worker asks for nothing.
+    idle.sort(key=lambda st: watch_stop_state(st) != "needs_input")
+    rows += [("idle", st) for st in idle]
+    if include_archived:
+        rows += [("archived", st) for st in filter_statuses(named, "archived")]
+    return rows
+
+
+WATCH_GROUP_TITLES = {
+    "active": "active",
+    "idle": "idle — finished, or waiting on you",
+    "archived": "archived — terminal for over 6 hours",
+}
+
+
+def print_watch_menu(rows: list[tuple[str, dict]], stream=None) -> None:
+    """Number the candidates so a reader can pick without knowing any name."""
+    out = stream or sys.stdout
+    print(f"  {'#':>2}  {'NAME':<14} {'STATE':<12} {'MODE':<9} {'ELAPSED':>8} "
+          f"{'FILES':<9} {'TOKENS':<22} CURRENT", file=out)
+    shown = None
+    for number, (group, st) in enumerate(rows, 1):
+        if group != shown:
+            print(f"  ── {WATCH_GROUP_TITLES[group]} ──", file=out)
+            shown = group
+        print(f"  {number:>2}  {summary_line(st)}", file=out)
+
+
+def watch_can_prompt() -> bool:
+    """A menu needs a readable stdin and a visible stdout; a pipe has neither."""
+    return bool(getattr(sys.stdin, "isatty", lambda: False)()
+                and getattr(sys.stdout, "isatty", lambda: False)())
+
+
+def prompt_watch_choice(rows: list[tuple[str, dict]], stream=None) -> str | None:
+    """Return the chosen worker name, or None when the reader leaves."""
+    out = stream or sys.stdout
+    print_watch_menu(rows, out)
+    while True:
+        print(f"select 1-{len(rows)} (enter to quit): ", end="", file=out)
+        out.flush()
+        try:
+            raw = sys.stdin.readline()
+        except KeyboardInterrupt:
+            print(file=out)
+            return None
+        if not raw:  # EOF
+            print(file=out)
+            return None
+        raw = raw.strip()
+        if not raw:
+            return None
+        if raw.isdigit() and 1 <= int(raw) <= len(rows):
+            return rows[int(raw) - 1][1]["name"]
+        print(f"  '{truncate(raw, 40)}' is not a number between 1 and {len(rows)}", file=out)
+
+
 class MessageLogFollower:
     """Tail one worker's messages.log as text, across creation and replacement."""
 
@@ -2999,15 +3065,25 @@ def cmd_watch(args, home: Path) -> int:
     elif name:
         names = [name]
     else:
-        rows = watchable_statuses(repo_home)
+        include_archived = getattr(args, "include_archived", False)
+        rows = watch_candidates(repo_home, include_archived)
         if not rows:
-            print("no active worker in this repo; pass a worker name", file=sys.stderr)
+            hint = "" if include_archived else " (add --include-archived for older ones)"
+            print(f"no workers in this repo{hint}", file=sys.stderr)
             return 1
-        if len(rows) > 1:
-            print("several workers are active; pass a name or use --all", file=sys.stderr)
-            print_status_table(rows)
+        active = [st for group, st in rows if group == "active"]
+        if len(active) == 1:
+            names = [active[0]["name"]]
+            print(f"watching '{names[0]}' — the only active worker")
+        elif not watch_can_prompt():
+            print("pick a worker by name, or use --all", file=sys.stderr)
+            print_watch_menu(rows)
             return 1
-        names = [rows[0]["name"]]
+        else:
+            chosen = prompt_watch_choice(rows)
+            if chosen is None:
+                return 0
+            names = [chosen]
     return run_watch(repo_home, names,
                      from_start=getattr(args, "from_start", False),
                      tail_chars=getattr(args, "tail", WATCH_TAIL_CHARS))
@@ -3628,6 +3704,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="omitted selects the only active worker in this repo")
     sp.add_argument("--all", dest="all_workers", action="store_true",
                     help="interleave every active worker in this repo")
+    sp.add_argument("--include-archived", action="store_true",
+                    help="also offer workers terminal for over 6 hours in the menu")
     sp.add_argument("--from-start", action="store_true",
                     help="replay every message before following")
     sp.add_argument("--tail", type=int, default=WATCH_TAIL_CHARS,

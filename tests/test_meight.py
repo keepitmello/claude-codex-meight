@@ -2540,7 +2540,7 @@ class WatchTests(unittest.TestCase):
             self.assertNotIn("impl-a         \n", out)  # blank separators stay unprefixed
             self.assertIn("question: QUESTION: TARGET: user", out)
 
-    def test_watch_selects_the_only_active_worker_and_refuses_ambiguity(self):
+    def test_watch_selects_the_only_active_worker(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo_home = Path(tmp)
             self._worker(repo_home, "active-1")
@@ -2548,20 +2548,116 @@ class WatchTests(unittest.TestCase):
                          terminal_at=meight.now_iso())
             parser = meight.build_parser()
             with patch.object(meight, "repo_home_for_cli", return_value=repo_home), \
-                    patch.object(meight, "run_watch", return_value=0) as run:
+                    patch.object(meight, "run_watch", return_value=0) as run, \
+                    contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(meight.cmd_watch(parser.parse_args(["watch"]), Path(tmp)), 0)
             self.assertEqual(run.call_args.args[1], ["active-1"])
 
+    def test_watch_all_interleaves_every_active_worker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_home = Path(tmp)
+            self._worker(repo_home, "active-1")
             self._worker(repo_home, "active-2")
+            parser = meight.build_parser()
             with patch.object(meight, "repo_home_for_cli", return_value=repo_home), \
-                    patch.object(meight, "run_watch", return_value=0) as run, \
-                    contextlib.redirect_stdout(io.StringIO()), \
-                    contextlib.redirect_stderr(io.StringIO()) as err:
-                self.assertEqual(meight.cmd_watch(parser.parse_args(["watch"]), Path(tmp)), 1)
+                    patch.object(meight, "run_watch", return_value=0) as run:
                 self.assertEqual(
                     meight.cmd_watch(parser.parse_args(["watch", "--all"]), Path(tmp)), 0)
-            self.assertIn("several workers are active", err.getvalue())
             self.assertEqual(run.call_args.args[1], ["active-1", "active-2"])
+
+    def test_candidates_group_active_before_idle_and_hide_archived(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_home = Path(tmp)
+            stale = (meight.now_kst()
+                     - timedelta(seconds=meight.STATUS_ARCHIVE_AFTER_SEC + 60)).isoformat()
+            self._worker(repo_home, "done-1", state="completed", terminal_at=meight.now_iso())
+            self._worker(repo_home, "run-1")
+            self._worker(repo_home, "old-1", state="completed", terminal_at=stale,
+                         updated_at=stale)
+            self._worker(repo_home, "ask-1", state="needs_input",
+                         needs_input_source="question")
+            rows = meight.watch_candidates(repo_home)
+            # ask-1 precedes done-1 despite sorting after it: it needs an answer.
+            self.assertEqual([(group, st["name"]) for group, st in rows],
+                             [("active", "run-1"), ("idle", "ask-1"), ("idle", "done-1")])
+            with_old = meight.watch_candidates(repo_home, include_archived=True)
+            self.assertEqual(with_old[-1], ("archived", with_old[-1][1]))
+            self.assertEqual(with_old[-1][1]["name"], "old-1")
+
+    def test_menu_numbers_rows_under_group_headings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_home = Path(tmp)
+            self._worker(repo_home, "run-1")
+            self._worker(repo_home, "done-1", state="completed", terminal_at=meight.now_iso())
+            stream = io.StringIO()
+            meight.print_watch_menu(meight.watch_candidates(repo_home), stream)
+            out = stream.getvalue()
+            self.assertIn("── active ──", out)
+            self.assertIn("── idle — finished, or waiting on you ──", out)
+            self.assertRegex(out, r"\n   1  run-1")
+            self.assertRegex(out, r"\n   2  done-1")
+
+    def test_menu_choice_accepts_a_number_and_rejects_anything_else(self):
+        rows = [("active", {"name": "run-1"}), ("idle", {"name": "done-1"})]
+        for typed, expected in ((" 2 \n", "done-1"), ("1\n", "run-1"),
+                                ("\n", None), ("", None), ("q\n", None)):
+            with self.subTest(typed=typed):
+                stream = io.StringIO()
+                # "q" is rejected, then EOF ends the retry loop.
+                with patch.object(meight.sys, "stdin", io.StringIO(typed)), \
+                        patch.object(meight, "print_watch_menu"):
+                    self.assertEqual(meight.prompt_watch_choice(rows, stream), expected)
+                if typed == "q\n":
+                    self.assertIn("is not a number between 1 and 2", stream.getvalue())
+
+    def test_menu_choice_survives_an_out_of_range_number(self):
+        rows = [("active", {"name": "run-1"})]
+        stream = io.StringIO()
+        with patch.object(meight.sys, "stdin", io.StringIO("9\n1\n")), \
+                patch.object(meight, "print_watch_menu"):
+            self.assertEqual(meight.prompt_watch_choice(rows, stream), "run-1")
+        self.assertIn("is not a number between 1 and 1", stream.getvalue())
+
+    def test_watch_prompts_on_a_tty_and_falls_back_to_a_listing_on_a_pipe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_home = Path(tmp)
+            self._worker(repo_home, "run-1")
+            self._worker(repo_home, "run-2")
+            parser = meight.build_parser()
+            args = parser.parse_args(["watch"])
+
+            with patch.object(meight, "repo_home_for_cli", return_value=repo_home), \
+                    patch.object(meight, "run_watch", return_value=0) as run, \
+                    patch.object(meight, "watch_can_prompt", return_value=True), \
+                    patch.object(meight, "prompt_watch_choice", return_value="run-2"):
+                self.assertEqual(meight.cmd_watch(args, Path(tmp)), 0)
+            self.assertEqual(run.call_args.args[1], ["run-2"])
+
+            # Leaving the menu without choosing is not an error.
+            with patch.object(meight, "repo_home_for_cli", return_value=repo_home), \
+                    patch.object(meight, "run_watch", return_value=0) as run, \
+                    patch.object(meight, "watch_can_prompt", return_value=True), \
+                    patch.object(meight, "prompt_watch_choice", return_value=None):
+                self.assertEqual(meight.cmd_watch(args, Path(tmp)), 0)
+            run.assert_not_called()
+
+            with patch.object(meight, "repo_home_for_cli", return_value=repo_home), \
+                    patch.object(meight, "run_watch", return_value=0) as run, \
+                    patch.object(meight, "watch_can_prompt", return_value=False), \
+                    contextlib.redirect_stdout(io.StringIO()) as out, \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(meight.cmd_watch(args, Path(tmp)), 1)
+            run.assert_not_called()
+            self.assertIn("pick a worker by name", err.getvalue())
+            self.assertIn("run-1", out.getvalue())
+
+    def test_watch_reports_an_empty_repo_with_the_archive_hint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parser = meight.build_parser()
+            with patch.object(meight, "repo_home_for_cli", return_value=Path(tmp)), \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(meight.cmd_watch(parser.parse_args(["watch"]), Path(tmp)), 1)
+            self.assertIn("--include-archived", err.getvalue())
 
 
 if __name__ == "__main__":
