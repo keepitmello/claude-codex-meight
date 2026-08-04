@@ -2290,5 +2290,194 @@ class ModeLifecycleTests(unittest.TestCase):
             self.assertIn("skills/meight-mate/SKILL.md", capture_thread.inputs[0])
 
 
+class WatchTests(unittest.TestCase):
+    def _worker(self, repo_home: Path, name: str, **status) -> Path:
+        wdir = repo_home / "workers" / name
+        wdir.mkdir(parents=True, exist_ok=True)
+        self._status(wdir, name, **status)
+        return wdir
+
+    def _status(self, wdir: Path, name: str, **status) -> None:
+        row = {"name": name, "state": "running", "mode": "worker",
+               "started_at": meight.now_iso(), "updated_at": meight.now_iso(),
+               "current_item": None, "files_changed": [], "tokens": {}}
+        row.update(status)
+        meight.atomic_write_json(wdir / "status.json", row)
+
+    def _log(self, wdir: Path, method: str, detail: str) -> None:
+        with open(wdir / "events.log", "a", encoding="utf-8") as f:
+            f.write(f"{meight.now_iso()} [{method}] {detail}\n")
+
+    def test_item_started_logs_work_items_and_skips_noise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            worker = meight.Worker(
+                "watch-log", Path(tmp), "/repo", "repo-key", "/repo",
+                "workspace_write", "gpt-5.6-sol", "medium", "default")
+            worker.dir.mkdir(parents=True)
+            worker.init_status(thread_id="thread-1")
+            for item in ({"type": "reasoning"},
+                         {"type": "agentMessage"},
+                         {"type": "commandExecution", "command": "pytest -q"},
+                         {"type": "fileChange"}):
+                worker._handle_event("item/started", {"item": item})
+            worker._on_item_completed({"type": "commandExecution", "command": "pytest -q",
+                                       "exit_code": 0})
+            events = (worker.dir / "events.log").read_text(encoding="utf-8").splitlines()
+            methods = [meight.parse_event_line(line)[1] for line in events]
+            self.assertEqual(methods, ["item/started", "item/started", "item/completed"])
+            self.assertIn("[item/started] commandExecution: pytest -q", events[0])
+            self.assertIn("[item/started] fileChange", events[1])
+            self.assertIn("[item/completed] commandExecution: pytest -q → exit 0", events[2])
+
+    def test_handoff_events_tail_drops_started_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.log"
+            path.write_text(
+                "2026-08-05T01:00:00+09:00 [item/started] commandExecution: pytest -q\n"
+                "2026-08-05T01:00:09+09:00 [item/completed] commandExecution: pytest -q → exit 0\n"
+                "--- turn 2 (2026-08-05T01:00:10+09:00) ---\n",
+                encoding="utf-8")
+            tail = meight.read_events_tail(path)
+            self.assertNotIn("[item/started]", tail)
+            self.assertIn("[item/completed] commandExecution: pytest -q → exit 0", tail)
+            self.assertIn("--- turn 2", tail)
+
+    def test_follower_shows_recent_history_then_follows_appends(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.log"
+            path.write_text("".join(f"line-{i}\n" for i in range(10)), encoding="utf-8")
+            follower = meight.EventLogFollower(path, tail_lines=3)
+            self.assertEqual(follower.poll(), ["line-7", "line-8", "line-9"])
+            self.assertEqual(follower.poll(), [])
+            with open(path, "a", encoding="utf-8") as f:
+                f.write("line-10\npartial")
+            self.assertEqual(follower.poll(), ["line-10"])
+            with open(path, "a", encoding="utf-8") as f:
+                f.write("-tail\n")
+            self.assertEqual(follower.poll(), ["partial-tail"])
+
+    def test_follower_waits_for_a_missing_file_and_replays_a_replaced_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "events.log"
+            follower = meight.EventLogFollower(path, from_start=True)
+            self.assertEqual(follower.poll(), [])
+            path.write_text("first\n", encoding="utf-8")
+            self.assertEqual(follower.poll(), ["first"])
+            path.unlink()
+            self.assertEqual(follower.poll(), [])
+            path.write_text("fresh\n", encoding="utf-8")
+            self.assertEqual(follower.poll(), ["fresh"])
+
+    def test_format_watch_line_pairs_start_with_completion(self):
+        started = meight.format_watch_line(
+            "2026-08-05T01:02:03+09:00 [item/started] commandExecution: pytest -q")
+        completed = meight.format_watch_line(
+            "2026-08-05T01:02:09+09:00 [item/completed] commandExecution: pytest -q → exit 0",
+            prefix="impl-1 ")
+        self.assertEqual(started, "01:02:03 ▸ commandExecution: pytest -q")
+        self.assertEqual(completed, "01:02:09 impl-1 ✓ commandExecution: pytest -q → exit 0")
+        self.assertIn("[turn/started]", meight.format_watch_line(
+            "2026-08-05T01:02:03+09:00 [turn/started] turn=abc"))
+        self.assertIn("--- turn 2 ---", meight.format_watch_line("--- turn 2 ---"))
+
+    def test_watch_stop_state_covers_terminal_and_dormant_question_only(self):
+        self.assertEqual(meight.watch_stop_state({"state": "completed"}), "completed")
+        self.assertEqual(meight.watch_stop_state({"state": "failed"}), "failed")
+        self.assertIsNone(meight.watch_stop_state({"state": "running"}))
+        self.assertIsNone(meight.watch_stop_state(
+            {"state": "needs_input", "needs_input_source": "tool"}))
+        self.assertEqual(meight.watch_stop_state(
+            {"state": "needs_input", "needs_input_source": "question"}), "needs_input")
+
+    def test_run_watch_follows_appends_until_the_worker_is_terminal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_home = Path(tmp)
+            wdir = self._worker(repo_home, "w1")
+            for i in range(30):
+                self._log(wdir, "item/completed", f"commandExecution: old-{i} → exit 0")
+
+            def writer():
+                time.sleep(0.05)
+                self._log(wdir, "item/started", "commandExecution: pytest -q")
+                time.sleep(0.05)
+                self._log(wdir, "item/completed", "commandExecution: pytest -q → exit 0")
+                self._log(wdir, "turn/completed", "state=completed")
+                self._status(wdir, "w1", state="completed", terminal_at=meight.now_iso(),
+                             files_changed=["meight.py"])
+
+            stream = io.StringIO()
+            appender = threading.Thread(target=writer)
+            appender.start()
+            code = meight.run_watch(repo_home, ["w1"], tail_lines=5, poll_sec=0.01, stream=stream)
+            appender.join()
+            out = stream.getvalue()
+            self.assertEqual(code, 0)
+            self.assertNotIn("old-24", out)  # older than the requested tail
+            self.assertIn("old-29", out)
+            self.assertIn("▸ commandExecution: pytest -q", out)
+            self.assertIn("✓ commandExecution: pytest -q → exit 0", out)
+            self.assertIn("w1", out.splitlines()[-1])
+            self.assertNotIn("\x1b", out)  # no escapes when stdout is not a TTY
+
+    def test_run_watch_waits_for_a_worker_that_has_not_written_events_yet(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_home = Path(tmp)
+            wdir = repo_home / "workers" / "late-1"
+
+            def writer():
+                time.sleep(0.05)
+                self._worker(repo_home, "late-1")
+                self._log(wdir, "item/started", "commandExecution: cargo build")
+                self._status(wdir, "late-1", state="failed", terminal_at=meight.now_iso(),
+                             error_detail={"message": "build broke", "status": 500,
+                                           "type": "server_error"})
+
+            stream = io.StringIO()
+            appender = threading.Thread(target=writer)
+            appender.start()
+            code = meight.run_watch(repo_home, ["late-1"], poll_sec=0.01, stream=stream)
+            appender.join()
+            out = stream.getvalue()
+            self.assertEqual(code, 0)
+            self.assertIn("(waiting for events from 'late-1')", out)
+            self.assertIn("▸ commandExecution: cargo build", out)
+            self.assertIn("error: HTTP 500 server_error: build broke", out)
+
+    def test_run_watch_stops_on_a_dormant_question(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_home = Path(tmp)
+            wdir = self._worker(
+                repo_home, "q1", state="needs_input", needs_input_source="question",
+                needs_input_detail="QUESTION: TARGET: dispatcher KIND: scope Ship it?")
+            self._log(wdir, "question", "QUESTION: TARGET: dispatcher KIND: scope Ship it?")
+            stream = io.StringIO()
+            code = meight.run_watch(repo_home, ["q1"], poll_sec=0.01, stream=stream)
+            self.assertEqual(code, 0)
+            self.assertIn("question: QUESTION: TARGET: dispatcher", stream.getvalue())
+
+    def test_watch_selects_the_only_active_worker_and_refuses_ambiguity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_home = Path(tmp)
+            self._worker(repo_home, "active-1")
+            self._worker(repo_home, "done-1", state="completed",
+                         terminal_at=meight.now_iso())
+            parser = meight.build_parser()
+            with patch.object(meight, "repo_home_for_cli", return_value=repo_home), \
+                    patch.object(meight, "run_watch", return_value=0) as run:
+                self.assertEqual(meight.cmd_watch(parser.parse_args(["watch"]), Path(tmp)), 0)
+            self.assertEqual(run.call_args.args[1], ["active-1"])
+
+            self._worker(repo_home, "active-2")
+            with patch.object(meight, "repo_home_for_cli", return_value=repo_home), \
+                    patch.object(meight, "run_watch", return_value=0) as run, \
+                    contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                self.assertEqual(meight.cmd_watch(parser.parse_args(["watch"]), Path(tmp)), 1)
+                self.assertEqual(
+                    meight.cmd_watch(parser.parse_args(["watch", "--all"]), Path(tmp)), 0)
+            self.assertIn("several workers are active", err.getvalue())
+            self.assertEqual(run.call_args.args[1], ["active-1", "active-2"])
+
+
 if __name__ == "__main__":
     unittest.main()

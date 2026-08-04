@@ -131,6 +131,18 @@ EOF
 # exit 0=completed · 2=failed/interrupted/runtime-lost · 3=replyable question · 4=daemon dead · 1=checkpoint timeout
 ```
 
+While that call blocks, a second terminal can watch the worker work:
+
+```bash
+meight watch impl-1
+# 01:44:19 ▸ commandExecution: .venv/bin/python -m unittest discover -s tests
+# 01:44:23 ✓ commandExecution: .venv/bin/python -m unittest discover -s tests → exit 0
+# ▸ fileChange (3s)     <- footer, timing the item in flight
+```
+
+This is for a human. An orchestrating agent still pulls digests, because
+streaming worker events into its context costs tokens linearly with runtime.
+
 On exit `1`, the worker is still running. Inspect once, steer if needed, then
 run the same `dispatch` again to reattach; no separate polling command is needed:
 
@@ -300,6 +312,7 @@ are Codex-native skills, not shared session contracts.
 | `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | One-shot answer to a replyable question; inherits mode and omitted turn settings, applies explicit turn overrides, and prints the latest result. |
 | `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | Low-level: new turn on the same live thread; inherits mode and omitted turn settings, while explicit overrides become the defaults for later turns. |
 | `meight result <name>` | Print `result.md`. |
+| `meight watch [name] [--all] [--from-start] [--tail N]` | Stream a worker's tool calls live in a second terminal while `dispatch` blocks. Read-only, no daemon needed. No name selects the only active worker; `--all` interleaves them with a name prefix. Ctrl-C leaves the worker running. |
 | `meight status [name] [--json] [--all-repos] [--archived \| --all]` | Pull digest. With no name, the default view includes active workers and terminal workers from the last 6 hours; `--archived` shows older terminal rows and `--all` shows both. Table includes `MODE`; legacy rows with old role or long-form mode values remain readable. Reads disk. |
 | `meight steer <name> "text"` | Inject instruction into the running turn. |
 | `meight interrupt <name>` | Cancel the turn. An interrupt that arrives while a worker is still starting — or while a reply turn is being opened — is recorded, and aborts the turn the moment it would commit. |

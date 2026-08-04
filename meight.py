@@ -35,6 +35,13 @@ SOCKET_TIMEOUT_SEC = 60.0  # start/follow may take several seconds for thread_st
 TOOL_WAIT_GRACE_SEC = 15.0  # tool/approval waits older than this surface as exit 3 instead of hanging
 STATUS_THROTTLE_SEC = 2.0
 EVENT_LINE_MAX = 300
+# Item starts are logged so `watch` can show work in flight. Reasoning is not
+# work, and an agentMessage start carries no detail its completed line lacks.
+ITEM_START_LOG_SKIP = {"reasoning", "agentMessage"}
+EVENT_LINE_RE = re.compile(r"^(\S+) \[([^\]]+)\] ?(.*)$")
+WATCH_POLL_SEC = 0.25
+WATCH_TAIL_LINES = 20
+WATCH_GLYPHS = {"item/started": "▸", "item/completed": "✓"}
 RECOVERY_ARTIFACT_MAX_CHARS = 24_000
 DEFAULT_IDLE_TIMEOUT_SEC = 30 * 60
 DEFAULT_WORKER_GC_TTL_SEC = 60 * 60
@@ -538,6 +545,26 @@ def read_text_tail(path: Path, limit: int = RECOVERY_ARTIFACT_MAX_CHARS) -> str:
         return ""
 
 
+def parse_event_line(line: str) -> tuple[str, str, str] | None:
+    """Split an `<iso> [<method>] <detail>` event line; None for turn separators."""
+    m = EVENT_LINE_RE.match(line)
+    return (m.group(1), m.group(2), m.group(3)) if m else None
+
+
+def read_events_tail(path: Path, limit: int = RECOVERY_ARTIFACT_MAX_CHARS) -> str:
+    """Read an events tail without the live-progress start lines.
+
+    `item/started` exists for `watch`, and the matching completed line repeats
+    its detail, so handoff continuity keeps its depth by reading past them."""
+    kept = []
+    for line in read_text_tail(path, limit * 2).splitlines():
+        parsed = parse_event_line(line)
+        if parsed and parsed[1] == "item/started":
+            continue
+        kept.append(line)
+    return "\n".join(kept)[-limit:]
+
+
 def dig(d: object, *keys: str, default=None):
     """Chained dict.get helper for missing SDK payload fields."""
     cur = d
@@ -641,6 +668,8 @@ def describe_item(item: dict) -> str:
         return "reasoning"
     if itype == "fileChange":
         paths = [dig(c, "path", default="?") for c in item.get("changes") or []]
+        if not paths:
+            return "fileChange"  # a started item has no changes recorded yet
         return f"fileChange: {truncate(', '.join(str(p) for p in paths), 150)}"
     if itype == "mcpToolCall":
         return f"mcpToolCall: {item.get('server', '?')}/{item.get('tool', '?')}"
@@ -1000,10 +1029,14 @@ class Worker:
 
         elif method == "item/started":
             item = p.get("item") or {}
+            itype = item.get("type")
             self._current_item_label = describe_item(item)
             self._current_item_since = time.monotonic()
-            if item.get("type") == "agentMessage":
+            if itype == "agentMessage":
                 self._agent_msg_buf = ""
+            if itype not in ITEM_START_LOG_SKIP:
+                # Pairs with the item/completed line carrying the same label.
+                self.log_event(method, self._current_item_label)
             if self.status["state"] in ("starting", "needs_input"):
                 self.status["state"] = "running"
                 self._clear_needs_input_locked()
@@ -1272,7 +1305,7 @@ class Worker:
         """Build bounded continuity for a fresh ephemeral follow/reply thread."""
         prior_brief = read_text_tail(self.dir / "brief.md")
         prior_result = read_text_tail(self.dir / "result.md")
-        prior_events = read_text_tail(self.dir / "events.log", 12_000)
+        prior_events = read_events_tail(self.dir / "events.log", 12_000)
         return (
             "Meight uses ephemeral Codex threads so worker sessions do not accumulate "
             "in the Codex app. Continue this worker from the durable handoff below. "
@@ -2700,6 +2733,234 @@ def cmd_result(args, home: Path) -> int:
     return 0
 
 
+def read_status_file(worker_dir: Path) -> dict | None:
+    """Read one worker's status digest, tolerating an absent or half-written file."""
+    try:
+        status = json.loads((worker_dir / "status.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return status if isinstance(status, dict) else None
+
+
+def watch_stop_state(st: dict) -> str | None:
+    """Return the state that ends a watch session: terminal, or a dormant question."""
+    state = st.get("state")
+    if state in TERMINAL_STATES:
+        return state
+    if state == "needs_input" and st.get("needs_input_source") == "question":
+        return state
+    return None
+
+
+def watchable_statuses(repo_home: Path) -> list[dict]:
+    """Worker rows a watch session would keep streaming."""
+    return [st for st in load_statuses(repo_home)
+            if st.get("name") and watch_stop_state(st) is None]
+
+
+class EventLogFollower:
+    """Tail one worker's events.log across creation, growth, and replacement."""
+
+    def __init__(self, path: Path, from_start: bool = False,
+                 tail_lines: int = WATCH_TAIL_LINES):
+        self.path = path
+        self.from_start = from_start
+        self.tail_lines = tail_lines
+        self.identity: tuple[int, int] | None = None
+        self.offset = 0
+        self.pending = ""  # bytes after the last newline; a writer may be mid-line
+
+    def poll(self) -> list[str]:
+        """Return the complete lines appended since the previous poll."""
+        try:
+            info = os.stat(self.path)
+        except OSError:
+            return []  # not created yet, or pruned mid-watch
+        identity = (info.st_dev, info.st_ino)
+        attached = identity == self.identity and info.st_size >= self.offset
+        if not attached:
+            self.identity = identity
+            self.offset = 0
+            self.pending = ""
+        if info.st_size <= self.offset:
+            return []
+        try:
+            with open(self.path, "rb") as f:
+                f.seek(self.offset)
+                chunk = f.read()
+                self.offset = f.tell()
+        except OSError:
+            return []
+        self.pending += chunk.decode("utf-8", errors="replace")
+        *lines, self.pending = self.pending.split("\n")
+        if not attached and not self.from_start:
+            lines = lines[-self.tail_lines:] if self.tail_lines > 0 else []
+        return lines
+
+
+class WatchSession:
+    """Live view state for one worker: its log tail plus the item in flight."""
+
+    def __init__(self, name: str, worker_dir: Path, from_start: bool = False,
+                 tail_lines: int = WATCH_TAIL_LINES):
+        self.name = name
+        self.dir = worker_dir
+        self.follower = EventLogFollower(worker_dir / "events.log", from_start, tail_lines)
+        self.status: dict = {}
+        self.current_label: str | None = None
+        self.current_since: datetime | None = None
+
+    def poll_events(self) -> list[str]:
+        lines = self.follower.poll()
+        for line in lines:
+            parsed = parse_event_line(line)
+            if not parsed:
+                continue
+            timestamp, method, detail = parsed
+            if method == "item/started":
+                self.current_label = detail
+                self.current_since = parse_aware_timestamp(timestamp)
+            elif method in ("item/completed", "turn/completed"):
+                self.current_label = None
+                self.current_since = None
+        return lines
+
+    def poll_status(self) -> dict:
+        status = read_status_file(self.dir)
+        if status is not None:
+            self.status = status
+        return self.status
+
+    def footer(self) -> str:
+        """Time the in-flight item locally: status.json elapsed is throttled, and a
+        silent long command refreshes nothing at all."""
+        if self.current_label and self.current_since is not None:
+            elapsed = max(0, int((now_kst() - self.current_since).total_seconds()))
+            return f"{self.current_label} ({elapsed}s)"
+        return self.status.get("current_item") or self.status.get("state") or "waiting"
+
+
+class WatchRenderer:
+    """Event lines with an in-place footer on a TTY, plain text anywhere else."""
+
+    def __init__(self, stream=None):
+        self.stream = stream or sys.stdout
+        self.live = bool(getattr(self.stream, "isatty", lambda: False)())
+        self.footer = ""
+
+    def line(self, text: str) -> None:
+        self._erase()
+        self.stream.write(text + "\n")
+        self.stream.flush()
+
+    def set_footer(self, text: str) -> None:
+        if not self.live or text == self.footer:
+            return
+        width = max(20, shutil.get_terminal_size((80, 24)).columns - 1)
+        self.stream.write("\r\x1b[2K" + truncate(text, width))
+        self.stream.flush()
+        self.footer = text
+
+    def close(self) -> None:
+        self._erase()
+
+    def _erase(self) -> None:
+        if self.live and self.footer:
+            self.stream.write("\r\x1b[2K")
+            self.footer = ""
+        self.stream.flush()
+
+
+def format_watch_line(line: str, prefix: str = "") -> str:
+    """Render one events.log line for a human reader."""
+    parsed = parse_event_line(line)
+    if not parsed:
+        return f"{'':8} {prefix}{line}"
+    timestamp, method, detail = parsed
+    clock = timestamp[11:19] if len(timestamp) >= 19 else timestamp
+    glyph = WATCH_GLYPHS.get(method)
+    if glyph is None:
+        return f"{clock} {prefix}· [{method}] {detail}"
+    return f"{clock} {prefix}{glyph} {detail}"
+
+
+def watch_footer_text(sessions: list[WatchSession], show_names: bool) -> str:
+    if not show_names:
+        return f"▸ {sessions[0].footer()}"
+    return "▸ " + "  |  ".join(f"{s.name}: {truncate(s.footer(), 40)}" for s in sessions)
+
+
+def run_watch(repo_home: Path, names: list[str], from_start: bool = False,
+              tail_lines: int = WATCH_TAIL_LINES, poll_sec: float = WATCH_POLL_SEC,
+              stream=None) -> int:
+    """Stream worker progress from disk until every watched worker stops.
+
+    Read-only by construction: no daemon RPC, no writes to worker state."""
+    renderer = WatchRenderer(stream)
+    show_names = len(names) > 1
+    prefixes = {name: (f"{truncate(name, 14):<14} " if show_names else "") for name in names}
+    pending = [WatchSession(name, repo_home / "workers" / name, from_start, tail_lines)
+               for name in names]
+    for session in pending:
+        if not (session.dir / "events.log").is_file():
+            renderer.line(f"(waiting for events from '{session.name}')")
+    try:
+        while pending:
+            for session in list(pending):
+                prefix = prefixes[session.name]
+                for line in session.poll_events():
+                    renderer.line(format_watch_line(line, prefix))
+                stop = watch_stop_state(session.poll_status())
+                if stop is None:
+                    continue
+                # The daemon logs the closing line before it writes the terminal
+                # status, so one more read cannot miss it.
+                for line in session.poll_events():
+                    renderer.line(format_watch_line(line, prefix))
+                renderer.line(summary_line(session.status))
+                if session.status.get("error_detail"):
+                    renderer.line(f"  error: {format_failure_detail(session.status['error_detail'])}")
+                if stop == "needs_input":
+                    renderer.line(f"  question: {truncate(session.status.get('needs_input_detail') or '', 200)}")
+                pending.remove(session)
+            if pending:
+                renderer.set_footer(watch_footer_text(pending, show_names))
+                time.sleep(poll_sec)
+    except KeyboardInterrupt:
+        renderer.line("watch stopped; the worker keeps running")
+        return 130
+    renderer.close()
+    return 0
+
+
+def cmd_watch(args, home: Path) -> int:
+    repo_home = repo_home_for_cli(home)
+    name = getattr(args, "name", None)
+    if getattr(args, "all_workers", False):
+        if name:
+            print("watch --all takes no worker name", file=sys.stderr)
+            return 1
+        names = [st["name"] for st in watchable_statuses(repo_home)]
+        if not names:
+            print("no active workers in this repo", file=sys.stderr)
+            return 1
+    elif name:
+        names = [name]
+    else:
+        rows = watchable_statuses(repo_home)
+        if not rows:
+            print("no active worker in this repo; pass a worker name", file=sys.stderr)
+            return 1
+        if len(rows) > 1:
+            print("several workers are active; pass a name or use --all", file=sys.stderr)
+            print_status_table(rows)
+            return 1
+        names = [rows[0]["name"]]
+    return run_watch(repo_home, names,
+                     from_start=getattr(args, "from_start", False),
+                     tail_lines=getattr(args, "tail", WATCH_TAIL_LINES))
+
+
 def classify_wait_state(st: dict) -> int | None:
     """Map a status dict to a wait exit code. None means keep polling.
     needs_input exits 3 when source=="question" (a durable dormant state), and
@@ -3309,6 +3570,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("result", help="print result.md")
     sp.add_argument("name", type=worker_name_arg)
     sp.set_defaults(fn=cmd_result)
+
+    sp = sub.add_parser("watch", help="stream live worker progress (daemon not required)")
+    sp.add_argument("name", nargs="?", type=worker_name_arg,
+                    help="omitted selects the only active worker in this repo")
+    sp.add_argument("--all", dest="all_workers", action="store_true",
+                    help="interleave every active worker in this repo")
+    sp.add_argument("--from-start", action="store_true",
+                    help="replay the whole event history before following")
+    sp.add_argument("--tail", type=int, default=WATCH_TAIL_LINES,
+                    help="lines of existing history to show before following")
+    sp.set_defaults(fn=cmd_watch)
 
     sp = sub.add_parser("shutdown", help="shut down daemon")
     sp.add_argument("--force", action="store_true")
