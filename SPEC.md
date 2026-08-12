@@ -73,8 +73,9 @@ If `$MEIGHT_HOME` is set, use it as the global daemon home. Otherwise use
 
 Each CLI invocation also resolves a repository namespace from the invoking cwd:
 `git -C <cwd> rev-parse --show-toplevel` when available, otherwise `<cwd>`.
-The repo key is a stable slug plus hash of that root. `--cwd` controls the
-worker execution directory only; it does not change the status/result namespace.
+The repo key is a stable slug plus hash of that root. An explicit `--cwd`
+selects both the worker execution directory and its status/result namespace;
+without it, the invoking cwd remains the default.
 The daemon recomputes the repo root/key/home and verifies the client fields;
 request-controlled paths never select a state directory. The daemon home and
 state directories are real owner-only directories (`0700`), worker-state

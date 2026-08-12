@@ -24,6 +24,7 @@ from meight_remote_protocol import SCHEMA_VERSION, spec_hash, validate_spec
 
 CAPABILITIES = ["generic_jobs", "artifact_get", "job_control"]
 JOB_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+REMOTE_SKILLS_ROOT = "~/.local/lib/meight/skills"
 
 
 class WyServerError(RuntimeError):
@@ -76,6 +77,10 @@ def wsl_runner() -> str:
     return os.environ.get("WY_SERVER_MEIGHT_RUNNER", "~/.local/lib/meight/meight_remote_runner.py")
 
 
+def wsl_runner_python() -> str:
+    return os.environ.get("WY_SERVER_MEIGHT_PYTHON", "~/.local/lib/meight/.venv/bin/python")
+
+
 def remote_shell_path(path: str) -> str:
     """Quote a remote path while preserving a leading WSL-home expansion."""
     if path == "~":
@@ -85,10 +90,25 @@ def remote_shell_path(path: str) -> str:
     return shlex.quote(path)
 
 
+def remote_contract_brief(brief: str) -> str:
+    """Translate harness-owned Mac contract paths at the remote wire boundary."""
+    import meight
+
+    translated = brief
+    for mode, local_path in meight.MODE_SKILL_PATHS.items():
+        translated = translated.replace(
+            str(local_path), f"{REMOTE_SKILLS_ROOT}/meight-{mode}/SKILL.md",
+        )
+    return translated.replace(
+        str(meight.COMMON_CONTRACT_PATH),
+        f"{REMOTE_SKILLS_ROOT}/meight-common/CONTRACT.md",
+    )
+
+
 def ensure_ready(request_id: str, deadline: int) -> dict:
     code, out, _ = workerctl("ensure", timeout=deadline + 5, check=False)
     legacy = parse_object(out)
-    if code != 0 or legacy.get("state") != "READY":
+    if code != 0 or legacy.get("state") not in ("READY", "WORKER_READY"):
         raise WyServerError("NODE_NOT_READY", str(legacy.get("reason") or "worker not ready"), code or 2)
     return {
         "schema_version": SCHEMA_VERSION, "ok": True, "node_id": "wy-desktop-wsl",
@@ -118,6 +138,7 @@ def job_start(job_id: str, spec_path: Path) -> dict:
         raise WyServerError("JOB_START_FAILED", "relative cwd escapes the worktree")
     remote_spec = dict(spec)
     remote_spec["request_spec_hash"] = spec_hash(spec)
+    remote_spec["brief"] = remote_contract_brief(spec["brief"])
     remote_spec["cwd"] = worktree if relative == "." else f"{worktree}/{relative}"
     encoded = base64.b64encode(json.dumps(remote_spec, sort_keys=True).encode()).decode()
     prep = " && ".join((
@@ -129,7 +150,7 @@ def job_start(job_id: str, spec_path: Path) -> dict:
     ))
     workerctl("run", prep, timeout=180)
     command = (
-        f"python3 {remote_shell_path(wsl_runner())} run --spec "
+        f"{remote_shell_path(wsl_runner_python())} {remote_shell_path(wsl_runner())} run --spec "
         f"{remote_spec['spool_dir']}/launch-spec.json"
     )
     _, out, _ = workerctl("job", job_id, worktree, command, timeout=60)
@@ -160,7 +181,7 @@ def remote_json(command: str) -> dict:
 
 def job_events(job_id: str, after: int, wait: int) -> dict:
     spool = f"~/.local/state/meight-worker/runs/{job_id}"
-    command = (f"python3 {remote_shell_path(wsl_runner())} events --spool {remote_shell_path(spool)} "
+    command = (f"{remote_shell_path(wsl_runner_python())} {remote_shell_path(wsl_runner())} events --spool {remote_shell_path(spool)} "
                f"--after {after}")
     return remote_json(command)
 
@@ -172,7 +193,7 @@ def job_control(job_id: str, attempt: str, epoch: int, action: str, generation: 
     if status.get("attempt_id") != attempt or int(status.get("lease_epoch", -1)) != epoch:
         raise WyServerError("STALE_LEASE", "attempt or lease epoch mismatch")
     spool = f"~/.local/state/meight-worker/runs/{job_id}"
-    command = (f"python3 {remote_shell_path(wsl_runner())} control --spool {remote_shell_path(spool)} "
+    command = (f"{remote_shell_path(wsl_runner_python())} {remote_shell_path(wsl_runner())} control --spool {remote_shell_path(spool)} "
                f"--generation {generation} --action {action}")
     if text is not None:
         command += f" --text {shlex.quote(text)}"

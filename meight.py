@@ -2547,8 +2547,8 @@ def read_brief(args) -> str:
     raise SystemExit("--brief or --brief-file required")
 
 
-def repo_home_for_cli(home: Path) -> Path:
-    return Path(repo_context(home)["repo_home"])
+def repo_home_for_cli(home: Path, cwd: str | Path | None = None) -> Path:
+    return Path(repo_context(home, cwd)["repo_home"])
 
 
 def request_repo_context(home: Path, cwd: str | Path | None = None) -> dict:
@@ -2758,7 +2758,7 @@ def start_request(args, home: Path) -> dict:
         "runtime": "codex",
         "protocol_epoch": PROTOCOL_EPOCH,
     }
-    req.update(request_repo_context(home))
+    req.update(request_repo_context(home, args.cwd))
     resp = send_request(home, req)
     expected_mode = normalize_mode(args.mode)
     if resp.get("ok") and not protocol_echo_matches(
@@ -3387,7 +3387,7 @@ def cmd_dispatch(args, home: Path) -> int:
     if not ensure_daemon(home):
         print("error: daemon auto-start failed — check daemon.log", file=sys.stderr)
         return 4
-    repo_home = repo_home_for_cli(home)
+    repo_home = repo_home_for_cli(home, args.cwd)
     existing = dispatch_active_status(home, repo_home, args.name)
     if existing is not None:
         print(

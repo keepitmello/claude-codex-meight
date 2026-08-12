@@ -72,6 +72,17 @@ class StartDefaultsTests(unittest.TestCase):
         request = self._start_request(self._args("dispatch", "worker", "--target", "desktop"))
         self.assertEqual(request["target"], "desktop")
 
+    def test_explicit_cwd_selects_the_recorded_repository_namespace(self):
+        args = self._args("dispatch", "worker", "--cwd", "/tmp/target-repo")
+        with patch.object(meight, "request_repo_context", return_value={
+            "repo_root": "/tmp/target-repo",
+            "repo_key": "target-repo-key",
+            "repo_home": "/tmp/meight/repos/target-repo-key",
+        }) as context:
+            request = self._start_request(args)
+        context.assert_called_once_with(Path("/tmp/meight-defaults"), "/tmp/target-repo")
+        self.assertEqual(request["repo_root"], "/tmp/target-repo")
+
     def test_legacy_alias_modes_resolve_to_posture_defaults_on_the_wire(self):
         for alias, canonical in (("design", "mate"), ("review", "mate"), ("delegate", "worker")):
             with self.subTest(alias=alias):
@@ -261,10 +272,31 @@ class DesktopBackendTests(unittest.TestCase):
 
 
 class WyServerCompatibilityTests(unittest.TestCase):
+    def test_current_worker_ready_receipt_is_accepted(self):
+        legacy = {
+            "state": "WORKER_READY", "control_nonce": "nonce-1",
+            "capacity": {"running_jobs": 0},
+        }
+        with patch.object(wy_server, "workerctl", return_value=(0, json.dumps(legacy), "")):
+            receipt = wy_server.ensure_ready("request-1", 30)
+        self.assertEqual(receipt["state"], "READY")
+        self.assertEqual(receipt["readiness_generation"], "nonce-1")
+
     def test_remote_shell_path_preserves_wsl_home_expansion(self):
         rendered = wy_server.remote_shell_path("~/.local/lib/meight runner.py")
         self.assertEqual(rendered, '"$HOME"/\'.local/lib/meight runner.py\'')
         self.assertNotIn("'~", rendered)
+
+    def test_remote_runner_uses_its_pinned_virtualenv(self):
+        self.assertEqual(
+            wy_server.wsl_runner_python(),
+            "~/.local/lib/meight/.venv/bin/python",
+        )
+
+    def test_wire_translates_contract_paths_for_wsl(self):
+        translated = wy_server.remote_contract_brief(meight.build_preamble("worker"))
+        self.assertIn("~/.local/lib/meight/skills/meight-worker/SKILL.md", translated)
+        self.assertIn("~/.local/lib/meight/skills/meight-common/CONTRACT.md", translated)
 
     def test_legacy_job_status_preserves_attempt_and_lease_without_state_move(self):
         legacy = {"state": "RUNNING", "attempt_id": "old-attempt", "lease_epoch": 17,

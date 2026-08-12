@@ -61,7 +61,7 @@ and change artifacts. Node power/readiness and legacy job/lease state remain
 owned by `wy-server`, and remote artifacts are never auto-applied.
 
 - **Daemon home** = `$MEIGHT_HOME` if set, otherwise `$XDG_STATE_HOME/meight` or `~/.meight` → one daemon shared across repos.
-- **Repo state home** = `<daemon-home>/repos/<repo-key>/`, where `<repo-key>` is a stable slug plus hash of the invoking repo root. `--cwd` still controls the worker execution directory; it does not change the repo namespace for status/result lookup.
+- **Repo state home** = `<daemon-home>/repos/<repo-key>/`, where `<repo-key>` is a stable slug plus hash of the selected repo root. An explicit `--cwd` selects both the worker execution directory and its repository namespace; without it, the invoking cwd remains the default.
 - **Protocol epoch boundary** = `ping` and `runtime_status` advertise only
   `capabilities=["desktop1"]`. Every start/follow request carries epoch
   `desktop1`; the daemon validates it before imports, path resolution or
