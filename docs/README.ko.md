@@ -279,7 +279,7 @@ reviewer와 discusser는 공용 세션 계약이 아니라 Codex 전용 스킬�
 
 | 커맨드 | 하는 일 |
 |---|---|
-| `meight dispatch <name> --mode mate\|worker [opts]` | 원샷: 활성 세션이면 재부착하고, 새 세션이면 데몬 자동 기동 → capability 체크 → wire start → 대기 → 선호 결과 출력. 타임아웃 뒤 같은 dispatch를 반복하면 재부착한다. |
+| `meight dispatch <name> --mode mate\|worker [--target mac\|desktop] [opts]` | 원샷 실행. 기본 `mac`은 기존 로컬 경로를 그대로 쓴다. `desktop`은 clean commit과 repo mapping, `wy-server`를 요구하며 Mac으로 조용히 fallback하지 않는다. |
 | `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | 답할 수 있는 질문에 원샷으로 답한다. mode와 생략한 턴 설정은 상속, 명시한 오버라이드는 적용, 최신 결과 출력. |
 | `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | 저수준: 같은 라이브 스레드에 새 턴. mode와 생략 설정은 상속, 명시 오버라이드는 이후 턴의 기본값이 된다. |
 | `meight result <name>` | `result.md`를 출력한다. |
@@ -289,6 +289,9 @@ reviewer와 discusser는 공용 세션 계약이 아니라 Codex 전용 스킬�
 | `meight list / daemon / ping / shutdown / launchd` | 저수준 지원 커맨드. |
 
 공통 옵션:
+
+- `--target mac|desktop`은 runtime 실행 위치다. desktop 변경은 해시 검증된
+  worker artifact로만 회수하고 현재 checkout에 자동 적용하지 않는다.
 
 - `--mode mate|worker`는 새 세션을 여는 `dispatch`에 필수다. 구 이름 `design`,
   `collab`, `collaborative`, `review`(→ mate)와 `delegate`, `delegated`
@@ -353,9 +356,9 @@ terminal 아티팩트는 기본 30일 보존된다. `MEIGHT_SESSION_RETENTION_SE
 
 ## 옛 데몬을 새 프로토콜 epoch로 올리기
 
-살아있는 데몬이 현재 capability(`ephemeral3`)를 광고하지 않으면 CLI는 `dispatch`
+살아있는 데몬이 현재 capability(`desktop1`)를 광고하지 않으면 CLI는 `dispatch`
 전에 fail closed한다. 모든 wire start/follow 요청이 epoch를 싣고, 모든 성공 응답이
-정규화된 mode와 epoch를 원자적으로 에코하며, CLI가 둘 다 검증한다 —
+정규화된 mode, target, runtime, epoch를 원자적으로 에코하며 CLI가 모두 검증한다 —
 핸드셰이크 중간에 바꿔치기된 same-token 데몬도 옛 계약을 조용히 쓸 수 없다.
 드레인과 재시작은 수동으로 한다:
 
@@ -367,7 +370,7 @@ terminal 아티팩트는 기본 30일 보존된다. `MEIGHT_SESSION_RETENTION_SE
 3. LaunchAgent 상태로 분기한다. 로드돼 있으면 `meight launchd install
    --load`를 쓰고 bounded `bootout --wait` 이전이 새 데몬을 고르는지
    확인한다. 로드 안 돼 있으면 데몬을 평소대로 기동한다.
-4. `meight ping`이 `capabilities=ephemeral3`를 보이는지 확인하고, 새 데몬 PID와
+4. `meight ping`이 `capabilities=desktop1`를 보이는지 확인하고, 새 데몬 PID와
    소켓 정체성을 확인한다.
 5. 버리는 `--mode worker` 스모크 하나(브리프로 read-only 지시)를 돌려 status
    mode와 `meight-worker` + common preamble 경로를 확인한다.

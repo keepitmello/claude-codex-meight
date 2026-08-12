@@ -15,6 +15,9 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import meight
+import meight_desktop_backend
+import meight_remote_protocol
+import wy_server
 
 
 class ModelAliasTests(unittest.TestCase):
@@ -43,6 +46,7 @@ class StartDefaultsTests(unittest.TestCase):
             {"ok": True, "capabilities": [meight.PROTOCOL_EPOCH]},
             {"ok": True, "thread_id": "thread-defaults",
              "mode": meight.normalize_mode(args.mode),
+             "target": args.target, "runtime": "codex",
              "protocol_epoch": meight.PROTOCOL_EPOCH},
         )
         with patch.object(meight, "send_request", side_effect=responses) as send:
@@ -61,6 +65,12 @@ class StartDefaultsTests(unittest.TestCase):
                     (model, effort, tier, sandbox),
                 )
                 self.assertEqual(request["mode"], mode)
+                self.assertEqual(request["target"], "mac")
+                self.assertEqual(request["runtime"], "codex")
+
+    def test_desktop_target_is_explicit_on_the_cli_wire(self):
+        request = self._start_request(self._args("dispatch", "worker", "--target", "desktop"))
+        self.assertEqual(request["target"], "desktop")
 
     def test_legacy_alias_modes_resolve_to_posture_defaults_on_the_wire(self):
         for alias, canonical in (("design", "mate"), ("review", "mate"), ("delegate", "worker")):
@@ -156,6 +166,116 @@ class StartDefaultsTests(unittest.TestCase):
         ])
         request = self._start_request(args)
         self.assertEqual(request["capacity_retry_budget_sec"], 120.0)
+
+
+class RemoteProtocolTests(unittest.TestCase):
+    def _spec(self):
+        return {
+            "schema_version": 1, "dispatch_id": "dispatch-1", "repo_key": "repo-key",
+            "worker_name": "worker", "generation": 1, "runtime": "codex",
+            "source_revision": "a" * 40, "cwd": ".", "spool_dir": "/tmp/spool",
+            "brief": "Do the work.", "runtime_config": {},
+        }
+
+    def test_spec_hash_is_stable_and_provider_neutral(self):
+        spec = self._spec()
+        meight_remote_protocol.validate_spec(spec)
+        self.assertEqual(meight_remote_protocol.spec_hash(spec),
+                         meight_remote_protocol.spec_hash(dict(reversed(list(spec.items())))))
+        body = meight_remote_protocol.canonical_json(spec).decode()
+        self.assertNotIn("thread_id", body)
+        self.assertNotIn("openai_codex", body)
+
+    def test_event_sequence_and_generation_fail_closed(self):
+        event = {"schema_version": 1, "dispatch_id": "dispatch-1", "generation": 1,
+                 "seq": 2, "type": "runtime_event", "payload": {"method": "turn/started"}}
+        meight_remote_protocol.validate_event(
+            event, dispatch_id="dispatch-1", generation=1, after_seq=1,
+        )
+        with self.assertRaises(meight_remote_protocol.ProtocolError):
+            meight_remote_protocol.validate_event(
+                event, dispatch_id="dispatch-1", generation=2, after_seq=1,
+            )
+        with self.assertRaises(meight_remote_protocol.ProtocolError):
+            meight_remote_protocol.validate_event(
+                event, dispatch_id="dispatch-1", generation=1, after_seq=2,
+            )
+
+
+class DesktopBackendTests(unittest.TestCase):
+    class _FakeClient:
+        def __init__(self, result: bytes = b"remote result\n"):
+            self.result = result
+
+        def call(self, *args, timeout=60.0):
+            if args[0] == "artifact-get":
+                return {"hex": self.result.hex()}
+            raise AssertionError(args)
+
+    def _worker(self, root: Path):
+        worker = meight.Worker(
+            "remote", root, str(root), "repo-key", str(root), "full_access",
+            "gpt-5.6-sol", "medium", "default", target="desktop",
+        )
+        worker.dir.mkdir(parents=True)
+        worker.init_status(None)
+        worker.generation = 1
+        worker.status.update({"dispatch_id": "dispatch-1", "attempt_id": "attempt-1", "lease_epoch": 3})
+        (worker.dir / "result.md").write_bytes(b"remote result\n")
+        return worker
+
+    def test_remote_result_hash_is_verified_and_collected_without_applying(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            worker = self._worker(Path(tmp))
+            client = self._FakeClient()
+            backend = meight_desktop_backend.DesktopBackend(worker, client=client)
+            digest = __import__("hashlib").sha256(client.result).hexdigest()
+            backend._collect_terminal("dispatch-1", {
+                "state": "COMPLETED", "result_sha256": digest, "artifacts": {},
+            })
+            collected = worker.dir / "remote-artifacts" / "dispatch-1" / "result.md"
+            self.assertEqual(collected.read_bytes(), client.result)
+            self.assertFalse((Path(tmp) / "result.md").exists())
+
+    def test_remote_result_hash_mismatch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            worker = self._worker(Path(tmp))
+            backend = meight_desktop_backend.DesktopBackend(worker, client=self._FakeClient())
+            with self.assertRaises(meight_desktop_backend.DesktopBackendError) as caught:
+                backend._collect_terminal("dispatch-1", {
+                    "state": "COMPLETED", "result_sha256": "0" * 64, "artifacts": {},
+                })
+            self.assertEqual(caught.exception.reason, "remote_result_corrupt")
+
+    def test_control_is_fenced_by_attempt_epoch_and_generation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            worker = self._worker(Path(tmp))
+            client = self._FakeClient()
+            client.call = Mock(return_value={"accepted": True})
+            backend = meight_desktop_backend.DesktopBackend(worker, client=client)
+            backend.send_control("interrupt")
+            args = client.call.call_args.args
+            self.assertIn("attempt-1", args)
+            self.assertIn("3", args)
+            self.assertIn("1", args)
+
+
+class WyServerCompatibilityTests(unittest.TestCase):
+    def test_remote_shell_path_preserves_wsl_home_expansion(self):
+        rendered = wy_server.remote_shell_path("~/.local/lib/meight runner.py")
+        self.assertEqual(rendered, '"$HOME"/\'.local/lib/meight runner.py\'')
+        self.assertNotIn("'~", rendered)
+
+    def test_legacy_job_status_preserves_attempt_and_lease_without_state_move(self):
+        legacy = {"state": "RUNNING", "attempt_id": "old-attempt", "lease_epoch": 17,
+                  "state_dir": "/home/keepi/.local/state/mac-worker/jobs/old-job"}
+        with patch.object(wy_server, "workerctl", return_value=(0, json.dumps(legacy), "")) as call:
+            receipt = wy_server.job_status("old-job")
+        call.assert_called_once_with("job-status", "old-job")
+        self.assertEqual(receipt["attempt_id"], "old-attempt")
+        self.assertEqual(receipt["lease_epoch"], 17)
+        self.assertEqual(receipt["state_dir"], legacy["state_dir"])
+        self.assertEqual(receipt["legacy_receipt"], legacy)
 
 
 class DispatchSurfaceTests(unittest.TestCase):
@@ -2140,7 +2260,7 @@ class ModeLifecycleTests(unittest.TestCase):
                 self.assertEqual(response, {
                     "ok": False,
                     "error": "start protocol mismatch: "
-                             f"expected mode=mate epoch={meight.PROTOCOL_EPOCH}",
+                    f"expected mode=mate target=mac runtime=codex epoch={meight.PROTOCOL_EPOCH}",
                 })
                 self.assertEqual([req["cmd"] for req in requests], ["ping", "start", "interrupt"])
                 self.assertEqual(requests[2]["name"], args.name)
@@ -2172,7 +2292,7 @@ class ModeLifecycleTests(unittest.TestCase):
             self.assertEqual(response, {
                 "ok": False,
                 "error": "start protocol mismatch: "
-                         f"expected mode=worker epoch={meight.PROTOCOL_EPOCH}",
+                f"expected mode=worker target=mac runtime=codex epoch={meight.PROTOCOL_EPOCH}",
             })
             self.assertEqual([req["cmd"] for req in requests], ["ping", "start", "interrupt"])
             self.assertEqual(requests[1]["protocol_epoch"], meight.PROTOCOL_EPOCH)
@@ -2218,7 +2338,7 @@ class ModeLifecycleTests(unittest.TestCase):
                 self.assertEqual(response, {
                     "ok": False,
                     "error": "follow protocol mismatch: "
-                             f"expected mode=mate epoch={meight.PROTOCOL_EPOCH}",
+                    f"expected mode=mate target=mac runtime=codex epoch={meight.PROTOCOL_EPOCH}",
                 })
                 self.assertEqual([req["cmd"] for req in requests], ["follow", "interrupt"])
                 self.assertEqual(requests[1]["name"], args.name)

@@ -53,14 +53,21 @@ meight (CLI, ~/.local/bin)  ──── Unix socket, JSON-lines ────  g
                                                  ◀── per-worker consumer thread
 ```
 
+The Mac daemon remains the only control plane. `target=mac` uses the existing
+SDK path. `target=desktop` uses `DesktopBackend` → versioned `wy-server` JSON
+commands → a detached WSL runner. The runner owns the provider SDK and a
+sequenced spool; the daemon pulls normalized events and hash-verifies result
+and change artifacts. Node power/readiness and legacy job/lease state remain
+owned by `wy-server`, and remote artifacts are never auto-applied.
+
 - **Daemon home** = `$MEIGHT_HOME` if set, otherwise `$XDG_STATE_HOME/meight` or `~/.meight` → one daemon shared across repos.
 - **Repo state home** = `<daemon-home>/repos/<repo-key>/`, where `<repo-key>` is a stable slug plus hash of the invoking repo root. `--cwd` still controls the worker execution directory; it does not change the repo namespace for status/result lookup.
 - **Protocol epoch boundary** = `ping` and `runtime_status` advertise only
-  `capabilities=["ephemeral3"]`. Every start/follow request carries epoch
-  `ephemeral3`; the daemon validates it before imports, path resolution or
+  `capabilities=["desktop1"]`. Every start/follow request carries epoch
+  `desktop1`; the daemon validates it before imports, path resolution or
   creation, registry reservation, SDK startup, or turn start. Successful
-  responses echo normalized mode plus epoch atomically, and the CLI interrupts
-  and fails on either mismatch.
+  responses echo normalized mode, target, runtime, and epoch atomically, and
+  the CLI interrupts and fails on any mismatch.
 - **Mode contract path** = `mate` maps to `skills/meight-mate/SKILL.md`;
   `worker` maps to `skills/meight-worker/SKILL.md`; both load
   `skills/meight-common/CONTRACT.md`. Legacy four-mode names normalize onto
@@ -219,7 +226,7 @@ State-machine changes should re-run the fake-event scenarios (tool-wait→stream
   `meight shutdown`; its daemon-wide guard is the enforcement backstop. Branch
   on LaunchAgent state: loaded uses `meight launchd install --load` and its
   bounded `bootout --wait` transfer, unloaded uses normal startup. Require a
-  fresh PID/socket identity and `meight ping` capability `ephemeral3`. Then run
+  fresh PID/socket identity and `meight ping` capability `desktop1`. Then run
   one worker smoke and one mate smoke and verify saved mode-specific/common
   preamble paths before real work. Do not use forced shutdown for this
   migration.

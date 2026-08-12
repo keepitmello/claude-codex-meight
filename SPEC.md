@@ -107,7 +107,7 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   "name": "worker-a",
   "thread_id": "...",
   "turn_id": "...",
-  "state": "starting|running|needs_input|completed|failed|interrupted",
+  "state": "target_preparing|starting|running|needs_input|completed|failed|interrupted",
   "started_at": "ISO8601 KST",
   "updated_at": "ISO8601 KST",
   "terminal_at": "ISO8601 KST|null",
@@ -117,6 +117,14 @@ The repository `.gitignore` should ignore `.venv/`. Historical repo-local
   "cwd": "...",
   "sandbox": "workspace-write",
   "mode": "mate|worker",
+  "target": "mac|desktop",
+  "runtime": "codex",
+  "host_id": null,
+  "dispatch_id": null,
+  "remote_state": null,
+  "remote_event_seq": 0,
+  "attempt_id": null,
+  "lease_epoch": null,
   "model": null,
   "effort": "medium",
   "thread_source": "subagent",
@@ -180,9 +188,9 @@ The command table must match the `python3 meight.py --help` subcommand list exac
 | Command | Behavior |
 |---|---|
 | `daemon [--idle-timeout-sec SEC]` | Run the foreground global daemon. The orchestrator starts it in the background. If a live daemon already exists, return exit `1`. `0` disables idle shutdown. |
-| `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid, runtime `idle_timeout_sec`, `session_retention_sec`, and advertised `capabilities=["ephemeral3"]`. |
+| `ping` | Check daemon health over `meight.sock` and print `pong` with the daemon pid, runtime `idle_timeout_sec`, `session_retention_sec`, and advertised `capabilities=["desktop1"]`. |
 | `launchd install [--load]` / `launchd status` / `launchd uninstall` | Manage the optional macOS LaunchAgent. The plist uses `RunAtLoad=true` and crash-only `KeepAlive={SuccessfulExit=false}`. `install --load` non-force drains a live daemon, waits boundedly for its acknowledged PID/socket exit, runs `launchctl bootout --wait` with a subprocess timeout for a loaded job, writes/bootstraps the plist, and requires a fresh ping/PID. Active sessions or timeouts refuse transfer. |
-| `dispatch <name> --mode mate\|worker (--brief-file F\|- \| --brief TEXT) [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--progress SEC] [--narrate] [--shutdown-when-idle]` | One-shot command and the only CLI path that opens a session: auto-start the daemon if needed, reattach to an active row of the same name or else open a new one, wait, then print `result.md`. A new session uses `thread_start(ephemeral=True, thread_source=ThreadSource.subagent)` plus one turn in the invoking repo namespace. `--mode` is required; legacy names `design`, `collab`, `collaborative`, `review`, `delegate`, and `delegated` are accepted aliases. The CLI requires capability `ephemeral3` before the `start` request, which carries `protocol_epoch=ephemeral3`; success atomically echoes normalized mode plus epoch, both validated by the CLI. The visible start line includes resolved mode, model, effort, Fast, and sandbox values with provenance. Omitted settings use the mode defaults. Other defaults are `cwd=current directory`, `thread_source=subagent`, and `thread_ephemeral=true`. Reject duplicate active names inside the same repo namespace. The blocking wait polls `status.json` once per second and prints one final status summary line; `--progress` sets the heartbeat interval (`0` disables) and `--narrate` additionally prints each newly active worker plan step (opt-in; for a human watching a terminal). Terminal states return `completed=0`, `failed=2`, `interrupted=2`. A durable final `QUESTION:` returns `3` even after its runtime is released and can accept `reply` after daemon restart. Daemon death during a live turn returns `4`. Timeout returns `1` and leaves the worker running, so repeating the same `dispatch` reattaches. Default timeout is `1800` seconds. |
+| `dispatch <name> --mode mate\|worker (--brief-file F\|- \| --brief TEXT) [--target mac\|desktop] [--cwd DIR] [--sandbox ws\|workspace_write\|workspace-write\|ro\|read_only\|read-only\|full\|full_access\|full-access] [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--progress SEC] [--narrate] [--shutdown-when-idle]` | One-shot command and the only CLI path that opens a session. `target=mac` is the compatibility default and retains the local SDK path. `target=desktop` requires a clean Git checkout, an explicit repo mapping, and the versioned `wy-server` node contract; it never silently falls back to Mac. Remote result and change bundles are hash-verified into worker artifacts and are not auto-applied. The CLI requires capability `desktop1`; start success atomically echoes normalized mode, target, runtime, and epoch. All existing wait/result behavior remains the same. |
 | `follow <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble]` | Continue a terminal session or one waiting on a final `QUESTION:`. It inherits recorded mode and omitted turn settings. Every completed stream releases its SDK runtime; follow restores metadata, starts a fresh ephemeral thread, and injects a bounded handoff from saved brief, result, and recent events. |
 | `reply <name> (--brief-file F\|- \| --brief TEXT) [--model M] [--effort low\|medium\|high\|xhigh\|ultra\|max] [--fast \| --no-fast] [--no-preamble] [--timeout SEC] [--progress SEC] [--narrate] [--shutdown-when-idle]` | One-shot answer path: `follow`, wait, then print `result.md`. It inherits mode and per-turn setting overrides from `follow`, and shares the blocking wait, heartbeat options, and exit codes described under `dispatch`. Default timeout is `1800` seconds. |
 | `steer <name> TEXT` | Inject mid-turn text into a running turn. Return an error unless the worker is currently running. |
@@ -204,7 +212,7 @@ By default, `dispatch`, `follow`, and `reply` prepend runtime contract context
 to the brief. `--no-preamble` disables this.
 
 `dispatch` builds a mode-specific preamble when it opens a session. Mode
-selects the session contract and skill (protocol epoch `ephemeral3`):
+selects the session contract and skill (protocol epoch `desktop1`):
 
 - `mate` (legacy aliases `design` / `collab` / `collaborative` / `review`):
   `skills/meight-mate/SKILL.md` — thinking partner for blind or anchored
@@ -281,8 +289,8 @@ release, registry GC, daemon restart, or interruption.
   Example: `{"cmd":"start",...}` -> `{"ok":true}` or
   `{"ok":false,"error":"..."}`.
 - `ping` and `runtime_status` responses advertise only
-  `"capabilities": ["ephemeral3"]`. Start/follow requests carry
-  `"protocol_epoch": "ephemeral3"`.
+  `"capabilities": ["desktop1"]`. Start/follow requests carry
+  `"protocol_epoch": "desktop1"`.
 - The daemon validates epoch before imports, path resolution or creation,
   registry reservation, SDK startup, turn start, or any other start/follow
   side effect. It then validates start mode before start side effects.
@@ -400,7 +408,7 @@ immutable terminal timestamps, orphan reconciliation, retention safety/races,
 launchd payload/routing/ownership transfer, and accept-loop exit classification.
 
 1. Start `daemon` in the background with a temporary `MEIGHT_HOME`, then confirm
-   `ping` returns capability `ephemeral3` and the socket lives under that global home.
+   `ping` returns capability `desktop1` and the socket lives under that global home.
 2. Run:
    `start t1 --mode worker --brief "create /tmp/fleet-test/hello.txt with content 'hi', then reply DONE" --cwd /tmp/fleet-test --sandbox ws`
    Then `wait t1` must exit `0`; the file must exist; repo-scoped `status.json`,
@@ -465,7 +473,7 @@ implementation must not restart it.
 3. Branch on LaunchAgent state. Loaded uses `meight launchd install --load` and
    verifies bounded `bootout --wait` ownership transfer; unloaded uses normal
    daemon startup.
-4. Require `meight ping` to advertise `capabilities=ephemeral3` and verify the
+4. Require `meight ping` to advertise `capabilities=desktop1` and verify the
    fresh daemon PID and socket identity.
 5. Run a throwaway worker smoke (brief-directed read-only) and verify status
    mode plus `meight-worker` and common preamble paths.

@@ -323,7 +323,7 @@ are Codex-native skills, not shared session contracts.
 
 | Command | What it does |
 |---|---|
-| `meight dispatch <name> --mode mate\|worker [opts]` | One-shot: auto-start or reattach to an active session -> capability check/start when new -> poll -> print the preferred result. A timeout leaves the worker running; repeat `dispatch` to reattach. |
+| `meight dispatch <name> --mode mate\|worker [--target mac\|desktop] [opts]` | One-shot: auto-start or reattach, then poll and print the result. `mac` is the default. `desktop` uses `wy-server`, requires a clean commit plus configured remote repo mapping, and never falls back to Mac. |
 | `meight reply <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | One-shot answer to a replyable question; inherits mode and omitted turn settings, applies explicit turn overrides, and prints the latest result. |
 | `meight follow <name> --brief ... [--model M] [--effort E] [--fast\|--no-fast]` | Low-level: new turn on the same live thread; inherits mode and omitted turn settings, while explicit overrides become the defaults for later turns. |
 | `meight result <name>` | Print `result.md`. |
@@ -342,6 +342,9 @@ Common options:
   dispatcher-owned external-review choice.
 - `--cwd` sets the worker workdir. Use separate git worktrees for overlapping
   file scopes.
+- `--target mac|desktop` selects where the runtime runs. Desktop changes are
+  returned as hash-verified artifacts under the worker directory and are never
+  applied to the caller's checkout automatically.
 - `--sandbox ws|ro|full` uses the mode default below.
 - `--model luna|sol|terra` accepts the short aliases; full model strings pass
   through unchanged.
@@ -409,9 +412,9 @@ last 6 hours visible. Older terminal rows remain on disk and continuable through
 ## Upgrading An Old Daemon To A New Protocol Epoch
 
 The CLI fails closed before `dispatch` when `meight ping` does not advertise the
-current capability (`ephemeral3`). Every wire start/follow request carries the epoch,
-and every successful response atomically echoes normalized mode plus epoch. The
-CLI validates both, so even a same-token daemon swapped mid-handshake cannot
+current capability (`desktop1`). Every wire start/follow request carries the epoch,
+and every successful response atomically echoes normalized mode, target,
+runtime, and epoch. The CLI validates all four, so even a same-token daemon swapped mid-handshake cannot
 silently use an old contract. Drain and restart manually:
 
 1. Inspect `meight list --all-repos --json`; wait until no session across any
@@ -422,7 +425,7 @@ silently use an old contract. Drain and restart manually:
 3. Branch on LaunchAgent state. If loaded, run `meight launchd install --load`
    and verify its bounded `bootout --wait` transfer selects the fresh daemon;
    if not loaded, start the daemon normally.
-4. Confirm `meight ping` shows `capabilities=ephemeral3`, then verify the new
+4. Confirm `meight ping` shows `capabilities=desktop1`, then verify the new
    daemon PID and socket identity.
 5. Run a throwaway `--mode worker` smoke (brief-directed read-only) and verify
    status mode plus `meight-worker` and common preamble paths.

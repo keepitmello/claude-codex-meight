@@ -31,7 +31,7 @@ from zoneinfo import ZoneInfo
 KST = ZoneInfo("Asia/Seoul")
 DEBUG_EVENTS = os.environ.get("MEIGHT_DEBUG") == "1"
 TERMINAL_STATES = {"completed", "failed", "interrupted"}
-ACTIVE_STATES = {"starting", "running", "needs_input"}
+ACTIVE_STATES = {"target_preparing", "starting", "running", "needs_input"}
 SOCKET_TIMEOUT_SEC = 60.0  # start/follow may take several seconds for thread_start+turn RPCs
 TOOL_WAIT_GRACE_SEC = 15.0  # tool/approval waits older than this surface as exit 3 instead of hanging
 STATUS_THROTTLE_SEC = 2.0
@@ -72,8 +72,9 @@ MODE_SKILL_PATHS = {
     "worker": _SKILLS_ROOT / "meight-worker" / "SKILL.md",
 }
 COMMON_CONTRACT_PATH = _SKILLS_ROOT / "meight-common" / "CONTRACT.md"
-PROTOCOL_EPOCH = "ephemeral3"
+PROTOCOL_EPOCH = "desktop1"
 DAEMON_CAPABILITIES = [PROTOCOL_EPOCH]
+TARGETS = {"mac", "desktop"}
 
 # Every session runs in an explicit mode; the CLI requires it so the contract cannot be skipped.
 # Legacy four-mode names map onto the two postures so old muscle memory and
@@ -676,7 +677,8 @@ class Worker:
     def __init__(self, name: str, repo_home: Path, repo_root: str, repo_key: str, cwd: str, sandbox: str,
                  model: str | None, effort: str, service_tier: str | None = None,
                  thread_source: str = "subagent", thread_ephemeral: bool = True,
-                 mode: str = "worker", capacity_retry_budget_sec: float | None = None):
+                 mode: str = "worker", capacity_retry_budget_sec: float | None = None,
+                 target: str = "mac", runtime: str = "codex"):
         self.name = name
         self.repo_home = repo_home
         self.repo_root = repo_root
@@ -692,10 +694,13 @@ class Worker:
         # Canonical posture; follow/reply turns inherit it. Normalizing here keeps
         # sessions recorded under legacy four-mode names handoff-consistent.
         self.mode = normalize_mode(mode) or "worker"
+        self.target = target if target in TARGETS else "mac"
+        self.runtime = runtime
         self.capacity_retry_budget_sec = normalize_capacity_retry_budget(capacity_retry_budget_sec)
         self.thread = None       # openai_codex.Thread (live only while starting/running a turn)
         self.handle = None       # TurnHandle
         self.codex = None        # openai_codex.Codex runtime owned by this worker
+        self.backend = None      # DesktopBackend for remote turns; local path remains unchanged
         self.consumer: threading.Thread | None = None
         self.interrupt_requested = False
         self.lock = threading.Lock()       # serialize status/event handling
@@ -745,6 +750,14 @@ class Worker:
             "thread_source": self.thread_source,
             "thread_ephemeral": self.thread_ephemeral,
             "mode": self.mode,
+            "target": self.target,
+            "runtime": self.runtime,
+            "host_id": None,
+            "dispatch_id": None,
+            "remote_state": None,
+            "remote_event_seq": 0,
+            "attempt_id": None,
+            "lease_epoch": None,
             "current_item": None,
             "plan": [],
             "files_changed": [],
@@ -903,6 +916,25 @@ class Worker:
                 self.close_message_block()
                 self.close_message_log()
             self.detach_runtime_refs_if_idle(daemon, gen, "stream ended")
+            daemon.touch_activity()
+
+    def consume_desktop(self, daemon: "Daemon", gen: int, backend, spec: dict) -> None:
+        try:
+            backend.monitor(spec)
+        except Exception as e:
+            reason = getattr(e, "reason", "remote_runtime_lost")
+            with self.lock:
+                if gen == self.generation and self.status.get("state") not in TERMINAL_STATES:
+                    self.status["state"] = "failed"
+                    self.status["remote_state"] = reason
+                    self.status["runtime_lost_detail"] = f"{type(e).__name__}: {e}"
+                    self.log_event("remote/error", self.status["runtime_lost_detail"])
+                    self.write_status(force=True)
+            daemon.log(f"worker={self.name} desktop monitor error: {e!r}")
+        finally:
+            with self.ctl_lock:
+                if gen == self.generation:
+                    self.backend = None
             daemon.touch_activity()
 
     def _retry_capacity_turn(self, daemon: "Daemon", gen: int):
@@ -1372,7 +1404,7 @@ class Worker:
         with self.lock:
             state = self.status.get("state")
             source = self.status.get("needs_input_source")
-        return state in ("starting", "running") or (state == "needs_input" and source != "question")
+        return state in ("target_preparing", "starting", "running") or (state == "needs_input" and source != "question")
 
     def is_dormant_question(self) -> bool:
         """True when durable status is waiting but no SDK runtime is required."""
@@ -1578,6 +1610,38 @@ class Daemon:
                     continue
                 if not isinstance(status_obj, dict) or status_obj.get("state") not in ACTIVE_STATES:
                     continue
+                if (
+                    status_obj.get("target") == "desktop"
+                    and isinstance(status_obj.get("dispatch_id"), str)
+                    and status_obj.get("dispatch_id")
+                ):
+                    # Remote spool/job identity survives this Mac daemon. Reattach the
+                    # monitor instead of marking a possibly-live attempt failed or
+                    # spawning a duplicate.
+                    try:
+                        repo_root = str(status_obj.get("repo_root") or "")
+                        repo_key = str(status_obj.get("repo_key") or repo_dir.name)
+                        worker = self._restore_worker_from_status(
+                            repo_dir, repo_root, repo_key, worker_dir.name, status_obj,
+                        )
+                        from meight_desktop_backend import DesktopBackend
+
+                        worker.backend = DesktopBackend(worker)
+                        spec = {
+                            "dispatch_id": status_obj["dispatch_id"],
+                            "generation": worker.generation,
+                        }
+                        worker.consumer = threading.Thread(
+                            target=worker.consume_desktop,
+                            args=(self, worker.generation, worker.backend, spec),
+                            daemon=True,
+                            name=f"worker-{worker.name}-desktop-reconcile",
+                        )
+                        self.workers[self._worker_key(repo_key, worker.name)] = worker
+                        worker.consumer.start()
+                        continue
+                    except Exception as e:
+                        self.log(f"remote reconcile attach failed path={worker_dir}: {e!r}")
                 if (
                     status_obj.get("state") == "needs_input"
                     and status_obj.get("needs_input_source") == "question"
@@ -1922,6 +1986,8 @@ class Daemon:
             bool(status.get("thread_ephemeral", True)),
             mode=str(status.get("mode") or "worker"),
             capacity_retry_budget_sec=status.get("capacity_retry_budget_sec"),
+            target=str(status.get("target") or "mac"),
+            runtime=str(status.get("runtime") or "codex"),
         )
         worker.status = dict(status)
         # Drop fields from pre-text-only sessions so status/result stay on the
@@ -1975,12 +2041,6 @@ class Daemon:
             # CLI and can never silently fall back to a default contract.
             return {"ok": False, "error": MODE_TEACHING_ERROR.removeprefix("error: ")}
 
-        from openai_codex import Codex, CodexConfig, Sandbox
-        try:
-            from openai_codex.types import ThreadSource
-        except ImportError:
-            ThreadSource = None
-
         name = validate_worker_name(req["name"])
         repo_key, repo_root, repo_home = self._repo_from_req(req)
         wid = self._worker_key(repo_key, name)
@@ -2000,14 +2060,25 @@ class Daemon:
         capacity_retry_budget_sec = normalize_capacity_retry_budget(
             req.get("capacity_retry_budget_sec")
         )
+        target = req.get("target") or "mac"
+        runtime = req.get("runtime") or "codex"
+        if target not in TARGETS:
+            return {"ok": False, "error": f"invalid target: {target!r}"}
+        if runtime != "codex":
+            return {"ok": False, "error": f"unsupported runtime: {runtime!r}"}
+        if target == "desktop":
+            try:
+                from meight_desktop_backend import git_repo_spec
+
+                git_repo_spec(cwd, repo_root)
+            except Exception as e:
+                reason = getattr(e, "reason", "remote_spawn_failed")
+                return {"ok": False, "error": f"{reason}: {e}"}
         # ThreadSource is analytics metadata, not a UI-hiding mechanism. Ephemeral
         # threads are not materialized in Codex's stored thread listings. Legacy
         # clients may still send main_thread, but it is intentionally ignored.
         thread_source_label = "subagent"
         thread_ephemeral = True
-        if ThreadSource is None:
-            return {"ok": False, "error": "openai-codex SDK does not expose ThreadSource"}
-
         with self.reg_lock:
             existing = self.workers.get(wid)
             if existing is not None:
@@ -2033,6 +2104,8 @@ class Daemon:
                 thread_ephemeral,
                 mode=mode,
                 capacity_retry_budget_sec=capacity_retry_budget_sec,
+                target=target,
+                runtime=runtime,
             )
             ensure_worker_state_dir(self.home, repo_home, name)
             # Restarting the same name creates a new worker, so reset prior outputs.
@@ -2054,23 +2127,34 @@ class Daemon:
         # accept loop via _maintenance and made concurrent waits misread the daemon as
         # dead (false exit 4). Control plane never waits on the data plane.
         try:
-            w.codex = Codex(config=CodexConfig(codex_bin=system_codex_bin()))
-            install_computer_use_approval_bridge(w.codex, w.name)
-            relax_sdk_effort_echo()
-            thread = w.codex.thread_start(
-                cwd=cwd,
-                ephemeral=thread_ephemeral,
-                sandbox=getattr(Sandbox, sandbox_key),
-                thread_source=ThreadSource.subagent,
-            )
-            w.thread = thread
-            with w.lock:
-                w.status["thread_id"] = thread.id
-            relax_sdk_effort_field()
-            w.handle = thread.turn(
-                turn_input,
-                model=model, effort=effort, service_tier=service_tier,
-            )
+            if target == "desktop":
+                from meight_desktop_backend import DesktopBackend
+
+                w.generation = 1
+                w.backend = DesktopBackend(w)
+                spec = w.backend.prepare_and_start(turn_input)
+                thread = None
+            else:
+                from openai_codex import Codex, CodexConfig, Sandbox
+                from openai_codex.types import ThreadSource
+
+                w.codex = Codex(config=CodexConfig(codex_bin=system_codex_bin()))
+                install_computer_use_approval_bridge(w.codex, w.name)
+                relax_sdk_effort_echo()
+                thread = w.codex.thread_start(
+                    cwd=cwd,
+                    ephemeral=thread_ephemeral,
+                    sandbox=getattr(Sandbox, sandbox_key),
+                    thread_source=ThreadSource.subagent,
+                )
+                w.thread = thread
+                with w.lock:
+                    w.status["thread_id"] = thread.id
+                relax_sdk_effort_field()
+                w.handle = thread.turn(
+                    turn_input,
+                    model=model, effort=effort, service_tier=service_tier,
+                )
         except Exception as e:
             # The failed placeholder stays registered so status/wait see a terminal state
             # instead of a zombie that blocks its name forever.
@@ -2088,15 +2172,24 @@ class Daemon:
             if self.shutting_down.is_set() or w.interrupt_requested:
                 aborted = True
                 try:
-                    w.handle.interrupt()
+                    if w.backend is not None:
+                        w.backend.send_control("interrupt")
+                    elif w.handle is not None:
+                        w.handle.interrupt()
                 except Exception:
                     pass
             else:
                 w.generation = 1
-                w.consumer = threading.Thread(
-                    target=w.consume_stream, args=(self, w.generation, w.handle), daemon=True,
-                    name=f"worker-{name}",
-                )
+                if target == "desktop":
+                    w.consumer = threading.Thread(
+                        target=w.consume_desktop, args=(self, w.generation, w.backend, spec), daemon=True,
+                        name=f"worker-{name}-desktop",
+                    )
+                else:
+                    w.consumer = threading.Thread(
+                        target=w.consume_stream, args=(self, w.generation, w.handle), daemon=True,
+                        name=f"worker-{name}",
+                    )
                 w.consumer.start()
         if aborted:
             w.mark_interrupted("start aborted: daemon shutting down or interrupted")
@@ -2105,14 +2198,16 @@ class Daemon:
 
         self.touch_activity()
         self.log(
-            f"start worker={name} repo={repo_key} thread={thread.id} "
+            f"start worker={name} repo={repo_key} thread={getattr(thread, 'id', None)} "
             f"cwd={cwd} sandbox={sandbox_key} thread_source={thread_source_label} "
-            f"ephemeral={thread_ephemeral} mode={mode}"
+            f"ephemeral={thread_ephemeral} mode={mode} target={target} runtime={runtime}"
         )
         return {
             "ok": True,
-            "thread_id": thread.id,
+            "thread_id": getattr(thread, "id", None),
             "mode": mode,
+            "target": target,
+            "runtime": runtime,
             "protocol_epoch": PROTOCOL_EPOCH,
         }
 
@@ -2177,7 +2272,13 @@ class Daemon:
 
         # Data-plane phase — outside reg_lock for the same reason as cmd_start.
         try:
-            if not reuse_ephemeral_thread:
+            if w.target == "desktop":
+                from meight_desktop_backend import DesktopBackend
+
+                w.backend = DesktopBackend(w)
+                spec = w.backend.prepare_and_start(f"{recovery_context}{turn_input}")
+                thread_id = None
+            elif not reuse_ephemeral_thread:
                 from openai_codex import Codex, CodexConfig, Sandbox
                 from openai_codex.types import ThreadSource
 
@@ -2207,11 +2308,12 @@ class Daemon:
                 )
             else:
                 thread_id = previous_thread_id
-            relax_sdk_effort_field()
-            w.handle = w.thread.turn(
-                turn_input,
-                model=model, effort=effort, service_tier=service_tier,
-            )
+            if w.target == "mac":
+                relax_sdk_effort_field()
+                w.handle = w.thread.turn(
+                    turn_input,
+                    model=model, effort=effort, service_tier=service_tier,
+                )
         except Exception as e:
             w.mark_failed(f"follow turn failed (was {prev_state}): {type(e).__name__}: {e}")
             w.detach_runtime_refs_if_idle(self, w.generation, "follow failed")
@@ -2224,7 +2326,10 @@ class Daemon:
             if self.shutting_down.is_set() or w.interrupt_requested:
                 aborted = True
                 try:
-                    w.handle.interrupt()
+                    if w.backend is not None:
+                        w.backend.send_control("interrupt")
+                    elif w.handle is not None:
+                        w.handle.interrupt()
                 except Exception:
                     pass
             else:
@@ -2233,10 +2338,16 @@ class Daemon:
                     gen = w.generation
                     turns = w.status["turns"]
                     thread_id = w.status["thread_id"]
-                w.consumer = threading.Thread(
-                    target=w.consume_stream, args=(self, gen, w.handle), daemon=True,
-                    name=f"worker-{name}-t{turns}",
-                )
+                if w.target == "desktop":
+                    w.consumer = threading.Thread(
+                        target=w.consume_desktop, args=(self, gen, w.backend, spec), daemon=True,
+                        name=f"worker-{name}-desktop-t{turns}",
+                    )
+                else:
+                    w.consumer = threading.Thread(
+                        target=w.consume_stream, args=(self, gen, w.handle), daemon=True,
+                        name=f"worker-{name}-t{turns}",
+                    )
                 w.consumer.start()
         if aborted:
             w.mark_interrupted("follow aborted: daemon shutting down or interrupted")
@@ -2250,6 +2361,8 @@ class Daemon:
             "thread_id": thread_id,
             "turns": turns,
             "mode": w.mode,
+            "target": w.target,
+            "runtime": w.runtime,
             "protocol_epoch": PROTOCOL_EPOCH,
         }
 
@@ -2264,9 +2377,12 @@ class Daemon:
             state = w.current_state()
             if state != "running":
                 return {"ok": False, "error": f"worker '{name}' is not running ({state})"}
-            if w.handle is None:
+            if w.target == "desktop" and w.backend is not None:
+                w.backend.send_control("steer", text=req["text"])
+            elif w.handle is None:
                 return {"ok": False, "error": f"worker '{name}' has no live turn handle"}
-            w.handle.steer(req["text"])
+            else:
+                w.handle.steer(req["text"])
             w.log_event("steer", truncate(req["text"], 200))
         self.touch_activity()
         self.log(f"steer worker={name} repo={repo_key}")
@@ -2287,7 +2403,11 @@ class Daemon:
                 return {"ok": False, "error": f"worker '{name}' is not active ({state})"}
             if w.interrupt_requested:
                 return {"ok": True, "note": "interrupt already requested"}  # idempotent
-            if w.handle is None:
+            if w.target == "desktop" and w.backend is not None:
+                w.interrupt_requested = True
+                w.backend.send_control("interrupt")
+                w.log_event("interrupt", "remote graceful interrupt requested by client")
+            elif w.handle is None:
                 if state == "needs_input":
                     codex_to_close = None
                     with w.lock:
@@ -2318,15 +2438,16 @@ class Daemon:
                 w.log_event("interrupt", "recorded during SDK phase — starting turn will be aborted")
                 self.touch_activity()
                 return {"ok": True, "note": "interrupt recorded — starting turn will be aborted"}
-            w.interrupt_requested = True
-            try:
-                w.handle.interrupt()
-            except Exception as e:
-                # Interrupt may fail right after a turn ends; keep the requested flag.
-                w.log_event("interrupt", f"request failed: {type(e).__name__}: {e}")
-                self.log(f"interrupt worker={name} sdk error: {e!r}")
-                return {"ok": True, "note": f"interrupt call failed ({type(e).__name__}) — turn may have ended"}
-            w.log_event("interrupt", "requested by client")
+            else:
+                w.interrupt_requested = True
+                try:
+                    w.handle.interrupt()
+                except Exception as e:
+                    # Interrupt may fail right after a turn ends; keep the requested flag.
+                    w.log_event("interrupt", f"request failed: {type(e).__name__}: {e}")
+                    self.log(f"interrupt worker={name} sdk error: {e!r}")
+                    return {"ok": True, "note": f"interrupt call failed ({type(e).__name__}) — turn may have ended"}
+                w.log_event("interrupt", "requested by client")
         self.touch_activity()
         self.log(f"interrupt worker={name} repo={repo_key}")
         return {"ok": True}
@@ -2550,11 +2671,14 @@ def require_protocol_capability(home: Path) -> dict:
     return {"ok": True}
 
 
-def protocol_echo_matches(resp: dict, expected_mode: str | None) -> bool:
-    """Validate the atomic normalized-mode + epoch success response."""
+def protocol_echo_matches(resp: dict, expected_mode: str | None,
+                          expected_target: str = "mac", expected_runtime: str = "codex") -> bool:
+    """Validate the atomic mode, target, runtime, and epoch success response."""
     return (
         expected_mode is not None
         and resp.get("mode") == expected_mode
+        and (resp.get("target") or "mac") == expected_target
+        and (resp.get("runtime") or "codex") == expected_runtime
         and resp.get("protocol_epoch") == PROTOCOL_EPOCH
     )
 
@@ -2630,16 +2754,20 @@ def start_request(args, home: Path) -> dict:
         ),
         "no_preamble": args.no_preamble,
         "mode": normalize_mode(args.mode),
+        "target": getattr(args, "target", "mac"),
+        "runtime": "codex",
         "protocol_epoch": PROTOCOL_EPOCH,
     }
     req.update(request_repo_context(home))
     resp = send_request(home, req)
     expected_mode = normalize_mode(args.mode)
-    if resp.get("ok") and not protocol_echo_matches(resp, expected_mode):
+    if resp.get("ok") and not protocol_echo_matches(
+        resp, expected_mode, req["target"], req["runtime"],
+    ):
         best_effort_interrupt(home, req, args.name)
         return {"ok": False, "error": (
             f"start protocol mismatch: expected mode={expected_mode} "
-            f"epoch={PROTOCOL_EPOCH}"
+            f"target={req['target']} runtime={req['runtime']} epoch={PROTOCOL_EPOCH}"
         )}
     return resp
 
@@ -2671,11 +2799,22 @@ def follow_request(args, home: Path) -> dict:
         req["service_tier"] = "priority" if fast else "default"
     req.update(request_repo_context(home))
     resp = send_request(home, req)
-    if resp.get("ok") and not protocol_echo_matches(resp, expected_mode):
+    expected_target = "mac"
+    expected_runtime = "codex"
+    if status_path.is_file():
+        try:
+            recorded = json.loads(status_path.read_text(encoding="utf-8"))
+            expected_target = recorded.get("target") or "mac"
+            expected_runtime = recorded.get("runtime") or "codex"
+        except (OSError, json.JSONDecodeError):
+            pass
+    if resp.get("ok") and not protocol_echo_matches(
+        resp, expected_mode, expected_target, expected_runtime,
+    ):
         best_effort_interrupt(home, req, args.name)
         return {"ok": False, "error": (
-            f"follow protocol mismatch: expected mode={expected_mode} "
-            f"epoch={PROTOCOL_EPOCH}"
+            f"follow protocol mismatch: expected mode={expected_mode} target={expected_target} "
+            f"runtime={expected_runtime} epoch={PROTOCOL_EPOCH}"
         )}
     return resp
 
@@ -2725,7 +2864,9 @@ def cmd_status(args, home: Path) -> int:
                         "terminal_at", "turns", "mode", "needs_input_source",
                         "needs_input_target", "needs_input_kind", "needs_input_detail",
                         "runtime_lost_detail", "error_detail", "capacity_retries",
-                        "capacity_retry_budget_sec", "capacity_retry", "capacity_retry_summary"):
+                        "capacity_retry_budget_sec", "capacity_retry", "capacity_retry_summary",
+                        "target", "runtime", "host_id", "dispatch_id", "remote_state",
+                        "remote_event_seq", "attempt_id", "lease_epoch", "source_revision"):
                 print(f"  {key}: {st.get(key)}")
             if st.get("plan"):
                 print("  plan:")
@@ -3598,6 +3739,8 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--brief-file", help="read from stdin when '-'")
         sp.add_argument("--brief")
         sp.add_argument("--cwd")
+        sp.add_argument("--target", choices=sorted(TARGETS), default="mac",
+                        help="execution target; default mac preserves local behavior")
         # No argparse `choices`: require_mode() is the single CLI validation source for
         # missing AND invalid values, so both cases print the same teaching error.
         sp.add_argument(
