@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Versioned node facade over the installed legacy workerctl transport.
+"""Versioned node facade over the installed wy-server transport.
 
 This source is intentionally not installed by repository tests. It preserves
-legacy job/lease identity by delegating status/control to workerctl instead of
+existing job/lease identity by delegating status/control to the transport instead of
 moving ~/.local/state/mac-worker or rewriting active attempts.
 """
 
@@ -25,6 +25,19 @@ from meight_remote_protocol import SCHEMA_VERSION, spec_hash, validate_spec
 CAPABILITIES = ["generic_jobs", "artifact_get", "job_control"]
 JOB_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 REMOTE_SKILLS_ROOT = "~/.local/lib/meight/skills"
+TRANSPORT_COMMANDS = {
+    "wake", "wait", "ensure", "status", "health", "run", "job", "job-stop", "sleep",
+}
+USAGE = """usage: wy-server COMMAND [ARGS]
+
+Desktop control:
+  wake | wait | ensure | status | health | run CMD
+  job ID CWD CMD | job-status ID | job-stop ID ATTEMPT EPOCH | sleep
+
+Meight node API:
+  ensure-ready | job-start | job-status --id ID | job-events
+  job-control | artifact-get
+"""
 
 
 class WyServerError(RuntimeError):
@@ -34,19 +47,21 @@ class WyServerError(RuntimeError):
         self.exit_code = exit_code
 
 
-def workerctl_bin() -> str:
-    return os.environ.get("WY_SERVER_WORKERCTL_BIN", str(Path.home() / ".local/bin/workerctl"))
+def transport_bin() -> str:
+    return os.environ.get(
+        "WY_SERVER_TRANSPORT_BIN", str(Path.home() / ".local/bin/wy-server-transport")
+    )
 
 
-def workerctl(*args: str, timeout: float = 60.0, check: bool = True) -> tuple[int, str, str]:
+def transport(*args: str, timeout: float = 60.0, check: bool = True) -> tuple[int, str, str]:
     try:
         proc = subprocess.run(
-            [workerctl_bin(), *args], text=True, capture_output=True, timeout=timeout,
+            [transport_bin(), *args], text=True, capture_output=True, timeout=timeout,
         )
     except FileNotFoundError as e:
-        raise WyServerError("NODE_NOT_READY", "legacy workerctl transport is not installed") from e
+        raise WyServerError("NODE_NOT_READY", "wy-server transport is not installed") from e
     except subprocess.TimeoutExpired as e:
-        raise WyServerError("NODE_UNREACHABLE", f"workerctl timed out: {args[0]}") from e
+        raise WyServerError("NODE_UNREACHABLE", f"wy-server transport timed out: {args[0]}") from e
     if check and proc.returncode != 0:
         raise WyServerError("NODE_NOT_READY", proc.stdout.strip() or proc.stderr.strip(), proc.returncode)
     return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
@@ -106,7 +121,7 @@ def remote_contract_brief(brief: str) -> str:
 
 
 def ensure_ready(request_id: str, deadline: int) -> dict:
-    code, out, _ = workerctl("ensure", timeout=deadline + 5, check=False)
+    code, out, _ = transport("ensure", timeout=deadline + 5, check=False)
     legacy = parse_object(out)
     if code != 0 or legacy.get("state") not in ("READY", "WORKER_READY"):
         raise WyServerError("NODE_NOT_READY", str(legacy.get("reason") or "worker not ready"), code or 2)
@@ -148,12 +163,12 @@ def job_start(job_id: str, spec_path: Path) -> dict:
         f"mkdir -p {remote_spec['spool_dir']}",
         f"printf %s {shlex.quote(encoded)} | base64 -d > {remote_spec['spool_dir']}/launch-spec.json",
     ))
-    workerctl("run", prep, timeout=180)
+    transport("run", prep, timeout=180)
     command = (
         f"{remote_shell_path(wsl_runner_python())} {remote_shell_path(wsl_runner())} run --spec "
         f"{remote_spec['spool_dir']}/launch-spec.json"
     )
-    _, out, _ = workerctl("job", job_id, worktree, command, timeout=60)
+    _, out, _ = transport("job", job_id, worktree, command, timeout=60)
     receipt = parse_object(out)
     state = receipt.get("state")
     if state not in ("RUNNING", "STARTED"):
@@ -169,13 +184,13 @@ def job_start(job_id: str, spec_path: Path) -> dict:
 def job_status(job_id: str) -> dict:
     # Compatibility rule: never migrate or rewrite legacy job state. Query it in
     # place through the installed helper and preserve attempt/lease fields.
-    _, out, _ = workerctl("job-status", job_id)
+    _, out, _ = transport("job-status", job_id)
     receipt = parse_object(out)
     return {**receipt, "schema_version": SCHEMA_VERSION, "ok": True, "legacy_receipt": receipt}
 
 
 def remote_json(command: str) -> dict:
-    _, out, _ = workerctl("run", command)
+    _, out, _ = transport("run", command)
     return parse_object(out)
 
 
@@ -208,7 +223,7 @@ def artifact_get(job_id: str, relative: str) -> dict:
     if path.is_absolute() or ".." in path.parts:
         raise WyServerError("INVALID_ARTIFACT", "artifact path must stay inside the spool")
     spool = f"~/.local/state/meight-worker/runs/{job_id}"
-    _, out, _ = workerctl("run", f"base64 -w0 {spool}/{shlex.quote(relative)}")
+    _, out, _ = transport("run", f"base64 -w0 {spool}/{shlex.quote(relative)}")
     try:
         data = base64.b64decode(out, validate=True)
     except ValueError as e:
@@ -218,6 +233,22 @@ def artifact_get(job_id: str, relative: str) -> dict:
 
 
 def main() -> int:
+    if len(sys.argv) == 1 or sys.argv[1] in ("-h", "--help", "help"):
+        print(USAGE.rstrip())
+        return 0
+    direct_transport = len(sys.argv) > 1 and (
+        sys.argv[1] in TRANSPORT_COMMANDS
+        or sys.argv[1] == "--human"
+        or (sys.argv[1] == "job-status" and len(sys.argv) > 2 and sys.argv[2] != "--id")
+    )
+    if direct_transport:
+        try:
+            return subprocess.run([transport_bin(), *sys.argv[1:]]).returncode
+        except FileNotFoundError:
+            print(json.dumps({"schema_version": SCHEMA_VERSION, "ok": False,
+                              "reason": "NODE_NOT_READY",
+                              "error": "wy-server transport is not installed"}, separators=(",", ":")))
+            return 2
     parser = argparse.ArgumentParser(prog="wy-server")
     sub = parser.add_subparsers(dest="command", required=True)
     ready = sub.add_parser("ensure-ready"); ready.add_argument("--request-id", required=True); ready.add_argument("--deadline", type=int, default=180); ready.add_argument("--json", action="store_true")

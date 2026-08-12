@@ -277,7 +277,7 @@ class WyServerCompatibilityTests(unittest.TestCase):
             "state": "WORKER_READY", "control_nonce": "nonce-1",
             "capacity": {"running_jobs": 0},
         }
-        with patch.object(wy_server, "workerctl", return_value=(0, json.dumps(legacy), "")):
+        with patch.object(wy_server, "transport", return_value=(0, json.dumps(legacy), "")):
             receipt = wy_server.ensure_ready("request-1", 30)
         self.assertEqual(receipt["state"], "READY")
         self.assertEqual(receipt["readiness_generation"], "nonce-1")
@@ -301,7 +301,7 @@ class WyServerCompatibilityTests(unittest.TestCase):
     def test_legacy_job_status_preserves_attempt_and_lease_without_state_move(self):
         legacy = {"state": "RUNNING", "attempt_id": "old-attempt", "lease_epoch": 17,
                   "state_dir": "/home/keepi/.local/state/mac-worker/jobs/old-job"}
-        with patch.object(wy_server, "workerctl", return_value=(0, json.dumps(legacy), "")) as call:
+        with patch.object(wy_server, "transport", return_value=(0, json.dumps(legacy), "")) as call:
             receipt = wy_server.job_status("old-job")
         call.assert_called_once_with("job-status", "old-job")
         self.assertEqual(receipt["attempt_id"], "old-attempt")

@@ -48,6 +48,13 @@ SHIM
 chmod +x "$BIN_DIR/meight"
 echo "→ installed $BIN_DIR/meight"
 
+cat > "$BIN_DIR/wy-server" <<SHIM
+#!/bin/sh
+exec "$REPO_DIR/.venv/bin/python" "$REPO_DIR/wy_server.py" "\$@"
+SHIM
+chmod +x "$BIN_DIR/wy-server"
+echo "→ installed $BIN_DIR/wy-server"
+
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *) echo "note: $BIN_DIR is not in your PATH — add it to use \`meight\` directly." ;;
