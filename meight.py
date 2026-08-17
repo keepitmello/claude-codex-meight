@@ -90,12 +90,13 @@ MODE_MAP = {
     "delegated": "worker",
 }
 
-# Friendly names are a CLI contract, while the SDK requires ChatGPT-account model slugs.
-# Keep matching exact so arbitrary full/custom model strings pass through unchanged.
+# Friendly names are a CLI contract; known aliases expand to the runtime slug.
+# Unknown full/custom strings pass through unchanged.
 MODEL_ALIASES = {
     "sol": "gpt-5.6-sol",
     "terra": "gpt-5.6-terra",
     "luna": "gpt-5.6-luna",
+    "grok": "xai/grok-4.6",
 }
 
 EFFORT_CHOICES = ["low", "medium", "high", "xhigh", "ultra", "max"]
@@ -110,7 +111,7 @@ MODE_START_DEFAULTS = {
         "sandbox": "full",
     },
     "worker": {
-        "model": "sol", "effort": "medium", "fast": False,
+        "model": "grok", "effort": "high", "fast": False,
         "sandbox": "full",
     },
 }
@@ -118,6 +119,7 @@ MODE_START_DEFAULTS = {
 MODEL_DEFAULT_EFFORTS = {
     "gpt-5.6-sol": "medium",
     "gpt-5.6-luna": "max",
+    "xai/grok-4.6": "high",
 }
 
 MODEL_DEFAULT_FASTS = {

@@ -62,21 +62,24 @@ meight가 주는 건 두 개의 세션 자세지, 의무적인 개발 파이프�
 하나를 더 병렬로 띄운다. worker의 `done`은 여전히 주장일 뿐이며 사인오프에는
 검증 증거가 필요하다. acceptance gate로 선택한 리뷰만 verdict를 추가로 요구한다.
 
-동봉된 오퍼레이터 정책 템플릿은 worker를 `sol medium`으로 시작해 레포를
-이해하고 숨은 blocker를 드러내게 한다. 작업 전체의 계약(수용 기준)·범위
-(파일/디렉토리 경계)·증거(검증 방법)를 브리프가 완결적으로 담으면
-디스패처가 `--model luna`를 명시 선택하고, 실행·수렴을 위한 `luna max`와
-Fast가 함께 해소된다. 실패 비용은 별도 축으로 남아 브레인을 올리거나
-리뷰를 붙이는 판단에 쓰인다. 어려운 작업은 워커를 키우는 대신 단계를
-붙인다: `sol` mate의 플랜을 동결한 뒤 완결 브리프로 worker에 넘긴다. 이
-모델·돈 경로 게이트는 명시적으로 조정 가능한 오퍼레이터 정책이지 meight
-인터페이스 요구사항이 아니다.
+동봉된 오퍼레이터 정책 템플릿은 worker를 `grok high`로 시작한다. 레포 이해와
+숨은 blocker 판단이 필요하면 디스패처가 `--model sol`을 명시한다. 작업 전체의
+계약(수용 기준)·범위(파일/디렉토리 경계)·증거(검증 방법)를 브리프가 완결적으로
+담으면 `--model luna`를 명시 선택할 수 있고, 실행·수렴을 위한 `luna max`와
+Fast가 함께 해소된다. mate/review 기본은 `sol medium`이고, Grok 판단면은
+`--model grok` 또는 `--model grok --effort xhigh`로 연다. 실패 비용은 별도
+축으로 남아 브레인을 올리거나 리뷰를 붙이는 판단에 쓰인다. 어려운 작업은
+워커를 키우는 대신 단계를 붙인다: `sol` mate의 플랜을 동결한 뒤 완결 브리프로
+worker에 넘긴다. 이 모델·돈 경로 게이트는 명시적으로 조정 가능한 오퍼레이터
+정책이지 meight 인터페이스 요구사항이 아니다.
 
 effort도 같은 경제학을 따른다: 선택된 `luna`는 `max`로 돌린다 — `xhigh` 대비
-25% 비용으로 종합 4점을 사기 때문이다. worker의 `sol`은 `medium`에 머물러
-레포 이해 경로를 담당한다. 형식적이거나 실패 비용이 큰 리뷰는 `sol high`를 쓸
-수 있다. 설계의 `high`는 정말 어려울 때 디스패처가 판단하고 띄우기 전에 사용자
-확인을 한 번 받는다. `sol`에 `xhigh`는 쓰지 않는다.
+25% 비용으로 종합 4점을 사기 때문이다. 선택된 `grok`는 `high`이고, `xhigh`는
+명시 선택이자 카탈로그 상한이다. worker의 `sol`은 선택됐을 때 `medium`에
+머문다. 형식적이거나 실패 비용이 큰 리뷰는 `sol high` 또는 `grok xhigh`를 쓸
+수 있다. 설계의 높은 effort는 정말 어려울 때 디스패처가 판단하고 띄우기 전에
+사용자 확인을 한 번 받는다. `sol`에 `xhigh`는 쓰지 않는다. Grok에는 Fast와
+`max`/`ultra`가 없다.
 
 ## 왜 이게 존재하나
 
@@ -318,13 +321,12 @@ reviewer와 discusser는 공용 세션 계약이 아니라 Codex 전용 스킬�
 | Mode | Model | Effort | Fast | Sandbox |
 |---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `full` |
-| `worker` | `sol` | `medium` | off | `full` |
+| `worker` | `grok` | `high` | off | `full` |
 
-`--effort` 없이 `--model sol|luna`를 명시하면 해당 모델의 effort 기본값을
+`--effort` 없이 `--model sol|luna|grok`를 명시하면 해당 모델의 effort 기본값을
 다시 고른다. Fast를 생략해도 선택한 모델의 Fast 기본을 다시 고른다. 따라서
-`--model luna`는 `luna max`와 Fast를 함께 얻고, 명시한 `--effort`와
-`--fast`/`--no-fast`가 언제나 우선한다. 디스패처는 계약·범위·증거가 완결된
-브리프에서 이 조합을 선택한다.
+`--model luna`는 `luna max`와 Fast를 함께 얻고, `--model grok`는 `grok high`에
+Fast off다. 명시한 `--effort`와 `--fast`/`--no-fast`가 언제나 우선한다.
 
 어느 자세도 샌드박스를 강제하지 않는다: read-only는 브리프가 정하는
 정책이고(mate 계약은 브리프가 시키지 않는 한 레포 파일을 고치지 않는 게

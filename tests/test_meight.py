@@ -25,6 +25,8 @@ class ModelAliasTests(unittest.TestCase):
         self.assertEqual(meight.normalize_model("sol"), "gpt-5.6-sol")
         self.assertEqual(meight.normalize_model("terra"), "gpt-5.6-terra")
         self.assertEqual(meight.normalize_model("luna"), "gpt-5.6-luna")
+        self.assertEqual(meight.normalize_model("grok"), "xai/grok-4.6")
+        self.assertEqual(meight.normalize_model("xai/grok-4.6"), "xai/grok-4.6")
         self.assertEqual(meight.normalize_model("vendor/custom-model"), "vendor/custom-model")
         self.assertIsNone(meight.normalize_model(None))
 
@@ -32,7 +34,7 @@ class ModelAliasTests(unittest.TestCase):
 class StartDefaultsTests(unittest.TestCase):
     EXPECTED = {
         "mate": ("gpt-5.6-sol", "medium", "default", "full"),
-        "worker": ("gpt-5.6-sol", "medium", "default", "full"),
+        "worker": ("xai/grok-4.6", "high", "default", "full"),
     }
 
     def _args(self, command: str, mode: str, *options: str):
@@ -111,8 +113,12 @@ class StartDefaultsTests(unittest.TestCase):
         cases = (
             ("worker", "sol", "medium"),
             ("worker", "gpt-5.6-sol", "medium"),
+            ("worker", "grok", "high"),
+            ("worker", "xai/grok-4.6", "high"),
             ("mate", "luna", "max"),
             ("mate", "gpt-5.6-luna", "max"),
+            ("mate", "grok", "high"),
+            ("mate", "xai/grok-4.6", "high"),
         )
         for mode, model, effort in cases:
             with self.subTest(mode=mode, model=model):
@@ -2172,7 +2178,7 @@ class ModeLifecycleTests(unittest.TestCase):
     def test_dispatch_output_echoes_resolved_defaults_and_provenance(self):
         cases = (
             ("worker",
-             "model=sol(default) effort=medium(default) fast=off(default) "
+             "model=grok(default) effort=high(default) fast=off(default) "
              "sandbox=full(default)"),
             ("mate",
              "model=sol(default) effort=medium(default) fast=off(default) "

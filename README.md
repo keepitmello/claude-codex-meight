@@ -66,21 +66,24 @@ default, and a second unanchored read is useful only when it can change the
 decision. A worker's `done` is still only a claim. Sign-off combines any
 requested verdict with verification evidence.
 
-The included operator-policy template starts workers on `sol medium` so the
-worker can understand the repository and surface hidden blockers. When a brief
-fully states its acceptance contract, file/directory scope, and verification
-evidence, the dispatcher explicitly selects `--model luna`, which resolves to
-`luna max` with Fast for execution and convergence. Failure cost remains an
-independent gate for raising the brain or adding review. When work is hard, the
-template adds a stage instead of a larger worker — a `sol` mate plan is frozen,
-then handed to a worker with a complete brief. These model and money-path gates
-are explicitly adjustable operator policy, not meight interface requirements.
+The included operator-policy template starts workers on `grok high`. When a
+brief needs repository-understanding judgment, the dispatcher explicitly
+selects `--model sol`. A complete brief may still select `--model luna`, which
+resolves to `luna max` with Fast. Mate/review stays on `sol medium` unless the
+dispatcher selects `--model grok` or `--model grok --effort xhigh`. Failure
+cost remains an independent gate for raising the brain or adding review. When
+work is hard, the template adds a stage instead of a larger worker — a `sol`
+mate plan is frozen, then handed to a worker with a complete brief. These model
+and money-path gates are explicitly adjustable operator policy, not meight
+interface requirements.
 
 Effort follows the same economics: a selected `luna` runs `max`, which buys a
-measured four Index points over `xhigh` for a quarter more cost. Worker `sol`
-stays at `medium`, preserving the repository-understanding path. Formal or
-high-cost review may use `sol high`; design uses `high` only when genuinely hard
-and after one user confirmation. `sol` never runs `xhigh`.
+measured four Index points over `xhigh` for a quarter more cost. Selected
+`grok` runs `high`; `xhigh` is the explicit mate/review option and the catalog
+ceiling. Worker `sol` stays at `medium` when selected. Formal or high-cost
+review may use `sol high` or `grok xhigh`; design uses those higher efforts
+only when genuinely hard and after one user confirmation. `sol` never runs
+`xhigh`. Grok has no Fast or `max`/`ultra`.
 
 ## Why This Exists
 
@@ -365,13 +368,13 @@ sent:
 | Mode | Model | Effort | Fast | Sandbox |
 |---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `full` |
-| `worker` | `sol` | `medium` | off | `full` |
+| `worker` | `grok` | `high` | off | `full` |
 
-An explicit `--model sol|luna` without `--effort` reselects that model's effort
-default; when Fast is omitted, the selected model's Fast default is reselected as
-well. Thus `--model luna` yields `luna max` with Fast, while explicit
-`--fast`/`--no-fast` always wins. A dispatcher chooses that combination when the
-brief contains the complete contract, scope, and verification evidence.
+An explicit `--model sol|luna|grok` without `--effort` reselects that model's
+effort default; when Fast is omitted, the selected model's Fast default is
+reselected as well. Thus `--model luna` yields `luna max` with Fast, and
+`--model grok` yields `grok high` with Fast off. Explicit `--fast`/`--no-fast`
+always wins.
 
 Neither posture enforces a sandbox: read-only is brief-driven policy (the mate
 contract defaults to not modifying repository files), and `--sandbox` remains

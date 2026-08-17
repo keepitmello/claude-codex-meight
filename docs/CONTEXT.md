@@ -18,29 +18,31 @@
   `skills/meight-common/CONTRACT.md`다. 샌드박스는 강제하지 않는다 —
   read-only는 브리프 지시.
 - **선택형 흐름**: 필요할 때 blind design 또는 plan review → worker 구현
-  (`sol medium` 기본, 완결 브리프는 `--model luna`로 max+Fast 선택) → 필요한
+  (`grok high` 기본, 레포 이해는 `--model sol`, 완결 브리프는 `--model luna`로 max+Fast 선택 가능) → 필요한
   독립 리뷰 → dispatcher 사인오프. 리뷰어는 결함과 더 나은 방향을 자유롭게
   올리고, 다른 fresh read가 실제 결정을 바꿀 수 있을 때만 mate 하나를 더 병렬
   실행한다. 게이트는 실패 비용과 닫을 결정에 맞춰 고른다.
 - **난이도 대응 = 모델 승급이 아니라 단계 추가**: 어려우면 `sol` mate 플랜 →
-  동결 → 계약·범위·증거가 완결된 브리프 → `luna max`+Fast 워커 구현이
-  실행에 강한 조합. worker `sol`은 항상 `medium`이고 브리프에 남은 판단을
-  드러낸다. 형식적이거나 실패 비용이 큰 리뷰는 `sol high`를 쓸 수 있고,
-  설계에서의 `sol high`는 정말 어려울 때 사용자 확인 1회.
+  동결 → 계약·범위·증거가 완결된 브리프 → 기본 `grok high` 워커 구현.
+  실행 수렴이 따로 필요하면 `--model luna`다. worker `sol`은 선택됐을 때
+  항상 `medium`이다. 형식적이거나 실패 비용이 큰 리뷰는 `sol high` 또는
+  `grok xhigh`를 쓸 수 있고, 설계에서의 높은 effort는 정말 어려울 때
+  사용자 확인 1회.
   세션을 띄우면 어떤 모델·effort로 띄웠는지
   사용자에게 한 줄 보고.
 - **모델 라우팅**: 첫 축은 브리프 완결성이다 — 수용 기준·파일/디렉토리
-  범위·검증 방법이 완결되면 디스패처가 `--model luna`를 선택하고, 그 밖의
-  worker는 `sol medium`에서 레포 이해와 숨은 blocker 판단을 맡는다. 실패 비용은
+  범위·검증 방법이 완결되면 디스패처가 `--model luna`를 선택할 수 있고, 생략된
+  worker는 `grok high`다. 레포 이해와 숨은 blocker 판단이 필요하면 `--model sol`이다. 실패 비용은
   독립 축으로 유지해 돈·데이터 손상, 비가역, 프로덕션 확산이면 필요한 승급과
   게이트를 적용한다. 돈 경로 sign-off와 worker 스킬의 작업 전 에스컬레이션
   목록도 별도 축이다 (경위: `decisions/2026-07-29-difficulty-answered-with-a-stage.md`).
-- **effort 정책**: worker `sol`은 `medium`, 완결 브리프에서 명시한 `luna`는
-  `max`+Fast다. `luna max`는 `xhigh` 대비 비용 +25%에 Coding Agent Index
-  +4점이고, `sol medium`은 SWE-Atlas-QnA 40 대 33으로 레포 이해·탐색에서
-  앞선다. 형식적이거나 실패 비용이 큰 리뷰는 `sol high`; 설계의 `high`는 진짜
-  어려운 것만 (dispatcher 판단 + 사용자 확인).
-  sol에 xhigh는 쓰지 않는다. 근거:
+- **effort 정책**: worker 기본은 `grok high`다. 선택한 `sol`은 `medium`, 명시한
+  `luna`는 `max`+Fast다. mate/review에서 Grok을 쓰려면 `--model grok` 또는
+  `--model grok --effort xhigh`다. `luna max`는 `xhigh` 대비 비용 +25%에 Coding
+  Agent Index +4점이고, `sol medium`은 SWE-Atlas-QnA 40 대 33으로 레포
+  이해·탐색에서 앞선다. 형식적이거나 실패 비용이 큰 리뷰는 `sol high` 또는
+  `grok xhigh`; 설계의 높은 effort는 진짜 어려운 것만 (dispatcher 판단 + 사용자
+  확인). sol에 xhigh는 쓰지 않는다. Grok에는 Fast와 `max`/`ultra`가 없다. 근거:
   `skills/meight/references/model-routing.md`.
 - **세션 저장 정책**: `thread_source=subagent`는 analytics 메타데이터일 뿐
   앱 숨김 기능이 아니다. 모든 start는 `thread_ephemeral=true`; follow/reply는
@@ -88,8 +90,8 @@
    에스컬레이션 목록은 생략 불가.
 6. 자동 학습보다 scorecard 먼저 — 지표 없이 규칙을 조이거나 풀지 않는다.
 7. mate/worker는 세션 계약(자세)명이지 모델 정체성이 아니다. 실무 정렬:
-   mate≈sol, worker 기본≈sol medium, 완결 브리프의 worker는 `luna max`+Fast를
-   명시 선택할 수 있다. 완전 위임은 별도 모드가 아니라 worker 계약의 자기 리뷰
+   mate≈sol, worker 기본≈grok high, mate/review의 Grok 선택지는 `grok`/`grok xhigh`,
+   완결 브리프의 worker는 `luna max`+Fast를 명시 선택할 수 있다. 완전 위임은 별도 모드가 아니라 worker 계약의 자기 리뷰
    + 브리프 스코프로 표현한다.
 
 ## 미결 사항 (다음 의사결정 대기)
@@ -103,7 +105,7 @@
   luna row 없음, sol 수치도 ASK-F1이 아님). 하드게이트 목록을 걷어낸 지금
   워커 에스컬레이션에 더 의존하는데 그 품질을 모른다 — 로컬 관측 필요.
 - **브리프 완결성 라우팅 튜닝**: 완결 브리프의 `luna` 선택과 불완전 브리프의
-  `sol medium` 판단이 비용·품질 면에서 맞는지는 계속 측정한다. sol의 hidden-
+  `grok high` 기본과 명시 `sol medium` 판단이 비용·품질 면에서 맞는지는 계속 측정한다. sol의 hidden-
   blocker 발견률, luna의 결함률·승격률·false-approve 지표가 기준선이다.
 - **NEEDS_REWORK 3단 verdict**: plan-review 조기 탈출 신호 후보 — 도입 시
   plan 재승인 필요 (백로그).

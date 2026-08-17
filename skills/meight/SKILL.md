@@ -17,7 +17,7 @@ description: "Hand a whole workstream to a Codex session through the meight CLI:
 | Mode | Model | Effort | Fast | Sandbox |
 |---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `full` |
-| `worker` | `sol` | `medium` | off | `full` |
+| `worker` | `grok` | `high` | off | `full` |
 
 ### 리뷰 디스패치
 
@@ -25,13 +25,13 @@ description: "Hand a whole workstream to a Codex session through the meight CLI:
 
 독립 판단 하나면 충분한 리뷰는 mate 하나로 끝낸다. 다른 fresh read가 실제 결정을 바꿀 수 있을 때만 같은 중립 브리프로 mate 하나를 더 병렬 실행하고, 서로의 결론은 공유하지 않는다. 형식적 verdict가 필요하면 브리프에 그 결정만 명시한다.
 
-생략한 설정은 자세와 모델에서 해소되고, dispatch echo가 해소값 전부를 `(default)`/`(set)` 출처와 함께 보여준다. `--model luna`를 명시하면 `luna max`와 Fast로 함께 해소된다. 명시한 `--effort`와 `--fast`/`--no-fast`는 언제나 이긴다. 샌드박스는 어느 자세도 강제하지 않으니 read-only가 필요하면 브리프에 지시한다 (mate 스킬은 "브리프가 시키지 않으면 레포 파일을 고치지 않는다"를 이미 갖고 있다).
+생략한 설정은 자세와 모델에서 해소되고, dispatch echo가 해소값 전부를 `(default)`/`(set)` 출처와 함께 보여준다. `--model luna`를 명시하면 `luna max`와 Fast로 함께 해소되고, `--model grok`는 `grok high`로 해소된다. mate/review에서 Grok을 쓰려면 `--model grok --effort xhigh`를 명시한다. 명시한 `--effort`와 `--fast`/`--no-fast`는 언제나 이긴다. Grok은 Fast와 `max`/`ultra`가 없다. 샌드박스는 어느 자세도 강제하지 않으니 read-only가 필요하면 브리프에 지시한다 (mate 스킬은 "브리프가 시키지 않으면 레포 파일을 고치지 않는다"를 이미 갖고 있다).
 
 `follow`와 `reply`는 세션에 기록된 mode·model·effort·fast를 상속하고 전체 preamble 대신 한 줄 리마인더만 받는다. 값을 명시하면 그 턴부터 이후 턴이 상속하는 값이 된다.
 
 ## 모델
 
-`sol`, `terra`, `luna`는 계정 슬러그 `gpt-5.6-*`로 해소되는 별칭이고, 전체/커스텀 문자열도 그대로 통과한다. 어느 브레인·effort를 고를지는 디스패처의 상주 정책이 소유한다; 사다리 근거·비용 수치·승급 축은 [`references/model-routing.md`](references/model-routing.md)에 있다.
+`sol`, `terra`, `luna`, `grok`는 런타임 슬러그로 해소되는 별칭이고 (`gpt-5.6-*`, `xai/grok-4.6`), 전체/커스텀 문자열도 그대로 통과한다. 어느 브레인·effort를 고를지는 디스패처의 상주 정책이 소유한다; 사다리 근거·비용 수치·승급 축은 [`references/model-routing.md`](references/model-routing.md)에 있다.
 
 ## 디스패치 패턴 — 백그라운드 + 통지
 

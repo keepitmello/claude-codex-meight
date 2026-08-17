@@ -52,7 +52,7 @@ Delegation goes to meight (Skill(meight)) — a Codex session running on its own
 
 ## Model Policy
 
-- meight defaults worker and mate work to `sol medium`; a formal or high-cost review may use `sol high`. A complete worker brief may select `--model luna` (max + Fast). Say in one line which model and effort a session runs on when you start it.
+- meight defaults worker work to `grok high` and mate/review to `sol medium`. A formal or high-cost review may use `sol high` or `--model grok --effort xhigh`. A complete worker brief may still select `--model luna` (max + Fast). Say in one line which model and effort a session runs on when you start it.
 - Claude-side defaults live in agent frontmatter: worker = Opus, MCP specialists = Sonnet, log-analyzer = Haiku.
 - Difficulty alone does not promote to Fable. Public measurement puts Opus 5 level with or ahead of it on repo comprehension, frontend, research synthesis, and terminal work at roughly two-thirds the cost per task, so the promotion needs a reason of its own: long-range implementation where it has earned the call, or the creative and big-picture reads that no benchmark covers — not the feeling that a task is hard.
 - Cost runs backwards from capability here: consult's GPT-5.6 Pro is the strongest read available and spends no delegation quota, while Fable is the expensive tier. When the judgment fits in a packet, consult before paying Fable.

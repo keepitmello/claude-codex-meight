@@ -55,13 +55,13 @@ requirements.
 
 | Work | Route |
 |---|---|
-| Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` (defaults: `sol medium`; choose `--model luna` for a brief with complete contract, scope, and evidence to get `luna max` with Fast) |
+| Implementation, fixes, tests, verification, log digging, browser/runtime QA, computer use, exploration, full delegation | `--mode worker` (defaults: `grok high`; choose `--model sol` for repository-understanding judgment, or `--model luna` for a complete brief that should run `luna max` with Fast) |
 | Blind/anchored design and diagnosis | `--mode mate` (defaults: `sol medium`; `high` only for genuinely hard problems, and `sol` stops at `high`) |
-| Independent artifact review | `--mode mate` (default `sol medium`; use `high` when a formal verdict or failure cost justifies it) |
+| Independent artifact review | `--mode mate` (default `sol medium`; use `sol high` or `--model grok --effort xhigh` when a formal verdict or failure cost justifies it) |
 | Additional independent read | a second mate in parallel only when another unanchored judgment can change the decision |
-| Hard work of any kind | `--mode mate` for the plan first, then `--mode worker --model luna` on a frozen brief with complete contract, scope, and evidence |
-| Implementation still hard with a complete brief | `--mode worker --model luna` (`max` with Fast for execution) |
-| `sol high` | formal or high-cost review; for other mate work, only genuinely hard design and confirm with the user before launching |
+| Hard work of any kind | `--mode mate` for the plan first, then `--mode worker` on a frozen brief with complete contract, scope, and evidence |
+| Implementation still hard with a complete brief | keep worker `grok high`, or explicitly select `--model luna` (`max` with Fast) |
+| `sol high` / `grok xhigh` | formal or high-cost review; for other mate work, only genuinely hard design and confirm with the user before launching |
 | Capability-specific fallback | either posture with `terra` only when measured evidence supports it |
 
 Give a reviewer the exact artifact, intended outcome, constraints, and decision
@@ -72,9 +72,9 @@ the decision, without sharing conclusions between them.
 
 Brief completeness is the worker's first routing axis: when the brief fully
 states the acceptance contract, file/directory scope, and verification evidence,
-the dispatcher may select `--model luna`, which resolves to `luna max` with Fast;
-otherwise the worker default is `sol medium`, preserving judgment for hidden
-blockers. Failure cost is an independent escalation axis: raise the brain or add
+the dispatcher may select `--model luna`, which resolves to `luna max` with Fast.
+The omitted worker default is `grok high`; use `--model sol` when repository-understanding
+judgment is the reason to leave that default. Failure cost is an independent escalation axis: raise the brain or add
 the appropriate gate when failure can damage money or data, cannot be undone, or
 spreads across production. Concurrency, migrations, and contract design can run
 on either model when the contract and evidence fit the work. Say in one line
@@ -84,10 +84,11 @@ the worker contract escalates its own do-not-decide-alone list before acting.
 
 When work gets hard, add a stage before changing the worker choice: take a plan
 from a `sol` mate, freeze it, and give the worker a complete brief; the dispatcher
-can then select `--model luna` for `luna max` with Fast. Most difficulty lives in
-the judgment rather than the typing, and this stage makes the execution contract
-explicit. Worker `sol` stays at `medium`; formal or high-cost review may use
-`sol high`. Design uses `high` only when genuinely hard and after one user
+can then keep the worker on `grok high`, or select `--model luna` for `luna max`
+with Fast. Most difficulty lives in the judgment rather than the typing, and this
+stage makes the execution contract explicit. Worker `sol` stays at `medium` when
+selected; formal or high-cost review may use `sol high` or `grok xhigh`. Design
+uses those higher efforts only when genuinely hard and after one user
 confirmation. Whenever a session starts, tell
 the user in one line which model and effort it runs on.
 
