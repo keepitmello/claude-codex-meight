@@ -2160,6 +2160,75 @@ class ModeLifecycleTests(unittest.TestCase):
         self.assertTrue(parser.parse_args(["list", "--archived"]).archived)
         self.assertTrue(parser.parse_args(["list", "--all"]).show_all)
 
+    def test_named_status_resolves_unique_worker_in_another_repo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            local = home / "repos" / "local"
+            remote_worker = home / "repos" / "remote" / "workers" / "cross-repo"
+            remote_worker.mkdir(parents=True)
+            (remote_worker / "status.json").write_text(json.dumps({
+                "name": "cross-repo", "repo_key": "remote", "state": "running",
+                "started_at": meight.now_iso(), "updated_at": meight.now_iso(),
+            }), encoding="utf-8")
+            args = meight.build_parser().parse_args(["status", "cross-repo", "--json"])
+            output = io.StringIO()
+            with (
+                patch.object(meight, "repo_home_for_cli", return_value=local),
+                contextlib.redirect_stdout(output),
+            ):
+                self.assertEqual(meight.cmd_status(args, home), 0)
+            self.assertEqual(json.loads(output.getvalue())["repo_key"], "remote")
+
+    def test_named_result_resolves_unique_worker_in_another_repo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            local = home / "repos" / "local"
+            remote_worker = home / "repos" / "remote" / "workers" / "cross-repo"
+            remote_worker.mkdir(parents=True)
+            (remote_worker / "result.md").write_text("remote result\n", encoding="utf-8")
+            args = meight.build_parser().parse_args(["result", "cross-repo"])
+            output = io.StringIO()
+            with (
+                patch.object(meight, "repo_home_for_cli", return_value=local),
+                contextlib.redirect_stdout(output),
+            ):
+                self.assertEqual(meight.cmd_result(args, home), 0)
+            self.assertEqual(output.getvalue(), "remote result\n")
+
+    def test_named_worker_ambiguity_fails_without_guessing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            local = home / "repos" / "local"
+            for repo_key in ("repo-a", "repo-b"):
+                (home / "repos" / repo_key / "workers" / "duplicate").mkdir(parents=True)
+            args = meight.build_parser().parse_args(["status", "duplicate"])
+            error = io.StringIO()
+            with (
+                patch.object(meight, "repo_home_for_cli", return_value=local),
+                contextlib.redirect_stderr(error),
+            ):
+                self.assertEqual(meight.cmd_status(args, home), 2)
+            self.assertIn("repo-a, repo-b", error.getvalue())
+
+    def test_named_worker_prefers_current_repo_when_name_is_duplicated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            local = home / "repos" / "local"
+            local_worker = local / "workers" / "duplicate"
+            remote_worker = home / "repos" / "remote" / "workers" / "duplicate"
+            local_worker.mkdir(parents=True)
+            remote_worker.mkdir(parents=True)
+            (local_worker / "result.md").write_text("local\n", encoding="utf-8")
+            (remote_worker / "result.md").write_text("remote\n", encoding="utf-8")
+            args = meight.build_parser().parse_args(["result", "duplicate"])
+            output = io.StringIO()
+            with (
+                patch.object(meight, "repo_home_for_cli", return_value=local),
+                contextlib.redirect_stdout(output),
+            ):
+                self.assertEqual(meight.cmd_result(args, home), 0)
+            self.assertEqual(output.getvalue(), "local\n")
+
     def test_status_serializes_both_canonical_postures(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo_home = Path(tmp)
@@ -2436,7 +2505,7 @@ class ModeLifecycleTests(unittest.TestCase):
             self.assertTrue(response["ok"])
             self.assertEqual(response["mode"], "mate")
             self.assertEqual(response["protocol_epoch"], meight.PROTOCOL_EPOCH)
-            repo_home = Path(meight.repo_context(home)["repo_home"])
+            repo_home = Path(meight.repo_context(home, tmp)["repo_home"])
             status_path = repo_home / "workers" / "mode-test" / "status.json"
             status = json.loads(status_path.read_text(encoding="utf-8"))
             self.assertNotIn("role", status)

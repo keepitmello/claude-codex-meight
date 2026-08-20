@@ -54,6 +54,8 @@ meight steer <name> "correction"       # 도는 턴에만 꽂힌다; 틈이면 n
 meight interrupt <name>                # 세션 종료는 이것으로 — pkill은 이름 매칭이라 셸까지 죽인다
 ```
 
+이름을 명시한 `status <name>` / `result <name>`은 현재 레포에 없으면 전체 레포 네임스페이스에서 유일한 동명 워커를 찾는다. 동일한 이름이 여러 레포에 있으면 추측하지 않고 대상 레포에서 다시 실행하라고 안내한다. 이름 없는 `status`/`list`는 계속 호출 cwd 레포만 보며, 전체 목록은 `--all-repos`를 쓴다.
+
 - `--timeout`(기본 1800)은 안전망 체크포인트다. 타임아웃으로 셸이 끝나도 워커는 계속 도니, 같은 `dispatch <name> --mode ...`를 다시 실행하면 재부착해 통지를 다시 만든다 (terminal 행은 재부착 대상이 아니다). `status`가 진실이다.
 - 워커가 tool/approval 입력을 기다리며 15초 넘게 멈추면 `dispatch`가 exit 3으로 끝나 통지가 온다. `status <name>`의 `needs_input_source`가 `tool`이면 답할 방법이 없는 대기다 — interrupt 후 브리프를 고쳐 재시작한다.
 - provider capacity 에러는 CLI가 같은 설정으로 지수 백오프 재시도한다 (기본 15분 상한, `--timeout`이 더 짧으면 그 시간). 진행은 `status`의 `capacity_retry`와 heartbeat에 보인다.

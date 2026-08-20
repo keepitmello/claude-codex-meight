@@ -2587,6 +2587,33 @@ def load_all_statuses(home: Path) -> list[dict]:
     return out
 
 
+def resolve_named_worker_dir(home: Path, repo_home: Path, name: str) -> tuple[Path | None, list[str]]:
+    """Resolve locally first, then fall back to a unique repo namespace."""
+    local = repo_home / "workers" / name
+    if local.is_dir() and not local.is_symlink():
+        return local, []
+
+    matches: list[Path] = []
+    repos_dir = home / "repos"
+    if repos_dir.is_dir():
+        for candidate_repo in sorted(repos_dir.iterdir()):
+            candidate = candidate_repo / "workers" / name
+            if candidate.is_dir() and not candidate.is_symlink():
+                matches.append(candidate)
+    if len(matches) == 1:
+        return matches[0], []
+    return None, [candidate.parents[1].name for candidate in matches]
+
+
+def print_named_worker_ambiguity(name: str, repo_keys: list[str]) -> None:
+    joined = ", ".join(repo_keys)
+    print(
+        f"worker '{name}' exists in multiple repo namespaces: {joined}; "
+        "run the command from the target repo",
+        file=sys.stderr,
+    )
+
+
 def filter_statuses(statuses: list[dict], view: str,
                     cutoff_now: datetime | None = None) -> list[dict]:
     """Split terminal disk rows into recent and archived status views."""
@@ -2848,8 +2875,12 @@ def cmd_status(args, home: Path) -> int:
     name = getattr(args, "name", None)
     repo_home = repo_home_for_cli(home)
     if name:
-        sj = repo_home / "workers" / name / "status.json"
-        if not sj.is_file():
+        worker_dir, ambiguous = resolve_named_worker_dir(home, repo_home, name)
+        if ambiguous:
+            print_named_worker_ambiguity(name, ambiguous)
+            return 2
+        sj = worker_dir / "status.json" if worker_dir else None
+        if sj is None or not sj.is_file():
             print(f"no status for worker '{name}'", file=sys.stderr)
             return 1
         st = json.loads(sj.read_text(encoding="utf-8"))
@@ -2897,7 +2928,15 @@ def cmd_status(args, home: Path) -> int:
 
 
 def cmd_result(args, home: Path) -> int:
-    worker_dir = repo_home_for_cli(home) / "workers" / args.name
+    worker_dir, ambiguous = resolve_named_worker_dir(
+        home, repo_home_for_cli(home), args.name,
+    )
+    if ambiguous:
+        print_named_worker_ambiguity(args.name, ambiguous)
+        return 2
+    if worker_dir is None:
+        print(f"no result for worker '{args.name}'", file=sys.stderr)
+        return 1
     result = worker_dir / "result.md"
     if not result.is_file():
         print(f"no result for worker '{args.name}'", file=sys.stderr)
