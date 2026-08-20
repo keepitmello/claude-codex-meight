@@ -1,6 +1,7 @@
 ---
 name: meight
-description: "Hand a whole workstream to a Codex session through the meight CLI: a self-contained brief goes in, the session runs unsupervised investigation/execution/verification cycles, one result comes back, escalation via `QUESTION:`. Reach for it when a workstream can leave this conversation and run unsupervised — especially in parallel with work you keep. Two postures, `--mode` required: worker (implementation, fixes, tests, verification, runtime/browser QA, computer use, exploration) and mate (blind/anchored design, diagnosis, independent review). Covers CLI usage, defaults, the dispatch pattern, and the brief skeleton. Not for a single lookup or a judgment still bound to unspoken conversation context. TRIGGERS: -코덱스 -meight -메이트 -mate -코덱스위임 -위임 -delegate"
+description: "Codex 세션에 작업 통째 위임. worker는 구현, mate는 설계·리뷰."
+
 ---
 
 # meight (claude-codex-meight)
@@ -17,7 +18,7 @@ description: "Hand a whole workstream to a Codex session through the meight CLI:
 | Mode | Model | Effort | Fast | Sandbox |
 |---|---|---|---|---|
 | `mate` | `sol` | `medium` | off | `full` |
-| `worker` | `grok` | `high` | off | `full` |
+| `worker` | `sol` | `medium` | off | `full` |
 
 ### 리뷰 디스패치
 
@@ -32,6 +33,16 @@ description: "Hand a whole workstream to a Codex session through the meight CLI:
 ## 모델
 
 `sol`, `terra`, `luna`, `grok`는 런타임 슬러그로 해소되는 별칭이고 (`gpt-5.6-*`, `xai/grok-4.6`), 전체/커스텀 문자열도 그대로 통과한다. 어느 브레인·effort를 고를지는 디스패처의 상주 정책이 소유한다; 사다리 근거·비용 수치·승급 축은 [`references/model-routing.md`](references/model-routing.md)에 있다.
+
+### grok 차선 (`--model grok`)
+
+grok은 판단 없는 벌크 실행 전용이다 (2026-08-21 강등 — 근거는 model-routing.md). 하네스가 제약 계약을 프리앰블에 자동 주입하고, 완료 보고는 체크리스트·실행 출력·건드린 파일 목록의 3부 형식으로 온다. 디스패처의 재단 규칙:
+
+- 다리 하나 = 기계 변환 하나. done이 명명된 체크(테스트·grep·빌드)만으로 서술되는 단위. "적절히"가 필요하면 grok 다리가 아니다.
+- 크기 상한은 검수 시간으로: 명명된 체크 + diff 대조로 5분 안에 검수 못 할 크기면 더 쪼갠다.
+- 파일 집합이 겹치지 않는 다리는 전부 한 번에 병렬 디스패치한다. 순차 의존은 쪼개지 않는다 — 한 다리로 묶거나 이음새를 디스패처가 직접 잇는다.
+- 브리프에 타임박스를 쓰되 집행은 밖에서: 초과 시 `status` 확인 후 `interrupt`로 자르고 회수한다.
+- 검수는 self-report가 아니라 산출물로: `git diff --name-only`를 브리프의 허용 파일 목록과 대조하고, 붙여온 체크 출력 중 하나를 재실행으로 확인한다.
 
 ## 디스패치 패턴 — 백그라운드 + 통지
 

@@ -18,11 +18,17 @@ luna 비용은 2026-08-08 가격 개정(-80%)을 반영한 값이고, 점수는 
 `luna max`와 Fast를 함께 해소한다. `luna max`는 실행·수렴에 강하고 태스크당
 비용이 `sol medium`의 1/9.5이며, 완결된 실행 계약에서 비용 대비 값이 난다.
 
-기본 worker는 `grok high`다. 브리프에 판단할 여지가 남아 있어도 worker는
-이 기본값에서 시작한다. `sol medium`은 종합 점수 61, DeepSWE 64뿐 아니라
-레포 이해·탐색에 해당하는 SWE-Atlas-QnA에서 **40 대 33**으로 `luna max`를
-앞선다. 그 이해력이 필요할 때만 `--model sol`을 명시한다. 완결 브리프에서
+기본 worker는 `sol medium`이다 (2026-08-21 개정, 이전 기본은 `grok high`).
+`sol medium`은 종합 점수 61, DeepSWE 64뿐 아니라 레포 이해·탐색에 해당하는
+SWE-Atlas-QnA에서 **40 대 33**으로 `luna max`를 앞선다. 완결 브리프에서
 실행 수렴을 고르면 `--model luna`다.
+
+Grok을 기본에서 내린 근거: 메인 세션 worker 디스패치 실측에서 지시 위반
+(범위 밖 행동, 언급 안 한 작업 수행), 빨리-끝내기 성향, 원인 규명 실패,
+태스크당 1–2시간의 삽질이 반복 관찰됐다 (2026-08, 운영자 관찰 — 벤치 점수와
+달리 현장 가설이다. grok CLI 직결과 opencodex 프록시 경유를 분리 실험해
+차이가 없었으므로 파이프가 아니라 모델 성질이다). grok은 명시 opt-in
+전용이고, 재단·병렬·검수 규칙은 SKILL.md의 grok 차선 블록이 정본이다.
 
 mate/review 기본은 `sol medium`을 유지한다. Grok으로 판단면을 돌리려면
 `--model grok` 또는 `--model grok --effort xhigh`를 명시한다. Grok의 생략
@@ -34,12 +40,11 @@ effort는 `high`이고, 카탈로그 상한은 `xhigh`다. Fast와 `max`/`ultra`
 
 난이도는 worker 브레인을 바로 키우는 대신 **단계 추가**로 답한다: `sol` mate에게
 설계·플랜을 받아 동결하고, 수용 기준·파일/디렉토리 범위·검증 방법이 채워진
-브리프로 넘겨 worker가 기본 `grok high`로 구현한다. 실행 수렴이 따로 필요하면
+브리프로 넘겨 worker가 기본 `sol medium`으로 구현한다. 실행 수렴이 따로 필요하면
 `--model luna`를 명시한다. 판단이 어려운 것과 실행이 어려운 것은 다른 문제고,
 대부분의 어려움은 앞쪽에 있다.
 
-worker의 `sol`은 **항상 `medium`**이다. 기본 worker는 `grok`이므로 `sol`은
-명시 선택이다. 형식적이거나 실패 비용이 큰 리뷰는 `sol high`를 쓸 수 있고,
+worker의 `sol`은 **항상 `medium`**이다. 형식적이거나 실패 비용이 큰 리뷰는 `sol high`를 쓸 수 있고,
 같은 판단면을 Grok으로 돌리려면 `--model grok --effort xhigh`다. 설계의
 `high`/`xhigh`는 정말 어려울 때만 사용자 확인 후 쓴다. `sol`의 effort 상한은
 `high`다.

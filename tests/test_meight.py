@@ -34,7 +34,7 @@ class ModelAliasTests(unittest.TestCase):
 class StartDefaultsTests(unittest.TestCase):
     EXPECTED = {
         "mate": ("gpt-5.6-sol", "medium", "default", "full"),
-        "worker": ("xai/grok-4.6", "high", "default", "full"),
+        "worker": ("gpt-5.6-sol", "medium", "default", "full"),
     }
 
     def _args(self, command: str, mode: str, *options: str):
@@ -2344,7 +2344,7 @@ class ModeLifecycleTests(unittest.TestCase):
     def test_dispatch_output_echoes_resolved_defaults_and_provenance(self):
         cases = (
             ("worker",
-             "model=grok(default) effort=high(default) fast=off(default) "
+             "model=sol(default) effort=medium(default) fast=off(default) "
              "sandbox=full(default)"),
             ("mate",
              "model=sol(default) effort=medium(default) fast=off(default) "

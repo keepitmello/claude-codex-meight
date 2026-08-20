@@ -72,6 +72,10 @@ MODE_SKILL_PATHS = {
     "worker": _SKILLS_ROOT / "meight-worker" / "SKILL.md",
 }
 COMMON_CONTRACT_PATH = _SKILLS_ROOT / "meight-common" / "CONTRACT.md"
+# Grok's observed failure mode is skimming instructions, so its constraint
+# contract is injected inline (full text) instead of as a file pointer.
+GROK_SLUG = "xai/grok-4.6"
+GROK_CONTRACT_PATH = _SKILLS_ROOT / "grok-muscle" / "SKILL.md"
 PROTOCOL_EPOCH = "desktop1"
 DAEMON_CAPABILITIES = [PROTOCOL_EPOCH]
 TARGETS = {"mac", "desktop"}
@@ -111,7 +115,7 @@ MODE_START_DEFAULTS = {
         "sandbox": "full",
     },
     "worker": {
-        "model": "grok", "effort": "high", "fast": False,
+        "model": "sol", "effort": "medium", "fast": False,
         "sandbox": "full",
     },
 }
@@ -210,27 +214,35 @@ Follow the {skill_name} contract at `{skill_path}` and the shared meight contrac
 """
 
 
-def build_preamble(mode: str) -> str:
+def build_preamble(mode: str, model: str | None = None) -> str:
     normalized_mode = normalize_mode(mode)
     if normalized_mode is None:
         raise ValueError(f"invalid mode: {mode!r}")
     skill_path = MODE_SKILL_PATHS[normalized_mode]
-    return _PREAMBLE_TEMPLATE.format(
+    preamble = _PREAMBLE_TEMPLATE.format(
         mode=normalized_mode,
         skill_name=skill_path.parent.name,
         skill_path=skill_path,
         common_path=COMMON_CONTRACT_PATH,
     )
+    if model == GROK_SLUG:
+        preamble += f"\n{GROK_CONTRACT_PATH.read_text(encoding='utf-8')}\n"
+    return preamble
 
 
-def build_follow_reminder(mode: str) -> str:
+def build_follow_reminder(mode: str, model: str | None = None) -> str:
     """Follow/reply turns get a one-line reminder instead of re-injecting the full preamble."""
     normalized_mode = normalize_mode(mode)
     if normalized_mode is None:
         raise ValueError(f"invalid mode: {mode!r}")
-    return (f"Continue with runtime contract mode={normalized_mode}. "
-            f"Follow the mode skill at `{MODE_SKILL_PATHS[normalized_mode]}` and shared "
-            f"contract at `{COMMON_CONTRACT_PATH}`.\n")
+    reminder = (f"Continue with runtime contract mode={normalized_mode}. "
+                f"Follow the mode skill at `{MODE_SKILL_PATHS[normalized_mode]}` and shared "
+                f"contract at `{COMMON_CONTRACT_PATH}`.\n")
+    if model == GROK_SLUG:
+        reminder += ("The grok muscle contract from your first turn remains in force: "
+                     "checklist-only success, no out-of-scope actions, stop-and-report "
+                     f"on uncertainty (`{GROK_CONTRACT_PATH}`).\n")
+    return reminder
 
 
 def install_computer_use_approval_bridge(codex, worker_name: str) -> None:
@@ -2048,15 +2060,16 @@ class Daemon:
         wid = self._worker_key(repo_key, name)
         brief = req["brief"]
         use_preamble = not req.get("no_preamble")
-        preamble = build_preamble(mode)
+        # Daemon-authoritative normalization covers stale CLIs and direct socket clients.
+        # Resolved before the preamble so model-conditional contracts (grok) attach.
+        model = normalize_model(req.get("model"))
+        preamble = build_preamble(mode, model)
         turn_input = f"{preamble}\n{brief}" if use_preamble else brief
         file_brief = f"{preamble}\n---\n\n{brief}" if use_preamble else brief
         cwd = req.get("cwd") or os.getcwd()
         sandbox_key = SANDBOX_MAP.get(req.get("sandbox") or "full")
         if sandbox_key is None:
             return {"ok": False, "error": f"invalid sandbox: {req.get('sandbox')}"}
-        # Daemon-authoritative normalization covers stale CLIs and direct socket clients.
-        model = normalize_model(req.get("model"))
         effort = req.get("effort") or "medium"
         service_tier = req.get("service_tier")
         capacity_retry_budget_sec = normalize_capacity_retry_budget(
@@ -2264,7 +2277,7 @@ class Daemon:
             reuse_ephemeral_thread = w.thread is not None and w.thread_ephemeral
             recovery_context = "" if reuse_ephemeral_thread else w.handoff_context()
 
-            reminder = build_follow_reminder(w.mode)
+            reminder = build_follow_reminder(w.mode, model)
             turn_input = f"{reminder}{brief}" if use_preamble else brief
             file_brief = f"{reminder}---\n\n{brief}" if use_preamble else brief
             # reset_for_follow flips the worker back to "starting", which reserves it:
