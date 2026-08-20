@@ -2229,6 +2229,103 @@ class ModeLifecycleTests(unittest.TestCase):
                 self.assertEqual(meight.cmd_result(args, home), 0)
             self.assertEqual(output.getvalue(), "local\n")
 
+    def test_follow_request_routes_unique_cross_repo_worker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            local = home / "repos" / "local"
+            remote_home = home / "repos" / "remote"
+            worker_dir = remote_home / "workers" / "cross-repo"
+            worker_dir.mkdir(parents=True)
+            (worker_dir / "status.json").write_text(json.dumps({
+                "name": "cross-repo", "repo_key": "remote", "repo_root": "/remote",
+                "state": "completed", "mode": "worker", "target": "mac",
+                "runtime": "codex",
+            }), encoding="utf-8")
+            context = {
+                "repo_root": "/remote", "repo_key": "remote",
+                "repo_home": str(remote_home),
+            }
+            args = meight.build_parser().parse_args([
+                "follow", "cross-repo", "--brief", "continue",
+            ])
+            with (
+                patch.object(meight, "repo_home_for_cli", return_value=local),
+                patch.object(meight, "request_repo_context", return_value=context) as derive,
+                patch.object(meight, "send_request", return_value={
+                    "ok": True, "mode": "worker", "target": "mac", "runtime": "codex",
+                    "protocol_epoch": meight.PROTOCOL_EPOCH,
+                }) as send,
+            ):
+                response = meight.follow_request(args, home)
+            self.assertTrue(response["ok"])
+            self.assertEqual(response["_repo_home"], str(remote_home))
+            derive.assert_called_once_with(home, "/remote")
+            self.assertEqual(send.call_args.args[1]["repo_key"], "remote")
+
+    def test_reply_waits_in_resolved_cross_repo_namespace(self):
+        args = meight.build_parser().parse_args([
+            "reply", "cross-repo", "--brief", "continue", "--timeout", "12",
+        ])
+        remote_home = Path("/state/repos/remote")
+        with (
+            patch.object(meight, "follow_request", return_value={
+                "ok": True, "turns": 2, "_repo_home": str(remote_home),
+            }),
+            patch.object(meight, "wait_for_worker", return_value=1) as wait,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(meight.cmd_reply(args, Path("/state")), 1)
+        wait.assert_called_once_with(
+            Path("/state"), remote_home, "cross-repo", 12.0, 300.0, narrate=False,
+        )
+
+    def test_named_control_commands_route_cross_repo_worker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            local = home / "repos" / "local"
+            remote_home = home / "repos" / "remote"
+            worker_dir = remote_home / "workers" / "cross-repo"
+            worker_dir.mkdir(parents=True)
+            (worker_dir / "status.json").write_text(json.dumps({
+                "name": "cross-repo", "repo_root": "/remote", "state": "running",
+            }), encoding="utf-8")
+            context = {
+                "repo_root": "/remote", "repo_key": "remote",
+                "repo_home": str(remote_home),
+            }
+            cases = (
+                (["steer", "cross-repo", "adjust"], meight.cmd_steer),
+                (["interrupt", "cross-repo"], meight.cmd_interrupt),
+            )
+            for argv, command in cases:
+                with self.subTest(command=argv[0]):
+                    args = meight.build_parser().parse_args(argv)
+                    with (
+                        patch.object(meight, "repo_home_for_cli", return_value=local),
+                        patch.object(meight, "request_repo_context", return_value=context),
+                        patch.object(meight, "send_request", return_value={"ok": True}) as send,
+                        contextlib.redirect_stdout(io.StringIO()),
+                    ):
+                        self.assertEqual(command(args, home), 0)
+                    self.assertEqual(send.call_args.args[1]["repo_key"], "remote")
+
+    def test_named_watch_routes_unique_cross_repo_worker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            local = home / "repos" / "local"
+            remote_home = home / "repos" / "remote"
+            (remote_home / "workers" / "cross-repo").mkdir(parents=True)
+            args = meight.build_parser().parse_args(["watch", "cross-repo"])
+            with (
+                patch.object(meight, "repo_home_for_cli", return_value=local),
+                patch.object(meight, "run_watch", return_value=0) as watch,
+            ):
+                self.assertEqual(meight.cmd_watch(args, home), 0)
+            watch.assert_called_once_with(
+                remote_home, ["cross-repo"], from_start=False,
+                tail_chars=meight.WATCH_TAIL_CHARS,
+            )
+
     def test_status_serializes_both_canonical_postures(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo_home = Path(tmp)

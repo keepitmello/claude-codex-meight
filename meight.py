@@ -2606,12 +2606,40 @@ def resolve_named_worker_dir(home: Path, repo_home: Path, name: str) -> tuple[Pa
 
 
 def print_named_worker_ambiguity(name: str, repo_keys: list[str]) -> None:
+    print(named_worker_ambiguity_error(name, repo_keys), file=sys.stderr)
+
+
+def named_worker_ambiguity_error(name: str, repo_keys: list[str]) -> str:
     joined = ", ".join(repo_keys)
-    print(
+    return (
         f"worker '{name}' exists in multiple repo namespaces: {joined}; "
-        "run the command from the target repo",
-        file=sys.stderr,
+        "run the command from the target repo"
     )
+
+
+def resolve_named_worker_context(
+    home: Path, name: str,
+) -> tuple[Path | None, dict | None, dict | None, str | None]:
+    """Resolve a worker and derive the daemon request's recorded repo context."""
+    local_repo_home = repo_home_for_cli(home)
+    worker_dir, ambiguous = resolve_named_worker_dir(home, local_repo_home, name)
+    if ambiguous:
+        return None, None, None, named_worker_ambiguity_error(name, ambiguous)
+    if worker_dir is None:
+        return None, None, None, f"unknown worker: {name}"
+    try:
+        recorded = json.loads((worker_dir / "status.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, None, None, f"invalid status for worker: {name}"
+    if not isinstance(recorded, dict):
+        return None, None, None, f"invalid status for worker: {name}"
+
+    recorded_root = recorded.get("repo_root") or recorded.get("cwd")
+    context = request_repo_context(home, recorded_root)
+    expected_repo_home = worker_dir.parents[1].resolve()
+    if Path(context["repo_home"]).resolve() != expected_repo_home:
+        return None, None, None, f"recorded repo context mismatch for worker: {name}"
+    return worker_dir, recorded, context, None
 
 
 def filter_statuses(statuses: list[dict], view: str,
@@ -2804,14 +2832,11 @@ def start_request(args, home: Path) -> dict:
 def follow_request(args, home: Path) -> dict:
     """Send follow and fail closed if the daemon does not echo inherited mode."""
     validate_worker_name(args.name)
-    repo_home = repo_home_for_cli(home)
-    status_path = repo_home / "workers" / args.name / "status.json"
-    expected_mode = None
-    if status_path.is_file():
-        try:
-            expected_mode = normalize_mode(json.loads(status_path.read_text(encoding="utf-8")).get("mode"))
-        except (OSError, json.JSONDecodeError):
-            pass
+    worker_dir, recorded, context, error = resolve_named_worker_context(home, args.name)
+    if error:
+        return {"ok": False, "error": error}
+    assert worker_dir is not None and recorded is not None and context is not None
+    expected_mode = normalize_mode(recorded.get("mode"))
     req = {
         "cmd": "follow", "name": args.name, "brief": read_brief(args),
         "no_preamble": args.no_preamble,
@@ -2826,17 +2851,10 @@ def follow_request(args, home: Path) -> dict:
         req["effort"] = effort
     if fast is not INHERIT_TURN_SETTING:
         req["service_tier"] = "priority" if fast else "default"
-    req.update(request_repo_context(home))
+    req.update(context)
     resp = send_request(home, req)
-    expected_target = "mac"
-    expected_runtime = "codex"
-    if status_path.is_file():
-        try:
-            recorded = json.loads(status_path.read_text(encoding="utf-8"))
-            expected_target = recorded.get("target") or "mac"
-            expected_runtime = recorded.get("runtime") or "codex"
-        except (OSError, json.JSONDecodeError):
-            pass
+    expected_target = recorded.get("target") or "mac"
+    expected_runtime = recorded.get("runtime") or "codex"
     if resp.get("ok") and not protocol_echo_matches(
         resp, expected_mode, expected_target, expected_runtime,
     ):
@@ -2845,6 +2863,8 @@ def follow_request(args, home: Path) -> dict:
             f"follow protocol mismatch: expected mode={expected_mode} target={expected_target} "
             f"runtime={expected_runtime} epoch={PROTOCOL_EPOCH}"
         )}
+    if resp.get("ok"):
+        resp["_repo_home"] = str(worker_dir.parents[1])
     return resp
 
 
@@ -2855,16 +2875,24 @@ def cmd_follow(args, home: Path) -> int:
 
 
 def cmd_steer(args, home: Path) -> int:
+    _, _, context, error = resolve_named_worker_context(home, args.name)
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
     req = {"cmd": "steer", "name": args.name, "text": args.text}
-    req.update(request_repo_context(home))
+    req.update(context)
     expect_ok(send_request(home, req))
     print(f"steered '{args.name}'")
     return 0
 
 
 def cmd_interrupt(args, home: Path) -> int:
+    _, _, context, error = resolve_named_worker_context(home, args.name)
+    if error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
     req = {"cmd": "interrupt", "name": args.name}
-    req.update(request_repo_context(home))
+    req.update(context)
     resp = expect_ok(send_request(home, req))
     note = resp.get("note")
     print(f"interrupt requested for '{args.name}'" + (f" — {note}" if note else ""))
@@ -3245,6 +3273,14 @@ def cmd_watch(args, home: Path) -> int:
             print("no active workers in this repo", file=sys.stderr)
             return 1
     elif name:
+        worker_dir, ambiguous = resolve_named_worker_dir(home, repo_home, name)
+        if ambiguous:
+            print_named_worker_ambiguity(name, ambiguous)
+            return 2
+        if worker_dir is None:
+            print(f"no status for worker '{name}'", file=sys.stderr)
+            return 1
+        repo_home = worker_dir.parents[1]
         names = [name]
     else:
         include_archived = getattr(args, "include_archived", False)
@@ -3465,7 +3501,7 @@ def cmd_reply(args, home: Path) -> int:
     """One-shot reply: follow -> wait -> print only the latest turn result. For QUESTION (exit 3)."""
     resp = expect_ok(follow_request(args, home))
     print(f"reply turn #{resp.get('turns')} on worker '{args.name}'", flush=True)
-    repo_home = repo_home_for_cli(home)
+    repo_home = Path(resp["_repo_home"])
     code = wait_for_worker(home, repo_home, args.name, args.timeout, args.progress,
                            narrate=getattr(args, "narrate", False))
     worker_dir = repo_home / "workers" / args.name
