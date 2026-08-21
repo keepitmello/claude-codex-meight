@@ -18,19 +18,14 @@ luna 비용은 2026-08-08 가격 개정(-80%)을 반영한 값이고, 점수는 
 `luna max`와 Fast를 함께 해소한다. `luna max`는 실행·수렴에 강하고 태스크당
 비용이 `sol medium`의 1/9.5이며, 완결된 실행 계약에서 비용 대비 값이 난다.
 
-기본 worker는 `sol medium`이다 (2026-08-21 개정, 이전 기본은 `grok high`).
+기본 worker는 `sol medium`이다 (2026-08-21 개정).
 `sol medium`은 종합 점수 61, DeepSWE 64뿐 아니라 레포 이해·탐색에 해당하는
 SWE-Atlas-QnA에서 **40 대 33**으로 `luna max`를 앞선다. 완결 브리프에서
 실행 수렴을 고르면 `--model luna`다. mate/review 기본도 `sol medium`이다.
 
-Grok을 내린 근거: 메인 세션 worker 디스패치 실측에서 지시 위반
-(범위 밖 행동, 언급 안 한 작업 수행), 빨리-끝내기 성향, 원인 규명 실패,
-태스크당 1–2시간의 삽질이 반복 관찰됐다 (2026-08, 운영자 관찰 — 벤치 점수와
-달리 현장 가설이다. grok CLI 직결과 opencodex 프록시 경유를 분리 실험해
-차이가 없었으므로 파이프가 아니라 모델 성질이다). 그 뒤 xAI 좌석 자체가
-이 하네스를 떠났다 (2026-08-21): grok은 rubato 가 xAI OAuth 로 직접 잡는
-좌석이고, meight 는 Codex 세션 전용이다. 남은 벌크 실행 다리는
-`rubato dispatch --model xai/grok-4.6` 로 가며 재단·검수 규칙도 그쪽에 있다.
+xAI 는 이 하네스를 떠났다 (2026-08-21). grok 은 rubato 가 xAI OAuth 로
+직접 잡고(`rubato dispatch --model xai/grok-4.6`), meight 는 Codex 세션
+전용이다.
 
 전문: [`docs/2026-07-29-model-routing-evidence.md`](../../../docs/2026-07-29-model-routing-evidence.md)
 

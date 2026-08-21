@@ -34,7 +34,7 @@ description: "Codex 세션에 작업 통째 위임. worker는 구현, mate는 �
 
 `sol`, `terra`, `luna`는 런타임 슬러그로 해소되는 별칭이고 (`gpt-5.6-*`), 전체/커스텀 문자열도 그대로 통과한다. 어느 브레인·effort를 고를지는 디스패처의 상주 정책이 소유한다; 사다리 근거·비용 수치·승급 축은 [`references/model-routing.md`](references/model-routing.md)에 있다.
 
-**이 하네스는 Codex 세션이다.** CLI가 `grok` 별칭과 커스텀 슬러그를 계속 통과시키더라도 여기서 xAI를 고르지 않는다 — grok 좌석은 rubato 가 소유하고(`rubato dispatch --model xai/grok-4.6`), 벌크 다리를 어떻게 재단하고 검수하는지도 그쪽 정본에 있다.
+**이 하네스는 Codex 세션이다.** CLI가 `grok` 별칭과 커스텀 슬러그를 계속 통과시키더라도 여기서 xAI를 고르지 않는다 — xAI 는 rubato 가 직접 잡는다(`rubato dispatch --model xai/grok-4.6`).
 
 ## 디스패치 패턴 — 백그라운드 + 통지
 
