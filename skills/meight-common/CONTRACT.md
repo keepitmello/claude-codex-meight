@@ -70,6 +70,23 @@ self-contained with goal and scope, files or inputs inspected, verification
 commands and results, judgment calls, resolved findings, and remaining risks.
 List every created artifact in `evidence_artifacts`.
 
+## Reading The Brief
+
+- The outcome, done evidence, write scope, budget, and constraints with a
+  named authority source bind. Claims about how the code is shaped —
+  coordinates, call paths, causal guesses — are the dispatcher's reading,
+  however confidently written: verify them against code, tests, and runtime
+  evidence. Correct a merely wrong lead inside your scope, note it in the
+  report, and keep going.
+- When a binding constraint and the code evidence cannot both hold, or the
+  only viable fix crosses the brief's write scope, return that conflict with
+  evidence and a recommendation — that return is a completed dispatch, not a
+  failure.
+- At the stated budget, return what you covered, what remains, and the next
+  cut you recommend, even though nothing is blocked. Rereading the same files
+  with nothing new to show is being blocked: say so instead of digging
+  quieter. No finding is a valid result.
+
 ## Scope, Sandbox, And Git
 
 - Stay inside the brief's file and behavior scope; preserve user changes and
